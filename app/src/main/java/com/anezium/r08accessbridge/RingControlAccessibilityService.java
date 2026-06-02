@@ -48,7 +48,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;
-    private static final long TAP_DUPLICATE_IGNORE_MS = 120L;
+    private static final long TAP_DUPLICATE_IGNORE_MS = 75L;
     private static final long DOUBLE_TAP_MAX_MS = 650L;
     private static final long SINGLE_TAP_DELAY_MS = 380L;
     private static final long MOTION_TAP_MAX_MS = 280L;
