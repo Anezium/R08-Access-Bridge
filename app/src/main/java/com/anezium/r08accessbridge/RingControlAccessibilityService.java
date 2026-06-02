@@ -42,7 +42,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final String PREF_DEFAULT_MODE_VERSION = "default_mode_version";
     private static final int DEFAULT_MODE_VERSION = 1;
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
-    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 160L;
+    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 240L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;

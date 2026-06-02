@@ -541,9 +541,7 @@ final class AccessibilityNavigator {
     private void dispatchLauncherNavigation(boolean forward) {
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            if (!performScroll(appRecycler, forward)) {
-                dispatchLauncherAppSwipe(appRecycler, forward);
-            }
+            dispatchLauncherAppSwipe(appRecycler, forward);
         } else if (!performLauncherPageScroll(forward)) {
             Log.d(TAG, "Launcher pager did not accept accessibility scroll forward=" + forward);
         }
@@ -573,9 +571,9 @@ final class AccessibilityNavigator {
         path.moveTo(startX, y);
         path.lineTo(endX, y);
         GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 160))
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 220))
                 .build();
-        service.suppressInjectedGestures(200);
+        service.suppressInjectedGestures(260);
         boolean submitted = service.dispatchGesture(gesture, null, null);
         Log.d(TAG, "Dispatched launcher app swipe forward=" + forward
                 + " submitted=" + submitted
