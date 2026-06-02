@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">R08 Access Bridge</string>
+    <string name="service_name">R08 Access Bridge</string>
+    <string name="service_description">Use the R08 ring as a navigation controller on Rokid glasses.</string>
+
+    <string name="title_modes">Ring Modes</string>
+    <string name="title_system">System</string>
+    <string name="title_forget_confirm">Forget R08?</string>
+
+    <string name="status_service_on">Service ON</string>
+    <string name="status_service_off">Service OFF</string>
+    <string name="status_home">%1$s - Pairing and setup</string>
+    <string name="status_modes">%1$s - Input behavior</string>
+    <string name="status_system">%1$s - Permissions and reset</string>
+    <string name="status_forget_confirm">This only removes the saved bond</string>
+
+    <string name="action_pair_reconnect">Pair / Reconnect</string>
+    <string name="detail_pair_reconnect">Scan for R08, then connect or pair</string>
+    <string name="action_modes">Ring modes</string>
+    <string name="detail_modes">Choose fast keys or touch fallback</string>
+    <string name="action_system">System</string>
+    <string name="detail_system">Accessibility, settings, forget</string>
+
+    <string name="action_accessibility">Accessibility</string>
+    <string name="detail_accessibility">Enable the R08 service</string>
+    <string name="action_app_settings">App settings</string>
+    <string name="detail_app_settings">Bluetooth permissions and app info</string>
+    <string name="action_forget_r08">Forget R08</string>
+    <string name="detail_forget_r08">Opens a confirmation screen</string>
+
+    <string name="action_fast_mode">Fast mode</string>
+    <string name="detail_fast_mode">Recommended: navigation keys</string>
+    <string name="action_touch_fallback">Touch fallback</string>
+    <string name="detail_touch_fallback">Use only if fast mode fails</string>
+
+    <string name="action_cancel">Cancel</string>
+    <string name="detail_cancel_forget">Keep the saved R08 bond</string>
+    <string name="action_confirm_forget">Confirm forget</string>
+    <string name="detail_confirm_forget">Remove R08, then pair again</string>
+
+    <string name="toast_pair_reconnect_started">Pair / reconnect started</string>
+    <string name="toast_forget_submitted">R08 forget requested</string>
+    <string name="toast_no_bonded_r08">No bonded R08 found</string>
+</resources>
