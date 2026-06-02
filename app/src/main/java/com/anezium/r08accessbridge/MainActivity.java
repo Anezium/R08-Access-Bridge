@@ -32,6 +32,8 @@ import java.util.List;
 
 public final class MainActivity extends Activity {
     private static final String TAG = "R08Activity";
+    private static final String EXTRA_PROBE_APP_TYPE = "probe_app_type";
+    private static final String EXTRA_EXIT_AFTER_PROBE = "exit_after_probe";
     private static final long NAV_DEBOUNCE_MS = 220L;
     private static final long SELECT_BOUNCE_IGNORE_MS = 120L;
     private static final long DOUBLE_SELECT_MAX_MS = 650L;
@@ -60,6 +62,7 @@ public final class MainActivity extends Activity {
         if (fastDefaultApplied && isAccessibilityEnabled()) {
             sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE);
         }
+        handleLaunchIntent(getIntent());
     }
 
     @Override
@@ -76,6 +79,13 @@ public final class MainActivity extends Activity {
         }
         clearPendingSelect();
         super.onDestroy();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleLaunchIntent(intent);
     }
 
     @Override
@@ -557,6 +567,20 @@ public final class MainActivity extends Activity {
     private void probeAppType(int appType) {
         sendServiceCommand(RingControlAccessibilityService.COMMAND_PROBE_APP_TYPE, appType);
         Toast.makeText(this, "Probe appType " + appType, Toast.LENGTH_SHORT).show();
+    }
+
+    private void handleLaunchIntent(Intent intent) {
+        if (intent == null || !intent.hasExtra(EXTRA_PROBE_APP_TYPE)) {
+            return;
+        }
+        int appType = intent.getIntExtra(EXTRA_PROBE_APP_TYPE, -1);
+        if (appType < 0 || appType > 255) {
+            return;
+        }
+        probeAppType(appType);
+        if (intent.getBooleanExtra(EXTRA_EXIT_AFTER_PROBE, false)) {
+            mainHandler.postDelayed(this::finish, 900);
+        }
     }
 
     private void pairOrReconnect() {
