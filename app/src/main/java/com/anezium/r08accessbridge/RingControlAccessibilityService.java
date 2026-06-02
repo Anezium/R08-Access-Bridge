@@ -55,6 +55,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final float MOTION_TAP_SLOP = 32f;
     private static final float MOTION_SWIPE_THRESHOLD = 70f;
     private static final long INJECTED_GESTURE_SUPPRESS_MS = 550L;
+    private static final long LAUNCHER_ACCELERATION_WINDOW_MS = 900L;
+    private static final int LAUNCHER_ACCELERATION_START_STREAK = 3;
+    private static final int LAUNCHER_ACCELERATED_STEPS = 2;
 
     private AccessibilityNavigator navigator;
     private RingBleController bleController;
@@ -63,6 +66,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private long lastDirectionalAt;
     private int lastDirectionalCommand;
     private long lastLauncherDirectionalDownTime;
+    private int launcherDirectionStreak;
+    private int launcherDirectionStreakCommand;
+    private long launcherDirectionStreakAt;
     private long lastBackAt;
     private long pendingTapAt;
     private Runnable pendingSingleTap;
@@ -364,7 +370,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private void executeDebounced(int command, String source, long inputDownTime, long inputEventTime) {
         long now = SystemClock.uptimeMillis();
+        int launcherSteps = 1;
         if (command == RingCommand.ACTIVATE) {
+            resetLauncherDirectionStreak();
             handleActivateTap(source, now);
             return;
         }
@@ -395,14 +403,46 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             if (launcherActive && inputDownTime != 0L) {
                 lastLauncherDirectionalDownTime = inputDownTime;
             }
+            if (launcherActive && !touchMode) {
+                launcherSteps = recordLauncherDirectionStreak(command, now);
+            } else {
+                resetLauncherDirectionStreak();
+            }
         } else if (command == RingCommand.BACK) {
+            resetLauncherDirectionStreak();
             if (now - lastBackAt < BACK_DEBOUNCE_MS) {
                 return;
             }
             lastBackAt = now;
             showFeedback("Back");
+        } else {
+            resetLauncherDirectionStreak();
         }
-        execute(command, source);
+        execute(command, source, launcherSteps);
+    }
+
+    private int recordLauncherDirectionStreak(int command, long now) {
+        if (command == launcherDirectionStreakCommand
+                && now - launcherDirectionStreakAt <= LAUNCHER_ACCELERATION_WINDOW_MS) {
+            launcherDirectionStreak++;
+        } else {
+            launcherDirectionStreak = 1;
+            launcherDirectionStreakCommand = command;
+        }
+        launcherDirectionStreakAt = now;
+        if (launcherDirectionStreak >= LAUNCHER_ACCELERATION_START_STREAK) {
+            Log.d(TAG, "Launcher acceleration command=" + command
+                    + " streak=" + launcherDirectionStreak
+                    + " steps=" + LAUNCHER_ACCELERATED_STEPS);
+            return LAUNCHER_ACCELERATED_STEPS;
+        }
+        return 1;
+    }
+
+    private void resetLauncherDirectionStreak() {
+        launcherDirectionStreak = 0;
+        launcherDirectionStreakCommand = RingCommand.NONE;
+        launcherDirectionStreakAt = 0L;
     }
 
     private void handleActivateTap(String source, long now) {
@@ -432,17 +472,21 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     }
 
     private void execute(int command, String source) {
+        execute(command, source, 1);
+    }
+
+    private void execute(int command, String source, int launcherSteps) {
         if (navigator == null) {
             return;
         }
         switch (command) {
             case RingCommand.FORWARD:
-                Log.d(TAG, "R08 forward from " + source);
-                navigator.moveForward();
+                Log.d(TAG, "R08 forward from " + source + " launcherSteps=" + launcherSteps);
+                navigator.moveForward(launcherSteps);
                 break;
             case RingCommand.BACKWARD:
-                Log.d(TAG, "R08 backward from " + source);
-                navigator.moveBackward();
+                Log.d(TAG, "R08 backward from " + source + " launcherSteps=" + launcherSteps);
+                navigator.moveBackward(launcherSteps);
                 break;
             case RingCommand.ACTIVATE:
                 Log.d(TAG, "R08 activate from " + source);

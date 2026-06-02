@@ -1,9 +1,12 @@
 package com.anezium.r08accessbridge;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityService.GestureResultCallback;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -26,16 +29,26 @@ final class AccessibilityNavigator {
     private static final float LAUNCHER_APP_STEP_FRACTION = 0.24f;
     private static final long LAUNCHER_APP_STEP_DURATION_MS = 190L;
     private static final long LAUNCHER_APP_STEP_SUPPRESS_MS = 220L;
+    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 35L;
+    private static final int MAX_LAUNCHER_QUEUED_STEPS = 5;
 
     private final RingControlAccessibilityService service;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private int queuedLauncherSteps;
+    private boolean queuedLauncherForward;
+    private boolean launcherStepInFlight;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
     }
 
     void moveForward() {
+        moveForward(1);
+    }
+
+    void moveForward(int launcherSteps) {
         if (isRokidLauncherActive()) {
-            dispatchLauncherNavigation(true);
+            dispatchLauncherNavigation(true, launcherSteps);
             return;
         }
         if (moveFocus(true, isRokidManagerActive())) {
@@ -48,8 +61,12 @@ final class AccessibilityNavigator {
     }
 
     void moveBackward() {
+        moveBackward(1);
+    }
+
+    void moveBackward(int launcherSteps) {
         if (isRokidLauncherActive()) {
-            dispatchLauncherNavigation(false);
+            dispatchLauncherNavigation(false, launcherSteps);
             return;
         }
         if (moveFocus(false, isRokidManagerActive())) {
@@ -541,10 +558,10 @@ final class AccessibilityNavigator {
         Log.d(TAG, "Dispatched vertical swipe forward=" + forward + " submitted=" + submitted);
     }
 
-    private void dispatchLauncherNavigation(boolean forward) {
+    private void dispatchLauncherNavigation(boolean forward, int steps) {
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            dispatchLauncherAppSwipe(appRecycler, forward);
+            enqueueLauncherAppSwipes(forward, steps);
         } else if (!performLauncherPageScroll(forward)) {
             Log.d(TAG, "Launcher pager did not accept accessibility scroll forward=" + forward);
         }
@@ -560,7 +577,57 @@ final class AccessibilityNavigator {
         return tryScrollTree(root, forward, new TraversalBudget());
     }
 
-    private void dispatchLauncherAppSwipe(AccessibilityNodeInfo appRecycler, boolean forward) {
+    private void enqueueLauncherAppSwipes(boolean forward, int steps) {
+        int safeSteps = Math.max(1, Math.min(steps, 2));
+        if (launcherStepInFlight && queuedLauncherForward != forward) {
+            queuedLauncherSteps = 0;
+        }
+        queuedLauncherForward = forward;
+        queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
+        drainLauncherQueue();
+    }
+
+    private void drainLauncherQueue() {
+        if (launcherStepInFlight || queuedLauncherSteps <= 0) {
+            return;
+        }
+        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
+        if (appRecycler == null || !appRecycler.isVisibleToUser()) {
+            queuedLauncherSteps = 0;
+            return;
+        }
+        boolean forward = queuedLauncherForward;
+        queuedLauncherSteps--;
+        launcherStepInFlight = true;
+        boolean submitted = dispatchLauncherAppSwipe(appRecycler, forward, new GestureResultCallback() {
+            @Override
+            public void onCompleted(GestureDescription gestureDescription) {
+                finishLauncherQueuedStep();
+            }
+
+            @Override
+            public void onCancelled(GestureDescription gestureDescription) {
+                finishLauncherQueuedStep();
+            }
+        });
+        if (!submitted) {
+            launcherStepInFlight = false;
+            queuedLauncherSteps = 0;
+        }
+    }
+
+    private void finishLauncherQueuedStep() {
+        launcherStepInFlight = false;
+        if (queuedLauncherSteps > 0) {
+            mainHandler.postDelayed(this::drainLauncherQueue, LAUNCHER_APP_STEP_QUEUE_GAP_MS);
+        }
+    }
+
+    private boolean dispatchLauncherAppSwipe(
+            AccessibilityNodeInfo appRecycler,
+            boolean forward,
+            GestureResultCallback callback
+    ) {
         DisplayMetrics metrics = service.getResources().getDisplayMetrics();
         Rect bounds = new Rect();
         appRecycler.getBoundsInScreen(bounds);
@@ -579,14 +646,16 @@ final class AccessibilityNavigator {
                 .addStroke(new GestureDescription.StrokeDescription(path, 0, LAUNCHER_APP_STEP_DURATION_MS))
                 .build();
         service.suppressInjectedGestures(LAUNCHER_APP_STEP_SUPPRESS_MS);
-        boolean submitted = service.dispatchGesture(gesture, null, null);
+        boolean submitted = service.dispatchGesture(gesture, callback, null);
         Log.d(TAG, "Dispatched launcher app swipe forward=" + forward
                 + " submitted=" + submitted
+                + " queuedRemaining=" + queuedLauncherSteps
                 + " bounds=" + bounds
                 + " startX=" + startX
                 + " endX=" + endX
                 + " step=" + step
                 + " y=" + y);
+        return submitted;
     }
 
     private boolean textEquals(CharSequence first, CharSequence second) {
