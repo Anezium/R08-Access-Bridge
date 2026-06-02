@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -30,6 +31,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class MainActivity extends Activity {
+    private static final String TAG = "R08Activity";
     private static final long NAV_DEBOUNCE_MS = 220L;
     private static final long SELECT_BOUNCE_IGNORE_MS = 120L;
     private static final long DOUBLE_SELECT_MAX_MS = 650L;
@@ -46,6 +48,7 @@ public final class MainActivity extends Activity {
     private int lastNavDirection;
     private long pendingSelectAt;
     private Runnable pendingSelect;
+    private int selectedActionIndex;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,12 +79,56 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (handleNavigationKey(event)) {
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             navigateBack();
             return true;
         }
         return super.onKeyDown(keyCode, event);
+    }
+
+    private boolean handleNavigationKey(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        if (!isNavigationKey(keyCode)) {
+            return false;
+        }
+        if (event.getAction() != KeyEvent.ACTION_DOWN) {
+            return true;
+        }
+        if (event.getRepeatCount() > 0) {
+            return true;
+        }
+        Log.d(TAG, "Navigation key code=" + keyCode + " screen=" + screen);
+        if (isBackKey(keyCode)) {
+            navigateBack();
+            return true;
+        }
+        if (isNextKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(1);
+            return true;
+        }
+        if (isPreviousKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(-1);
+            return true;
+        }
+        if (isSelectKey(keyCode)) {
+            View target = currentAction();
+            if (target != null) {
+                handleSelect(target);
+            }
+            return true;
+        }
+        return false;
     }
 
     private View buildView() {
@@ -120,6 +167,10 @@ public final class MainActivity extends Activity {
         navigateTo(Screen.FORGET_CONFIRM);
     }
 
+    private void showProbe() {
+        navigateTo(Screen.PROBE);
+    }
+
     private void navigateTo(Screen target) {
         if (screen != target) {
             backStack.push(screen);
@@ -129,6 +180,7 @@ public final class MainActivity extends Activity {
 
     private void setScreen(Screen target) {
         screen = target;
+        selectedActionIndex = 0;
         render();
     }
 
@@ -152,6 +204,7 @@ public final class MainActivity extends Activity {
                         v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE));
                 action(R.string.action_touch_fallback, R.string.detail_touch_fallback,
                         v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_TOUCH));
+                action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
                 break;
             case SYSTEM:
                 action(R.string.action_accessibility, R.string.detail_accessibility,
@@ -166,10 +219,22 @@ public final class MainActivity extends Activity {
                     showHome();
                 });
                 break;
+            case PROBE:
+                action(R.string.action_fast_mode, R.string.detail_restore_fast_mode,
+                        v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE));
+                for (int appType = 0; appType <= 7; appType++) {
+                    int value = appType;
+                    action("AppType " + value, "Configure R08 and log keycodes",
+                            v -> probeAppType(value));
+                }
+                break;
             default:
                 break;
         }
-        scrollView.post(() -> focusAction(0));
+        if (!actionViews.isEmpty() && selectedActionIndex >= actionViews.size()) {
+            selectedActionIndex = actionViews.size() - 1;
+        }
+        scrollView.post(() -> focusAction(selectedActionIndex));
     }
 
     private void addHeader() {
@@ -197,6 +262,8 @@ public final class MainActivity extends Activity {
                 return getString(R.string.title_system);
             case FORGET_CONFIRM:
                 return getString(R.string.title_forget_confirm);
+            case PROBE:
+                return getString(R.string.title_probe_app_type);
             case HOME:
             default:
                 return getString(R.string.app_name);
@@ -213,6 +280,8 @@ public final class MainActivity extends Activity {
                 return getString(R.string.status_modes, service);
             case SYSTEM:
                 return getString(R.string.status_system, service);
+            case PROBE:
+                return getString(R.string.status_probe_app_type, service);
             case HOME:
             default:
                 return getString(R.string.status_home, service);
@@ -220,16 +289,25 @@ public final class MainActivity extends Activity {
     }
 
     private void action(int titleRes, int detailRes, View.OnClickListener listener) {
+        action(getString(titleRes), getString(detailRes), listener);
+    }
+
+    private void action(String titleText, String detailText, View.OnClickListener listener) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), 0, dp(14), 0);
         row.setFocusable(true);
         row.setClickable(true);
-        row.setBackground(outline(false));
+        int rowIndex = actionViews.size();
+        row.setBackground(outline(rowIndex == selectedActionIndex));
         row.setOnFocusChangeListener((v, focused) -> {
-            v.setBackground(outline(focused));
             if (focused) {
+                int index = actionViews.indexOf(v);
+                if (index >= 0) {
+                    selectedActionIndex = index;
+                    updateActionSelection();
+                }
                 reveal(v);
             }
         });
@@ -263,7 +341,7 @@ public final class MainActivity extends Activity {
         });
 
         TextView title = new TextView(this);
-        title.setText(titleRes);
+        title.setText(titleText);
         title.setTextColor(Color.rgb(248, 250, 249));
         title.setTextSize(15);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -271,7 +349,7 @@ public final class MainActivity extends Activity {
         row.addView(title, fullWidth(dp(22)));
 
         TextView detail = new TextView(this);
-        detail.setText(detailRes);
+        detail.setText(detailText);
         detail.setTextColor(Color.rgb(161, 183, 172));
         detail.setTextSize(10);
         detail.setSingleLine(true);
@@ -313,6 +391,21 @@ public final class MainActivity extends Activity {
         return keyCode == KeyEvent.KEYCODE_BACK
                 || keyCode == KeyEvent.KEYCODE_ESCAPE
                 || keyCode == 202;
+    }
+
+    private boolean isNavigationKey(int keyCode) {
+        return isBackKey(keyCode) || isNextKey(keyCode) || isPreviousKey(keyCode) || isSelectKey(keyCode);
+    }
+
+    private View currentAction() {
+        if (actionViews.isEmpty()) {
+            return null;
+        }
+        if (selectedActionIndex < 0 || selectedActionIndex >= actionViews.size()) {
+            selectedActionIndex = 0;
+        }
+        focusAction(selectedActionIndex);
+        return actionViews.get(selectedActionIndex);
     }
 
     private void handleSelect(View target) {
@@ -360,7 +453,7 @@ public final class MainActivity extends Activity {
         if (actionViews.isEmpty()) {
             return;
         }
-        int current = actionViews.indexOf(getCurrentFocus());
+        int current = selectedActionIndex;
         int next = current < 0 ? 0 : (current + delta + actionViews.size()) % actionViews.size();
         focusAction(next);
     }
@@ -379,9 +472,17 @@ public final class MainActivity extends Activity {
         if (index < 0 || index >= actionViews.size()) {
             return;
         }
+        selectedActionIndex = index;
+        updateActionSelection();
         View target = actionViews.get(index);
         target.requestFocus();
         reveal(target);
+    }
+
+    private void updateActionSelection() {
+        for (int i = 0; i < actionViews.size(); i++) {
+            actionViews.get(i).setBackground(outline(i == selectedActionIndex));
+        }
     }
 
     private void reveal(View target) {
@@ -445,6 +546,19 @@ public final class MainActivity extends Activity {
         sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
     }
 
+    private void sendServiceCommand(String command, int appType) {
+        Intent intent = new Intent(RingControlAccessibilityService.ACTION_COMMAND);
+        intent.setPackage(getPackageName());
+        intent.putExtra(RingControlAccessibilityService.EXTRA_COMMAND, command);
+        intent.putExtra(RingControlAccessibilityService.EXTRA_APP_TYPE, appType);
+        sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
+    }
+
+    private void probeAppType(int appType) {
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_PROBE_APP_TYPE, appType);
+        Toast.makeText(this, "Probe appType " + appType, Toast.LENGTH_SHORT).show();
+    }
+
     private void pairOrReconnect() {
         if (isAccessibilityEnabled()) {
             sendServiceCommand(RingControlAccessibilityService.COMMAND_RECONNECT);
@@ -485,6 +599,7 @@ public final class MainActivity extends Activity {
         HOME,
         MODES,
         SYSTEM,
-        FORGET_CONFIRM
+        FORGET_CONFIRM,
+        PROBE
     }
 }

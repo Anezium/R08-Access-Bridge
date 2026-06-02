@@ -31,10 +31,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_FORGET_R08 = "forget_r08";
     public static final String COMMAND_CONFIGURE_TOUCH = "configure_touch";
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
+    public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_FORWARD = "forward";
     public static final String COMMAND_BACKWARD = "backward";
     public static final String COMMAND_ACTIVATE = "activate";
     public static final String COMMAND_BACK = "back";
+    public static final String EXTRA_APP_TYPE = "app_type";
 
     private static final String TAG = "R08Bridge";
     private static final String PREFS = "r08_bridge";
@@ -42,7 +44,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final String PREF_DEFAULT_MODE_VERSION = "default_mode_version";
     private static final int DEFAULT_MODE_VERSION = 1;
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
-    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 240L;
+    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 190L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;
@@ -89,6 +91,13 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 setTouchMode(true);
             } else if (COMMAND_CONFIGURE_GESTURE.equals(command)) {
                 setTouchMode(false);
+            } else if (COMMAND_PROBE_APP_TYPE.equals(command)) {
+                int appType = intent.getIntExtra(EXTRA_APP_TYPE, -1);
+                showFeedback("Probe appType " + appType);
+                if (bleController != null && appType >= 0 && appType <= 255) {
+                    Log.d(TAG, "Probe appType requested appType=" + appType);
+                    bleController.configureProbeAppType(appType);
+                }
             } else if (COMMAND_FORWARD.equals(command)) {
                 executeDebounced(RingCommand.FORWARD, "adb", 0L, 0L);
             } else if (COMMAND_BACKWARD.equals(command)) {
@@ -185,6 +194,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (command == RingCommand.NONE) {
             Log.d(TAG, "Consumed unmapped R08 key=" + event.getKeyCode());
             return true;
+        }
+        if (isNativeDpadKey(event.getKeyCode())) {
+            Log.d(TAG, "Passing native R08 DPAD key=" + event.getKeyCode());
+            return false;
         }
         Log.d(TAG, "R08 key detail code=" + event.getKeyCode()
                 + " downTime=" + event.getDownTime()
@@ -461,6 +474,14 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         String name = device.getName();
         return name != null && name.toUpperCase(Locale.US).contains("R08");
+    }
+
+    private boolean isNativeDpadKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_BACK;
     }
 
     void showFeedback(String text) {

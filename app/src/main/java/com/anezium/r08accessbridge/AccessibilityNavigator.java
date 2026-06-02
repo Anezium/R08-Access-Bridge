@@ -23,6 +23,9 @@ final class AccessibilityNavigator {
     private static final int MIN_NODE_SIZE = 6;
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
+    private static final float LAUNCHER_APP_STEP_FRACTION = 0.24f;
+    private static final long LAUNCHER_APP_STEP_DURATION_MS = 190L;
+    private static final long LAUNCHER_APP_STEP_SUPPRESS_MS = 220L;
 
     private final RingControlAccessibilityService service;
 
@@ -565,21 +568,24 @@ final class AccessibilityNavigator {
         float left = bounds.isEmpty() ? metrics.widthPixels * 0.08f : bounds.left;
         float right = bounds.isEmpty() ? metrics.widthPixels * 0.92f : bounds.right;
         float width = right - left;
-        float startX = forward ? right - width * 0.08f : left + width * 0.08f;
-        float endX = forward ? left + width * 0.08f : right - width * 0.08f;
+        float centerX = (left + right) * 0.5f;
+        float step = Math.max(metrics.widthPixels * 0.18f, width * LAUNCHER_APP_STEP_FRACTION);
+        float startX = forward ? centerX + step * 0.5f : centerX - step * 0.5f;
+        float endX = forward ? centerX - step * 0.5f : centerX + step * 0.5f;
         Path path = new Path();
         path.moveTo(startX, y);
         path.lineTo(endX, y);
         GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 220))
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, LAUNCHER_APP_STEP_DURATION_MS))
                 .build();
-        service.suppressInjectedGestures(260);
+        service.suppressInjectedGestures(LAUNCHER_APP_STEP_SUPPRESS_MS);
         boolean submitted = service.dispatchGesture(gesture, null, null);
         Log.d(TAG, "Dispatched launcher app swipe forward=" + forward
                 + " submitted=" + submitted
                 + " bounds=" + bounds
                 + " startX=" + startX
                 + " endX=" + endX
+                + " step=" + step
                 + " y=" + y);
     }
 

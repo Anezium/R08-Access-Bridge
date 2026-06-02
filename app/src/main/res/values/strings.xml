@@ -7,6 +7,7 @@
     <string name="title_modes">Ring Modes</string>
     <string name="title_system">System</string>
     <string name="title_forget_confirm">Forget R08?</string>
+    <string name="title_probe_app_type">AppType Probe</string>
 
     <string name="status_service_on">Service ON</string>
     <string name="status_service_off">Service OFF</string>
@@ -14,6 +15,7 @@
     <string name="status_modes">%1$s - Input behavior</string>
     <string name="status_system">%1$s - Permissions and reset</string>
     <string name="status_forget_confirm">This only removes the saved bond</string>
+    <string name="status_probe_app_type">%1$s - Test R08 key output</string>
 
     <string name="action_pair_reconnect">Pair / Reconnect</string>
     <string name="detail_pair_reconnect">Scan for R08, then connect or pair</string>
@@ -33,6 +35,9 @@
     <string name="detail_fast_mode">Recommended: navigation keys</string>
     <string name="action_touch_fallback">Touch fallback</string>
     <string name="detail_touch_fallback">Use only if fast mode fails</string>
+    <string name="action_probe_app_type">AppType probe</string>
+    <string name="detail_probe_app_type">Find native DPAD mode</string>
+    <string name="detail_restore_fast_mode">Restore appType 1 media keys</string>
 
     <string name="action_cancel">Cancel</string>
     <string name="detail_cancel_forget">Keep the saved R08 bond</string>

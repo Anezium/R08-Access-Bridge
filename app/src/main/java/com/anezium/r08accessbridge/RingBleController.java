@@ -295,6 +295,19 @@ final class RingBleController {
         Log.d(TAG, "Configured R08 fast key mode appType=1, gesture off");
     }
 
+    void configureProbeAppType(int appType) {
+        touchMode = false;
+        if (writeCharacteristic == null) {
+            Log.d(TAG, "Probe appType delayed: GATT not ready appType=" + appType);
+            return;
+        }
+        byte type = (byte) (appType & 0xFF);
+        enqueue(touchConfig(type, 5));
+        handler.postDelayed(() -> enqueue(gestureConfig((byte) 0, (byte) 0)), 260);
+        handler.postDelayed(() -> enqueue(tpSleepWake(type, (byte) 1)), 540);
+        Log.d(TAG, "Configured R08 probe appType=" + appType + ", gesture off");
+    }
+
     private void configureCurrentMode() {
         if (touchMode) {
             configureTouchMode();
