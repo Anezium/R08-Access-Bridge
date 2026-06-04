@@ -41,21 +41,36 @@ In Fast mode, the R08 ring is configured to emit media keys:
 | Backward / previous | Move backward through the launcher or current app focus |
 | Single tap | Activate the current app, button, or focused item |
 | Double tap | Android Back |
+| Triple tap | Rokid AI assistant / glasses long-press shortcut |
 
 Inside R08 Access Bridge itself, double tap goes back to the previous screen. On the root screen, Back exits the app and returns to the launcher.
+
+Triple tap opens the same Rokid AI assistant scene used by the glasses long-press path. The protected Hi Rokid two-finger shortcut broadcast cannot be sent by a normal APK, so this is intentionally an AI/long-press shortcut rather than an exact two-finger shortcut clone.
+
+## APK Variants
+
+Each release includes two debug-signed APKs:
+
+| APK | Use when | Tradeoff |
+| --- | --- | --- |
+| `R08-Access-Bridge-v1.0.2-debug.apk` | Your launcher selection already matches what the ring launches. This is the recommended daily APK. | Keeps repeated-swipe acceleration for faster launcher movement. |
+| `R08-Access-Bridge-v1.0.2-focus-sync-debug.apk` | The launcher visually highlights one app but launches another, snaps back to Voice Translation/default translation, or the ring and glasses focus disagree. | Moves the launcher one app per swipe for stability. |
+
+Install the normal APK first. If the launcher selection is wrong or unstable on your glasses, install the focus-sync APK instead.
 
 ## Launcher Behavior
 
 The Rokid launcher does not reliably respond to normal Accessibility scroll calls, so R08 Access Bridge injects small horizontal launcher swipes instead.
 
-The launcher movement is tuned to keep normal swipes predictable:
+The launcher movement is tuned to keep the visible Rokid launcher selection and the ring action aligned:
 
-- First swipe in a direction: one normal launcher step.
-- Second close swipe in the same direction: one normal launcher step.
-- Third and later close swipes in the same direction: accelerated movement by queueing two normal launcher steps.
-- Pausing for about 900 ms or changing direction resets acceleration.
+- Each ring swipe moves one normal launcher step.
+- Activation taps the visible center app in the launcher carousel.
+- Triple tap opens the Rokid AI assistant, matching the glasses system long-press shortcut.
 
-This keeps one deliberate swipe as one swipe, while still making repeated scrolling less painful.
+This avoids relying on stale launcher accessibility focus, at the cost of removing repeated-swipe acceleration in the focus-sync build.
+
+The normal APK keeps the original faster repeated-swipe acceleration behavior.
 
 ## App Screens
 
@@ -86,7 +101,7 @@ Download the APK from the GitHub Releases page:
 Then install it on the glasses:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.0.1-debug.apk
+adb install -r R08-Access-Bridge-v1.0.2-debug.apk
 ```
 
 After installation:
@@ -132,7 +147,7 @@ The current project does not include a private release signing configuration. Gi
 Useful log tags:
 
 ```powershell
-adb logcat -v time -s R08Bridge:D R08Ble:D R08Navigator:D R08Activity:D *:S
+adb logcat -v time -s R08Bridge:D R08Ble:D R08Navigator:D R08Activity:D R08RokidSystem:D *:S
 ```
 
 Force Fast mode / `appType 1` from ADB:
