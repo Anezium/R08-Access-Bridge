@@ -1,12 +1,62 @@
-# R08 Access Bridge
+<h1 align="center">R08 Access Bridge</h1>
 
 <p align="center">
   <img src="app/src/main/res/drawable-nodpi/r08_access_bridge_logo_header.png" alt="R08 Access Bridge logo" width="320">
 </p>
 
+<p align="center">
+  <a href="https://github.com/Anezium/R08-Access-Bridge/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/Anezium/R08-Access-Bridge?style=for-the-badge&label=release">
+  </a>
+  <img alt="Android" src="https://img.shields.io/badge/Android-SDK%2028+-3DDC84?style=for-the-badge&logo=android&logoColor=white">
+  <img alt="Java" src="https://img.shields.io/badge/Java-17-007396?style=for-the-badge&logo=openjdk&logoColor=white">
+  <img alt="Rokid" src="https://img.shields.io/badge/Rokid-Glasses-111111?style=for-the-badge">
+</p>
+
+<p align="center">
+  <a href="https://ko-fi.com/M8R61ZTXMI" target="_blank">
+    <img height="36" style="border:0px;height:36px;" src="https://storage.ko-fi.com/cdn/kofi4.png?v=6" border="0" alt="Buy Me a Coffee at ko-fi.com" />
+  </a>
+</p>
+
+<p align="center">
+  Turn an R08 smart ring into a fast, one-axis controller for Rokid glasses.
+</p>
+
 R08 Access Bridge lets an R08 smart ring act as a navigation controller for Rokid glasses. It pairs with the ring over Bluetooth LE, configures the ring into a usable input mode, then translates ring input into launcher navigation, app focus movement, activation, and Android Back actions through an Accessibility Service.
 
 This is an independent utility for Rokid glasses workflows. It is not an official Rokid application.
+
+## Tech Stack
+
+<p>
+  <img alt="Android" src="https://img.shields.io/badge/Android-SDK%2028+-34A853?style=for-the-badge&logo=android&logoColor=white">
+  <img alt="Java 17" src="https://img.shields.io/badge/Java-17-007396?style=for-the-badge&logo=openjdk&logoColor=white">
+  <img alt="Gradle Kotlin DSL" src="https://img.shields.io/badge/Gradle-Kotlin%20DSL-02303A?style=for-the-badge&logo=gradle&logoColor=white">
+  <img alt="Bluetooth LE" src="https://img.shields.io/badge/Bluetooth%20LE-GATT-0082FC?style=for-the-badge&logo=bluetooth&logoColor=white">
+  <img alt="Accessibility Service" src="https://img.shields.io/badge/Accessibility-Service-5B5FC7?style=for-the-badge">
+  <img alt="ADB" src="https://img.shields.io/badge/ADB-Debugging-3DDC84?style=for-the-badge&logo=android&logoColor=white">
+</p>
+
+## Built For
+
+<p>
+  <img alt="Rokid Glasses" src="https://img.shields.io/badge/Rokid-Glasses-111111?style=for-the-badge">
+  <img alt="YodaOS Sprite" src="https://img.shields.io/badge/YodaOS-Sprite-6C5CE7?style=for-the-badge">
+  <img alt="R08 Ring" src="https://img.shields.io/badge/R08-Smart%20Ring-00B894?style=for-the-badge">
+  <img alt="HUD" src="https://img.shields.io/badge/HUD-480x640-0984E3?style=for-the-badge">
+  <img alt="One-axis control" src="https://img.shields.io/badge/Input-One--Axis%20Control-FDCB6E?style=for-the-badge">
+</p>
+
+## Highlights
+
+<p>
+  <img alt="Fast mode" src="https://img.shields.io/badge/Fast%20Mode-Default-2ECC71?style=for-the-badge">
+  <img alt="Focus sync APK" src="https://img.shields.io/badge/Focus--Sync-Optional%20Fix-9B59B6?style=for-the-badge">
+  <img alt="Triple tap" src="https://img.shields.io/badge/Triple%20Tap-AI%20Shortcut-3498DB?style=for-the-badge">
+  <img alt="No network" src="https://img.shields.io/badge/Network-Not%20Requested-2D3436?style=for-the-badge">
+  <img alt="Debug signed" src="https://img.shields.io/badge/APK-Debug%20Signed-E67E22?style=for-the-badge">
+</p>
 
 ## Project Details
 
