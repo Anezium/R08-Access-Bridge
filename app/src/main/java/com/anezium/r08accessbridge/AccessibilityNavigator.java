@@ -135,9 +135,22 @@ final class AccessibilityNavigator {
     }
 
     private boolean activateLauncherCenter() {
+        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
+        if (appRecycler != null && appRecycler.isVisibleToUser()) {
+            Rect rect = new Rect();
+            appRecycler.getBoundsInScreen(rect);
+            if (!rect.isEmpty()) {
+                dispatchTap(rect.centerX(), rect.centerY());
+                Log.d(TAG, "Tapped launcher carousel center bounds=" + rect);
+                return true;
+            }
+        }
+
         AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        AccessibilityNodeInfo focused = findFocusedClickable(root);
-        AccessibilityNodeInfo target = focused != null ? focused : findClickableNearestScreenCenter(root);
+        AccessibilityNodeInfo target = findClickableNearestScreenCenter(root);
+        if (target == null) {
+            target = findFocusedClickable(root);
+        }
         if (target == null) {
             DisplayMetrics metrics = service.getResources().getDisplayMetrics();
             dispatchTap(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
@@ -578,7 +591,7 @@ final class AccessibilityNavigator {
     }
 
     private void enqueueLauncherAppSwipes(boolean forward, int steps) {
-        int safeSteps = Math.max(1, Math.min(steps, 2));
+        int safeSteps = 1;
         if (launcherStepInFlight && queuedLauncherForward != forward) {
             queuedLauncherSteps = 0;
         }

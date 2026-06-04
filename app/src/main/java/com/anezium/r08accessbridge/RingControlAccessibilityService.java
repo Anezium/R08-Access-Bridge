@@ -403,11 +403,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             if (launcherActive && inputDownTime != 0L) {
                 lastLauncherDirectionalDownTime = inputDownTime;
             }
-            if (launcherActive && !touchMode) {
-                launcherSteps = recordLauncherDirectionStreak(command, now);
-            } else {
-                resetLauncherDirectionStreak();
-            }
+            resetLauncherDirectionStreak();
         } else if (command == RingCommand.BACK) {
             resetLauncherDirectionStreak();
             if (now - lastBackAt < BACK_DEBOUNCE_MS) {
