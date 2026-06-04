@@ -30,6 +30,8 @@ final class AccessibilityNavigator {
     private static final long LAUNCHER_APP_STEP_DURATION_MS = 190L;
     private static final long LAUNCHER_APP_STEP_SUPPRESS_MS = 220L;
     private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 35L;
+    private static final long LONG_PRESS_DURATION_MS = 850L;
+    private static final long LONG_PRESS_SUPPRESS_MS = 1050L;
     private static final int MAX_LAUNCHER_QUEUED_STEPS = 5;
 
     private final RingControlAccessibilityService service;
@@ -107,6 +109,35 @@ final class AccessibilityNavigator {
         }
     }
 
+    void longPress() {
+        if (isRokidLauncherActive() && longPressLauncherCenter()) {
+            return;
+        }
+        AccessibilityNodeInfo current = findCurrentFocus();
+        if (current == null) {
+            List<AccessibilityNodeInfo> nodes = collectCandidates();
+            if (!nodes.isEmpty()) {
+                current = nodes.get(0);
+                focusNode(current, isRokidManagerActive());
+            }
+        }
+        AccessibilityNodeInfo longClickable = findLongClickable(current);
+        if (longClickable != null && longClickable.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+            Log.d(TAG, "Long-clicked focused accessibility node");
+            return;
+        }
+        Rect bounds = new Rect();
+        if (current != null) {
+            current.getBoundsInScreen(bounds);
+        }
+        if (!bounds.isEmpty()) {
+            dispatchLongPress(bounds.centerX(), bounds.centerY());
+        } else {
+            DisplayMetrics metrics = service.getResources().getDisplayMetrics();
+            dispatchLongPress(metrics.widthPixels / 2f, metrics.heightPixels / 2f);
+        }
+    }
+
     void back() {
         if (!service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
             dispatchHorizontalSwipe(false);
@@ -153,6 +184,30 @@ final class AccessibilityNavigator {
         target.getBoundsInScreen(rect);
         if (!rect.isEmpty()) {
             dispatchTap(rect.centerX(), rect.centerY());
+            return true;
+        }
+        return false;
+    }
+
+    private boolean longPressLauncherCenter() {
+        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo focused = findFocusedClickable(root);
+        AccessibilityNodeInfo target = focused != null ? focused : findClickableNearestScreenCenter(root);
+        if (target == null) {
+            DisplayMetrics metrics = service.getResources().getDisplayMetrics();
+            dispatchLongPress(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
+            return true;
+        }
+        if (target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+            Rect rect = new Rect();
+            target.getBoundsInScreen(rect);
+            Log.d(TAG, "Long-clicked launcher center bounds=" + rect);
+            return true;
+        }
+        Rect rect = new Rect();
+        target.getBoundsInScreen(rect);
+        if (!rect.isEmpty()) {
+            dispatchLongPress(rect.centerX(), rect.centerY());
             return true;
         }
         return false;
@@ -437,6 +492,17 @@ final class AccessibilityNavigator {
         return null;
     }
 
+    private AccessibilityNodeInfo findLongClickable(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo cursor = node;
+        while (cursor != null) {
+            if ((cursor.isLongClickable() || supports(cursor, AccessibilityNodeInfo.ACTION_LONG_CLICK)) && cursor.isEnabled()) {
+                return cursor;
+            }
+            cursor = cursor.getParent();
+        }
+        return null;
+    }
+
     private boolean supports(AccessibilityNodeInfo node, int actionId) {
         List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
         if (actions == null) {
@@ -524,6 +590,17 @@ final class AccessibilityNavigator {
         service.suppressInjectedGestures(180);
         service.dispatchGesture(gesture, null, null);
         Log.d(TAG, "Dispatched tap x=" + x + " y=" + y);
+    }
+
+    private void dispatchLongPress(float x, float y) {
+        Path path = new Path();
+        path.moveTo(x, y);
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, LONG_PRESS_DURATION_MS))
+                .build();
+        service.suppressInjectedGestures(LONG_PRESS_SUPPRESS_MS);
+        boolean submitted = service.dispatchGesture(gesture, null, null);
+        Log.d(TAG, "Dispatched long press x=" + x + " y=" + y + " submitted=" + submitted);
     }
 
     private void dispatchHorizontalSwipe(boolean forward) {

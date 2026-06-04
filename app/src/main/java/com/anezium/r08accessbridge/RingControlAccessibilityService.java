@@ -36,6 +36,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_BACKWARD = "backward";
     public static final String COMMAND_ACTIVATE = "activate";
     public static final String COMMAND_BACK = "back";
+    public static final String COMMAND_LONG_PRESS = "long_press";
     public static final String EXTRA_APP_TYPE = "app_type";
 
     private static final String TAG = "R08Bridge";
@@ -50,7 +51,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final long BACK_DEBOUNCE_MS = 350L;
     private static final long TAP_DUPLICATE_IGNORE_MS = 75L;
     private static final long DOUBLE_TAP_MAX_MS = 650L;
-    private static final long SINGLE_TAP_DELAY_MS = 380L;
+    private static final long MULTI_TAP_RESOLVE_DELAY_MS = 380L;
     private static final long MOTION_TAP_MAX_MS = 280L;
     private static final float MOTION_TAP_SLOP = 32f;
     private static final float MOTION_SWIPE_THRESHOLD = 70f;
@@ -71,7 +72,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private long launcherDirectionStreakAt;
     private long lastBackAt;
     private long pendingTapAt;
-    private Runnable pendingSingleTap;
+    private Runnable pendingTapAction;
+    private int pendingTapCount;
     private long suppressGesturesUntil;
     private float downX;
     private float downY;
@@ -112,6 +114,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 executeDebounced(RingCommand.ACTIVATE, "adb", 0L, 0L);
             } else if (COMMAND_BACK.equals(command)) {
                 executeDebounced(RingCommand.BACK, "adb", 0L, 0L);
+            } else if (COMMAND_LONG_PRESS.equals(command)) {
+                executeDebounced(RingCommand.LONG_PRESS, "adb", 0L, 0L);
             }
         }
     };
@@ -168,9 +172,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         } catch (IllegalArgumentException ignored) {
             // Receiver was not registered.
         }
-        if (pendingSingleTap != null) {
-            mainHandler.removeCallbacks(pendingSingleTap);
-            pendingSingleTap = null;
+        if (pendingTapAction != null) {
+            mainHandler.removeCallbacks(pendingTapAction);
+            pendingTapAction = null;
+            pendingTapCount = 0;
         }
         super.onDestroy();
     }
@@ -329,8 +334,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 executeDebounced(RingCommand.BACKWARD, "gesture:right", 0L, 0L);
                 return true;
             case AccessibilityService.GESTURE_DOUBLE_TAP:
-            case AccessibilityService.GESTURE_DOUBLE_TAP_AND_HOLD:
                 executeDebounced(RingCommand.BACK, "gesture:doubleTap", 0L, 0L);
+                return true;
+            case AccessibilityService.GESTURE_DOUBLE_TAP_AND_HOLD:
+                executeDebounced(RingCommand.LONG_PRESS, "gesture:doubleTapHold", 0L, 0L);
                 return true;
             default:
                 return false;
@@ -415,6 +422,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             }
             lastBackAt = now;
             showFeedback("Back");
+        } else if (command == RingCommand.LONG_PRESS) {
+            resetLauncherDirectionStreak();
+            showFeedback("Long press");
         } else {
             resetLauncherDirectionStreak();
         }
@@ -446,29 +456,50 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     }
 
     private void handleActivateTap(String source, long now) {
-        if (pendingSingleTap != null) {
+        if (pendingTapAction != null) {
             long delta = now - pendingTapAt;
             if (delta < TAP_DUPLICATE_IGNORE_MS) {
                 Log.d(TAG, "Ignored tap bounce delta=" + delta);
                 return;
             }
             if (delta <= DOUBLE_TAP_MAX_MS) {
-                mainHandler.removeCallbacks(pendingSingleTap);
-                pendingSingleTap = null;
-                pendingTapAt = 0L;
-                showFeedback("Back");
-                Log.d(TAG, "R08 double tap from " + source + " delta=" + delta);
-                execute(RingCommand.BACK, source + ":doubleTap");
+                mainHandler.removeCallbacks(pendingTapAction);
+                pendingTapCount++;
+                if (pendingTapCount >= 3) {
+                    pendingTapAction = null;
+                    pendingTapAt = 0L;
+                    pendingTapCount = 0;
+                    showFeedback("Long press");
+                    Log.d(TAG, "R08 triple tap from " + source + " delta=" + delta);
+                    execute(RingCommand.LONG_PRESS, source + ":tripleTap");
+                    return;
+                }
+                pendingTapAt = now;
+                pendingTapAction = () -> {
+                    pendingTapAction = null;
+                    pendingTapAt = 0L;
+                    pendingTapCount = 0;
+                    showFeedback("Back");
+                    Log.d(TAG, "R08 double tap from " + source);
+                    execute(RingCommand.BACK, source + ":doubleTap");
+                };
+                mainHandler.postDelayed(pendingTapAction, MULTI_TAP_RESOLVE_DELAY_MS);
                 return;
             }
+            mainHandler.removeCallbacks(pendingTapAction);
+            pendingTapAction = null;
+            pendingTapAt = 0L;
+            pendingTapCount = 0;
         }
         pendingTapAt = now;
-        pendingSingleTap = () -> {
-            pendingSingleTap = null;
+        pendingTapCount = 1;
+        pendingTapAction = () -> {
+            pendingTapAction = null;
             pendingTapAt = 0L;
+            pendingTapCount = 0;
             execute(RingCommand.ACTIVATE, source);
         };
-        mainHandler.postDelayed(pendingSingleTap, SINGLE_TAP_DELAY_MS);
+        mainHandler.postDelayed(pendingTapAction, MULTI_TAP_RESOLVE_DELAY_MS);
     }
 
     private void execute(int command, String source) {
@@ -495,6 +526,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             case RingCommand.BACK:
                 Log.d(TAG, "R08 back from " + source);
                 navigator.back();
+                break;
+            case RingCommand.LONG_PRESS:
+                Log.d(TAG, "R08 long press from " + source);
+                if (!RokidSystemActions.openAiAssist(this)) {
+                    navigator.longPress();
+                }
                 break;
             default:
                 break;
@@ -538,6 +575,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         static final int BACKWARD = 2;
         static final int ACTIVATE = 3;
         static final int BACK = 4;
+        static final int LONG_PRESS = 5;
 
         private RingCommand() {
         }
