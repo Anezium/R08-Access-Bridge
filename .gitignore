@@ -8,5 +8,8 @@ local.properties
 *.png
 !app/src/main/res/drawable-nodpi/r08_access_bridge_logo_header.png
 !app/src/main/res/drawable-nodpi/r08_access_bridge_logo_icon.png
+!docs/
+!docs/screenshots/
+!docs/screenshots/*.png
 /inspect/
 /*.xml

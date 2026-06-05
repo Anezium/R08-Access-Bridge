@@ -1,12 +1,7 @@
 package com.anezium.r08accessbridge;
 
 import android.accessibilityservice.AccessibilityService;
-import android.accessibilityservice.AccessibilityService.GestureResultCallback;
-import android.accessibilityservice.GestureDescription;
-import android.graphics.Path;
 import android.graphics.Rect;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -19,29 +14,19 @@ import java.util.List;
 
 final class AccessibilityNavigator {
     private static final String TAG = "R08Navigator";
-    private static final String ROKID_LAUNCHER_PACKAGE = "com.rokid.os.sprite.launcher";
     private static final String ROKID_MANAGER_PACKAGE = "com.example.advancedsettingsmanager";
-    private static final String LAUNCHER_APP_RECYCLER_ID = "com.rokid.os.sprite.launcher:id/app_recycler";
-    private static final String LAUNCHER_VIEWPAGER_ID = "com.rokid.os.sprite.launcher:id/viewpager";
     private static final int MIN_NODE_SIZE = 6;
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
-    private static final float LAUNCHER_APP_STEP_FRACTION = 0.24f;
-    private static final long LAUNCHER_APP_STEP_DURATION_MS = 190L;
-    private static final long LAUNCHER_APP_STEP_SUPPRESS_MS = 220L;
-    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 35L;
-    private static final long LONG_PRESS_DURATION_MS = 850L;
-    private static final long LONG_PRESS_SUPPRESS_MS = 1050L;
-    private static final int MAX_LAUNCHER_QUEUED_STEPS = 5;
 
     private final RingControlAccessibilityService service;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private int queuedLauncherSteps;
-    private boolean queuedLauncherForward;
-    private boolean launcherStepInFlight;
+    private final GestureDispatcher gestures;
+    private final LauncherNavigator launcherNavigator;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
+        gestures = new GestureDispatcher(service);
+        launcherNavigator = new LauncherNavigator(service, gestures);
     }
 
     void moveForward() {
@@ -49,17 +34,17 @@ final class AccessibilityNavigator {
     }
 
     void moveForward(int launcherSteps) {
-        if (isRokidLauncherActive()) {
-            dispatchLauncherNavigation(true, launcherSteps);
+        if (launcherNavigator.isActive()) {
+            launcherNavigator.move(true, launcherSteps);
             return;
         }
-        if (moveFocus(true, isRokidManagerActive())) {
+        if (moveFocus(true, needsStrongFocusFeedback())) {
             return;
         }
         if (tryScroll(true)) {
             return;
         }
-        dispatchVerticalSwipe(true);
+        gestures.verticalSwipe(true);
     }
 
     void moveBackward() {
@@ -67,21 +52,21 @@ final class AccessibilityNavigator {
     }
 
     void moveBackward(int launcherSteps) {
-        if (isRokidLauncherActive()) {
-            dispatchLauncherNavigation(false, launcherSteps);
+        if (launcherNavigator.isActive()) {
+            launcherNavigator.move(false, launcherSteps);
             return;
         }
-        if (moveFocus(false, isRokidManagerActive())) {
+        if (moveFocus(false, needsStrongFocusFeedback())) {
             return;
         }
         if (tryScroll(false)) {
             return;
         }
-        dispatchVerticalSwipe(false);
+        gestures.verticalSwipe(false);
     }
 
     void activate() {
-        if (isRokidLauncherActive() && activateLauncherCenter()) {
+        if (launcherNavigator.isActive() && launcherNavigator.activateCenter()) {
             return;
         }
         AccessibilityNodeInfo current = findCurrentFocus();
@@ -89,7 +74,7 @@ final class AccessibilityNavigator {
             List<AccessibilityNodeInfo> nodes = collectCandidates();
             if (!nodes.isEmpty()) {
                 current = nodes.get(0);
-                focusNode(current, isRokidManagerActive());
+                focusNode(current, needsStrongFocusFeedback());
             }
         }
         AccessibilityNodeInfo clickable = findClickable(current);
@@ -102,21 +87,21 @@ final class AccessibilityNavigator {
             current.getBoundsInScreen(bounds);
         }
         if (!bounds.isEmpty()) {
-            dispatchTap(bounds.centerX(), bounds.centerY());
+            gestures.tap(bounds.centerX(), bounds.centerY());
         } else {
             DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            dispatchTap(metrics.widthPixels / 2f, metrics.heightPixels / 2f);
+            gestures.tap(metrics.widthPixels / 2f, metrics.heightPixels / 2f);
         }
     }
 
     void back() {
         if (!service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
-            dispatchHorizontalSwipe(false);
+            gestures.horizontalSwipe(false);
         }
     }
 
     void longPress() {
-        if (isRokidLauncherActive() && longPressLauncherCenter()) {
+        if (launcherNavigator.isActive() && launcherNavigator.longPressCenter()) {
             return;
         }
         AccessibilityNodeInfo current = findCurrentFocus();
@@ -124,7 +109,7 @@ final class AccessibilityNavigator {
             List<AccessibilityNodeInfo> nodes = collectCandidates();
             if (!nodes.isEmpty()) {
                 current = nodes.get(0);
-                focusNode(current, isRokidManagerActive());
+                focusNode(current, needsStrongFocusFeedback());
             }
         }
         AccessibilityNodeInfo longClickable = findLongClickable(current);
@@ -137,10 +122,10 @@ final class AccessibilityNavigator {
             current.getBoundsInScreen(bounds);
         }
         if (!bounds.isEmpty()) {
-            dispatchLongPress(bounds.centerX(), bounds.centerY());
+            gestures.longPress(bounds.centerX(), bounds.centerY());
         } else {
             DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            dispatchLongPress(metrics.widthPixels / 2f, metrics.heightPixels / 2f);
+            gestures.longPress(metrics.widthPixels / 2f, metrics.heightPixels / 2f);
         }
     }
 
@@ -152,10 +137,7 @@ final class AccessibilityNavigator {
     }
 
     boolean isRokidLauncherActive() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        return root != null
-                && root.getPackageName() != null
-                && ROKID_LAUNCHER_PACKAGE.contentEquals(root.getPackageName());
+        return launcherNavigator.isActive();
     }
 
     boolean isPackageActive(String packageName) {
@@ -165,155 +147,8 @@ final class AccessibilityNavigator {
                 && packageName.contentEquals(root.getPackageName());
     }
 
-    private boolean activateLauncherCenter() {
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            Rect rect = new Rect();
-            appRecycler.getBoundsInScreen(rect);
-            if (!rect.isEmpty()) {
-                dispatchTap(rect.centerX(), rect.centerY());
-                Log.d(TAG, "Tapped launcher carousel center bounds=" + rect);
-                return true;
-            }
-        }
-
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        AccessibilityNodeInfo target = findClickableNearestScreenCenter(root);
-        if (target == null) {
-            target = findFocusedClickable(root);
-        }
-        if (target == null) {
-            DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            dispatchTap(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
-            return true;
-        }
-        if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            Rect rect = new Rect();
-            target.getBoundsInScreen(rect);
-            Log.d(TAG, "Clicked launcher center bounds=" + rect);
-            return true;
-        }
-        Rect rect = new Rect();
-        target.getBoundsInScreen(rect);
-        if (!rect.isEmpty()) {
-            dispatchTap(rect.centerX(), rect.centerY());
-            return true;
-        }
-        return false;
-    }
-
-    private boolean longPressLauncherCenter() {
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            Rect rect = new Rect();
-            appRecycler.getBoundsInScreen(rect);
-            if (!rect.isEmpty()) {
-                dispatchLongPress(rect.centerX(), rect.centerY());
-                Log.d(TAG, "Long-pressed launcher carousel center bounds=" + rect);
-                return true;
-            }
-        }
-
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        AccessibilityNodeInfo target = findClickableNearestScreenCenter(root);
-        if (target == null) {
-            target = findFocusedClickable(root);
-        }
-        if (target == null) {
-            DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            dispatchLongPress(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
-            return true;
-        }
-        if (target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
-            Rect rect = new Rect();
-            target.getBoundsInScreen(rect);
-            Log.d(TAG, "Long-clicked launcher center bounds=" + rect);
-            return true;
-        }
-        Rect rect = new Rect();
-        target.getBoundsInScreen(rect);
-        if (!rect.isEmpty()) {
-            dispatchLongPress(rect.centerX(), rect.centerY());
-            return true;
-        }
-        return false;
-    }
-
-    private AccessibilityNodeInfo findNodeByViewId(AccessibilityNodeInfo node, String viewId, TraversalBudget budget) {
-        if (node == null || budget.exhausted()) {
-            return null;
-        }
-        budget.visit();
-        if (viewId.equals(node.getViewIdResourceName())) {
-            return node;
-        }
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo match = findNodeByViewId(node.getChild(i), viewId, budget);
-            if (match != null) {
-                return match;
-            }
-        }
-        return null;
-    }
-
-    private AccessibilityNodeInfo findLauncherAppCarousel() {
-        return findNodeByViewId(
-                service.getRootInActiveWindow(),
-                LAUNCHER_APP_RECYCLER_ID,
-                new TraversalBudget());
-    }
-
-    private AccessibilityNodeInfo findFocusedClickable(AccessibilityNodeInfo node) {
-        if (node == null) {
-            return null;
-        }
-        if (node.isFocused() && node.isClickable() && node.isEnabled()) {
-            return node;
-        }
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo match = findFocusedClickable(node.getChild(i));
-            if (match != null) {
-                return match;
-            }
-        }
-        return null;
-    }
-
-    private AccessibilityNodeInfo findClickableNearestScreenCenter(AccessibilityNodeInfo root) {
-        ArrayList<AccessibilityNodeInfo> nodes = new ArrayList<>();
-        collectLauncherClickables(root, nodes, new TraversalBudget());
-        if (nodes.isEmpty()) {
-            return null;
-        }
-        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-        final float centerX = metrics.widthPixels / 2f;
-        Collections.sort(nodes, (left, right) -> {
-            Rect a = new Rect();
-            Rect b = new Rect();
-            left.getBoundsInScreen(a);
-            right.getBoundsInScreen(b);
-            float da = Math.abs(a.centerX() - centerX) + Math.abs(a.centerY() - metrics.heightPixels * 0.31f) * 0.4f;
-            float db = Math.abs(b.centerX() - centerX) + Math.abs(b.centerY() - metrics.heightPixels * 0.31f) * 0.4f;
-            return Float.compare(da, db);
-        });
-        return nodes.get(0);
-    }
-
-    private void collectLauncherClickables(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> out, TraversalBudget budget) {
-        if (node == null || budget.exhausted()) {
-            return;
-        }
-        budget.visit();
-        Rect rect = new Rect();
-        node.getBoundsInScreen(rect);
-        boolean appBand = rect.centerY() >= 135 && rect.centerY() <= 270;
-        boolean iconLike = rect.width() >= 55 && rect.width() <= 130 && rect.height() >= 55 && rect.height() <= 130;
-        if (appBand && iconLike && node.isClickable() && node.isEnabled()) {
-            out.add(node);
-        }
-        for (int i = 0; i < node.getChildCount(); i++) {
-            collectLauncherClickables(node.getChild(i), out, budget);
-        }
+    private boolean needsStrongFocusFeedback() {
+        return isRokidManagerActive();
     }
 
     private boolean moveFocus(boolean forward, boolean strongFocusFeedback) {
@@ -499,6 +334,9 @@ final class AccessibilityNavigator {
     }
 
     private boolean performScroll(AccessibilityNodeInfo node, boolean forward) {
+        if (node == null) {
+            return false;
+        }
         int action = forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
         if ((node.isScrollable() || supports(node, action)) && node.performAction(action)) {
             Log.d(TAG, "Performed accessibility scroll forward=" + forward);
@@ -530,6 +368,9 @@ final class AccessibilityNavigator {
     }
 
     private boolean supports(AccessibilityNodeInfo node, int actionId) {
+        if (node == null) {
+            return false;
+        }
         List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
         if (actions == null) {
             return false;
@@ -605,160 +446,6 @@ final class AccessibilityNavigator {
             }
         }
         return false;
-    }
-
-    private void dispatchTap(float x, float y) {
-        Path path = new Path();
-        path.moveTo(x, y);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 70))
-                .build();
-        service.suppressInjectedGestures(180);
-        service.dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Dispatched tap x=" + x + " y=" + y);
-    }
-
-    private void dispatchLongPress(float x, float y) {
-        Path path = new Path();
-        path.moveTo(x, y);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, LONG_PRESS_DURATION_MS))
-                .build();
-        service.suppressInjectedGestures(LONG_PRESS_SUPPRESS_MS);
-        boolean submitted = service.dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Dispatched long press x=" + x + " y=" + y + " submitted=" + submitted);
-    }
-
-    private void dispatchHorizontalSwipe(boolean forward) {
-        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-        float y = metrics.heightPixels * 0.52f;
-        float startX = forward ? metrics.widthPixels * 0.78f : metrics.widthPixels * 0.22f;
-        float endX = forward ? metrics.widthPixels * 0.22f : metrics.widthPixels * 0.78f;
-        Path path = new Path();
-        path.moveTo(startX, y);
-        path.lineTo(endX, y);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 130))
-                .build();
-        service.suppressInjectedGestures(170);
-        service.dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Dispatched horizontal swipe forward=" + forward + " t=" + SystemClock.uptimeMillis());
-    }
-
-    private void dispatchVerticalSwipe(boolean forward) {
-        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-        float x = metrics.widthPixels * 0.50f;
-        float startY = forward ? metrics.heightPixels * 0.74f : metrics.heightPixels * 0.28f;
-        float endY = forward ? metrics.heightPixels * 0.28f : metrics.heightPixels * 0.74f;
-        Path path = new Path();
-        path.moveTo(x, startY);
-        path.lineTo(x, endY);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, 160))
-                .build();
-        service.suppressInjectedGestures(200);
-        boolean submitted = service.dispatchGesture(gesture, null, null);
-        Log.d(TAG, "Dispatched vertical swipe forward=" + forward + " submitted=" + submitted);
-    }
-
-    private void dispatchLauncherNavigation(boolean forward, int steps) {
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            enqueueLauncherAppSwipes(forward, steps);
-        } else if (!performLauncherPageScroll(forward)) {
-            Log.d(TAG, "Launcher pager did not accept accessibility scroll forward=" + forward);
-        }
-    }
-
-    private boolean performLauncherPageScroll(boolean forward) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        AccessibilityNodeInfo viewPager = findNodeByViewId(root, LAUNCHER_VIEWPAGER_ID, new TraversalBudget());
-        if (performScroll(viewPager, forward)) {
-            Log.d(TAG, "Performed launcher pager scroll forward=" + forward);
-            return true;
-        }
-        return tryScrollTree(root, forward, new TraversalBudget());
-    }
-
-    private void enqueueLauncherAppSwipes(boolean forward, int steps) {
-        int safeSteps = 1;
-        if (launcherStepInFlight && queuedLauncherForward != forward) {
-            queuedLauncherSteps = 0;
-        }
-        queuedLauncherForward = forward;
-        queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
-        drainLauncherQueue();
-    }
-
-    private void drainLauncherQueue() {
-        if (launcherStepInFlight || queuedLauncherSteps <= 0) {
-            return;
-        }
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler == null || !appRecycler.isVisibleToUser()) {
-            queuedLauncherSteps = 0;
-            return;
-        }
-        boolean forward = queuedLauncherForward;
-        queuedLauncherSteps--;
-        launcherStepInFlight = true;
-        boolean submitted = dispatchLauncherAppSwipe(appRecycler, forward, new GestureResultCallback() {
-            @Override
-            public void onCompleted(GestureDescription gestureDescription) {
-                finishLauncherQueuedStep();
-            }
-
-            @Override
-            public void onCancelled(GestureDescription gestureDescription) {
-                finishLauncherQueuedStep();
-            }
-        });
-        if (!submitted) {
-            launcherStepInFlight = false;
-            queuedLauncherSteps = 0;
-        }
-    }
-
-    private void finishLauncherQueuedStep() {
-        launcherStepInFlight = false;
-        if (queuedLauncherSteps > 0) {
-            mainHandler.postDelayed(this::drainLauncherQueue, LAUNCHER_APP_STEP_QUEUE_GAP_MS);
-        }
-    }
-
-    private boolean dispatchLauncherAppSwipe(
-            AccessibilityNodeInfo appRecycler,
-            boolean forward,
-            GestureResultCallback callback
-    ) {
-        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-        Rect bounds = new Rect();
-        appRecycler.getBoundsInScreen(bounds);
-        float y = bounds.isEmpty() ? metrics.heightPixels * 0.31f : bounds.centerY();
-        float left = bounds.isEmpty() ? metrics.widthPixels * 0.08f : bounds.left;
-        float right = bounds.isEmpty() ? metrics.widthPixels * 0.92f : bounds.right;
-        float width = right - left;
-        float centerX = (left + right) * 0.5f;
-        float step = Math.max(metrics.widthPixels * 0.18f, width * LAUNCHER_APP_STEP_FRACTION);
-        float startX = forward ? centerX + step * 0.5f : centerX - step * 0.5f;
-        float endX = forward ? centerX - step * 0.5f : centerX + step * 0.5f;
-        Path path = new Path();
-        path.moveTo(startX, y);
-        path.lineTo(endX, y);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(path, 0, LAUNCHER_APP_STEP_DURATION_MS))
-                .build();
-        service.suppressInjectedGestures(LAUNCHER_APP_STEP_SUPPRESS_MS);
-        boolean submitted = service.dispatchGesture(gesture, callback, null);
-        Log.d(TAG, "Dispatched launcher app swipe forward=" + forward
-                + " submitted=" + submitted
-                + " queuedRemaining=" + queuedLauncherSteps
-                + " bounds=" + bounds
-                + " startX=" + startX
-                + " endX=" + endX
-                + " step=" + step
-                + " y=" + y);
-        return submitted;
     }
 
     private boolean textEquals(CharSequence first, CharSequence second) {

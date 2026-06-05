@@ -58,6 +58,7 @@ final class RingBleController {
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic writeCharacteristic;
     private BluetoothDevice targetDevice;
+    private byte activeAppType = APP_TYPE_MUSIC_KEYS;
     private boolean started;
     private boolean touchMode;
     private boolean scanning;
@@ -273,6 +274,7 @@ final class RingBleController {
 
     void configureTouchMode() {
         touchMode = true;
+        activeAppType = APP_TYPE_EBOOK_TOUCH;
         if (writeCharacteristic == null) {
             Log.d(TAG, "Touch config delayed: GATT not ready");
             return;
@@ -285,6 +287,7 @@ final class RingBleController {
 
     void configureGestureMode() {
         touchMode = false;
+        activeAppType = APP_TYPE_MUSIC_KEYS;
         if (writeCharacteristic == null) {
             Log.d(TAG, "Fast key config delayed: GATT not ready");
             return;
@@ -297,11 +300,12 @@ final class RingBleController {
 
     void configureProbeAppType(int appType) {
         touchMode = false;
+        activeAppType = (byte) (appType & 0xFF);
         if (writeCharacteristic == null) {
             Log.d(TAG, "Probe appType delayed: GATT not ready appType=" + appType);
             return;
         }
-        byte type = (byte) (appType & 0xFF);
+        byte type = activeAppType;
         enqueue(touchConfig(type, 5));
         handler.postDelayed(() -> enqueue(gestureConfig((byte) 0, (byte) 0)), 260);
         handler.postDelayed(() -> enqueue(tpSleepWake(type, (byte) 1)), 540);
@@ -317,7 +321,7 @@ final class RingBleController {
     }
 
     private void sendTpSleepWake() {
-        enqueue(tpSleepWake(APP_TYPE_EBOOK_TOUCH, (byte) 1));
+        enqueue(tpSleepWake(activeAppType, (byte) 1));
     }
 
     private void ensureAdapter() {

@@ -37,7 +37,7 @@ public final class MainActivity extends Activity {
     private static final long NAV_DEBOUNCE_MS = 220L;
     private static final long SELECT_BOUNCE_IGNORE_MS = 120L;
     private static final long DOUBLE_SELECT_MAX_MS = 650L;
-    private static final long SINGLE_SELECT_DELAY_MS = 380L;
+    private static final long SINGLE_SELECT_DELAY_MS = DOUBLE_SELECT_MAX_MS + 50L;
 
     private final List<View> actionViews = new ArrayList<>();
     private final ArrayDeque<Screen> backStack = new ArrayDeque<>();
@@ -169,6 +169,18 @@ public final class MainActivity extends Activity {
         navigateTo(Screen.MODES);
     }
 
+    private void showMapping() {
+        navigateTo(Screen.MAPPING);
+    }
+
+    private void showTripleTapMapping() {
+        navigateTo(Screen.TRIPLE_TAP_MAPPING);
+    }
+
+    private void showQuadrupleTapMapping() {
+        navigateTo(Screen.QUADRUPLE_TAP_MAPPING);
+    }
+
     private void showSystem() {
         navigateTo(Screen.SYSTEM);
     }
@@ -207,14 +219,35 @@ public final class MainActivity extends Activity {
                 action(R.string.action_pair_reconnect, R.string.detail_pair_reconnect,
                         v -> pairOrReconnect());
                 action(R.string.action_modes, R.string.detail_modes, v -> showModes());
+                action(R.string.action_mapping, R.string.detail_mapping, v -> showMapping());
                 action(R.string.action_system, R.string.detail_system, v -> showSystem());
                 break;
             case MODES:
-                action(R.string.action_fast_mode, R.string.detail_fast_mode,
-                        v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE));
-                action(R.string.action_touch_fallback, R.string.detail_touch_fallback,
-                        v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_TOUCH));
+                action(getString(R.string.action_stable_mode), modeDetail(
+                                RingModeSettings.isTouchMode(this) || RingModeSettings.isFastNavigationMode(this),
+                                getString(R.string.detail_stable_mode)),
+                        v -> enableStableMode());
+                action(getString(R.string.action_fast_mode), modeDetail(
+                                !RingModeSettings.isTouchMode(this) && !RingModeSettings.isFastNavigationMode(this),
+                                getString(R.string.detail_fast_mode)),
+                        v -> enableFastMode());
+                action(getString(R.string.action_touch_fallback), modeDetail(
+                                !RingModeSettings.isTouchMode(this),
+                                getString(R.string.detail_touch_fallback)),
+                        v -> enableTouchFallbackMode());
                 action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
+                break;
+            case MAPPING:
+                action(getString(R.string.action_triple_tap), mappingSummary(RingActionMappings.tripleTap(this)),
+                        v -> showTripleTapMapping());
+                action(getString(R.string.action_quadruple_tap), mappingSummary(RingActionMappings.quadrupleTap(this)),
+                        v -> showQuadrupleTapMapping());
+                break;
+            case TRIPLE_TAP_MAPPING:
+                addMappingActions(true);
+                break;
+            case QUADRUPLE_TAP_MAPPING:
+                addMappingActions(false);
                 break;
             case SYSTEM:
                 action(R.string.action_accessibility, R.string.detail_accessibility,
@@ -230,8 +263,8 @@ public final class MainActivity extends Activity {
                 });
                 break;
             case PROBE:
-                action(R.string.action_fast_mode, R.string.detail_restore_fast_mode,
-                        v -> sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE));
+                action(R.string.action_stable_mode, R.string.detail_restore_fast_mode,
+                        v -> enableStableMode());
                 for (int appType = 0; appType <= 7; appType++) {
                     int value = appType;
                     action("AppType " + value, "Configure R08 and log keycodes",
@@ -248,13 +281,28 @@ public final class MainActivity extends Activity {
     }
 
     private void addHeader() {
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        content.addView(topBar, fullWidth(dp(32)));
+
         TextView title = new TextView(this);
         title.setText(titleForScreen());
         title.setTextColor(Color.rgb(248, 250, 249));
         title.setTextSize(screen == Screen.FORGET_CONFIRM ? 19 : 20);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER_VERTICAL);
-        content.addView(title, fullWidth(dp(30)));
+        topBar.addView(title, weighted(dp(30), 1f));
+
+        TextView mode = new TextView(this);
+        mode.setText(RingModeSettings.modeLabel(this));
+        mode.setTextColor(modeColor());
+        mode.setTextSize(11);
+        mode.setTypeface(Typeface.DEFAULT_BOLD);
+        mode.setGravity(Gravity.CENTER);
+        mode.setBackground(modeOutline());
+        LinearLayout.LayoutParams modeParams = new LinearLayout.LayoutParams(dp(82), dp(24));
+        topBar.addView(mode, modeParams);
 
         TextView status = new TextView(this);
         status.setText(statusForScreen());
@@ -268,6 +316,12 @@ public final class MainActivity extends Activity {
         switch (screen) {
             case MODES:
                 return getString(R.string.title_modes);
+            case MAPPING:
+                return getString(R.string.title_mapping);
+            case TRIPLE_TAP_MAPPING:
+                return getString(R.string.title_triple_tap);
+            case QUADRUPLE_TAP_MAPPING:
+                return getString(R.string.title_quadruple_tap);
             case SYSTEM:
                 return getString(R.string.title_system);
             case FORGET_CONFIRM:
@@ -288,6 +342,11 @@ public final class MainActivity extends Activity {
         switch (screen) {
             case MODES:
                 return getString(R.string.status_modes, service);
+            case MAPPING:
+                return getString(R.string.status_mapping, service);
+            case TRIPLE_TAP_MAPPING:
+            case QUADRUPLE_TAP_MAPPING:
+                return getString(R.string.status_mapping_select, service);
             case SYSTEM:
                 return getString(R.string.status_system, service);
             case PROBE:
@@ -300,6 +359,63 @@ public final class MainActivity extends Activity {
 
     private void action(int titleRes, int detailRes, View.OnClickListener listener) {
         action(getString(titleRes), getString(detailRes), listener);
+    }
+
+    private String modeDetail(boolean inactive, String detail) {
+        return inactive ? detail : getString(R.string.detail_mode_active);
+    }
+
+    private void enableStableMode() {
+        RingModeSettings.setTouchMode(this, false);
+        RingModeSettings.setFastNavigationMode(this, false);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_FAST_NAVIGATION, false);
+        Toast.makeText(this, R.string.toast_stable_mode, Toast.LENGTH_SHORT).show();
+        render();
+    }
+
+    private void enableFastMode() {
+        RingModeSettings.setTouchMode(this, false);
+        RingModeSettings.setFastNavigationMode(this, true);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_FAST_NAVIGATION, true);
+        Toast.makeText(this, R.string.toast_fast_mode, Toast.LENGTH_SHORT).show();
+        render();
+    }
+
+    private void enableTouchFallbackMode() {
+        RingModeSettings.setTouchMode(this, true);
+        RingModeSettings.setFastNavigationMode(this, false);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_TOUCH);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_FAST_NAVIGATION, false);
+        Toast.makeText(this, R.string.toast_touch_mode, Toast.LENGTH_SHORT).show();
+        render();
+    }
+
+    private void addMappingActions(boolean tripleTap) {
+        RingTapAction selected = tripleTap
+                ? RingActionMappings.tripleTap(this)
+                : RingActionMappings.quadrupleTap(this);
+        for (RingTapAction action : RingTapAction.values()) {
+            String detail = action == selected
+                    ? getString(R.string.detail_mapping_selected, action.detail())
+                    : action.detail();
+            action(action.title(), detail, v -> saveMapping(tripleTap, action));
+        }
+    }
+
+    private String mappingSummary(RingTapAction action) {
+        return getString(R.string.detail_mapping_current, action.title());
+    }
+
+    private void saveMapping(boolean tripleTap, RingTapAction action) {
+        if (tripleTap) {
+            RingActionMappings.setTripleTap(this, action);
+        } else {
+            RingActionMappings.setQuadrupleTap(this, action);
+        }
+        Toast.makeText(this, getString(R.string.toast_mapping_saved, action.title()), Toast.LENGTH_SHORT).show();
+        navigateBack();
     }
 
     private void action(String titleText, String detailText, View.OnClickListener listener) {
@@ -375,17 +491,17 @@ public final class MainActivity extends Activity {
     private boolean isNextKey(int keyCode) {
         return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
                 || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
-                || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT
                 || keyCode == KeyEvent.KEYCODE_PAGE_DOWN
-                || keyCode == KeyEvent.KEYCODE_VOLUME_UP;
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
     }
 
     private boolean isPreviousKey(int keyCode) {
         return keyCode == KeyEvent.KEYCODE_DPAD_LEFT
                 || keyCode == KeyEvent.KEYCODE_DPAD_UP
-                || keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS
                 || keyCode == KeyEvent.KEYCODE_PAGE_UP
-                || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
+                || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT
+                || keyCode == KeyEvent.KEYCODE_VOLUME_UP;
     }
 
     private boolean isSelectKey(int keyCode) {
@@ -512,6 +628,24 @@ public final class MainActivity extends Activity {
         return drawable;
     }
 
+    private GradientDrawable modeOutline() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.TRANSPARENT);
+        drawable.setCornerRadius(dp(5));
+        drawable.setStroke(dp(1), modeColor());
+        return drawable;
+    }
+
+    private int modeColor() {
+        if (RingModeSettings.isTouchMode(this)) {
+            return Color.rgb(122, 210, 232);
+        }
+        if (RingModeSettings.isFastNavigationMode(this)) {
+            return Color.rgb(238, 190, 92);
+        }
+        return Color.rgb(102, 242, 165);
+    }
+
     private boolean isAccessibilityEnabled() {
         ComponentName component = new ComponentName(this, RingControlAccessibilityService.class);
         String flat = component.flattenToString();
@@ -561,6 +695,14 @@ public final class MainActivity extends Activity {
         intent.setPackage(getPackageName());
         intent.putExtra(RingControlAccessibilityService.EXTRA_COMMAND, command);
         intent.putExtra(RingControlAccessibilityService.EXTRA_APP_TYPE, appType);
+        sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
+    }
+
+    private void sendServiceCommand(String command, boolean enabled) {
+        Intent intent = new Intent(RingControlAccessibilityService.ACTION_COMMAND);
+        intent.setPackage(getPackageName());
+        intent.putExtra(RingControlAccessibilityService.EXTRA_COMMAND, command);
+        intent.putExtra(RingControlAccessibilityService.EXTRA_ENABLED, enabled);
         sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
     }
 
@@ -615,6 +757,10 @@ public final class MainActivity extends Activity {
         return new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, height);
     }
 
+    private LinearLayout.LayoutParams weighted(int height, float weight) {
+        return new LinearLayout.LayoutParams(0, height, weight);
+    }
+
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
@@ -622,6 +768,9 @@ public final class MainActivity extends Activity {
     private enum Screen {
         HOME,
         MODES,
+        MAPPING,
+        TRIPLE_TAP_MAPPING,
+        QUADRUPLE_TAP_MAPPING,
         SYSTEM,
         FORGET_CONFIRM,
         PROBE
