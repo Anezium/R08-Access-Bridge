@@ -5,6 +5,9 @@
     <string name="service_description">Use the R08 ring as a navigation controller on Rokid glasses.</string>
 
     <string name="title_modes">Ring Modes</string>
+    <string name="title_mapping">Action Mapping</string>
+    <string name="title_triple_tap">Triple Tap</string>
+    <string name="title_quadruple_tap">Quadruple Tap</string>
     <string name="title_system">System</string>
     <string name="title_forget_confirm">Forget R08?</string>
     <string name="title_probe_app_type">AppType Probe</string>
@@ -13,6 +16,8 @@
     <string name="status_service_off">Service OFF</string>
     <string name="status_home">%1$s - Pairing and setup</string>
     <string name="status_modes">%1$s - Input behavior</string>
+    <string name="status_mapping">%1$s - Tap actions</string>
+    <string name="status_mapping_select">%1$s - Choose action</string>
     <string name="status_system">%1$s - Permissions and reset</string>
     <string name="status_forget_confirm">This only removes the saved bond</string>
     <string name="status_probe_app_type">%1$s - Test R08 key output</string>
@@ -20,7 +25,9 @@
     <string name="action_pair_reconnect">Pair / Reconnect</string>
     <string name="detail_pair_reconnect">Scan for R08, then connect or pair</string>
     <string name="action_modes">Ring modes</string>
-    <string name="detail_modes">Choose fast keys or touch fallback</string>
+    <string name="detail_modes">Choose stable, fast, or touch input</string>
+    <string name="action_mapping">Action mapping</string>
+    <string name="detail_mapping">Choose triple and quadruple tap actions</string>
     <string name="action_system">System</string>
     <string name="detail_system">Accessibility, settings, forget</string>
 
@@ -31,13 +38,20 @@
     <string name="action_forget_r08">Forget R08</string>
     <string name="detail_forget_r08">Opens a confirmation screen</string>
 
+    <string name="action_stable_mode">Stable mode</string>
+    <string name="detail_stable_mode">Default: one launcher step per slide</string>
     <string name="action_fast_mode">Fast mode</string>
-    <string name="detail_fast_mode">Recommended: navigation keys</string>
+    <string name="detail_fast_mode">Accelerates repeated launcher slides</string>
     <string name="action_touch_fallback">Touch fallback</string>
-    <string name="detail_touch_fallback">Use only if fast mode fails</string>
+    <string name="detail_touch_fallback">Debug mode if key input fails</string>
     <string name="action_probe_app_type">AppType probe</string>
     <string name="detail_probe_app_type">Find native DPAD mode</string>
     <string name="detail_restore_fast_mode">Restore appType 1 media keys</string>
+    <string name="detail_mode_active">Active</string>
+    <string name="action_triple_tap">Triple Tap</string>
+    <string name="action_quadruple_tap">Quadruple Tap</string>
+    <string name="detail_mapping_current">Current: %1$s</string>
+    <string name="detail_mapping_selected">Selected - %1$s</string>
 
     <string name="action_cancel">Cancel</string>
     <string name="detail_cancel_forget">Keep the saved R08 bond</string>
@@ -47,4 +61,8 @@
     <string name="toast_pair_reconnect_started">Pair / reconnect started</string>
     <string name="toast_forget_submitted">R08 forget requested</string>
     <string name="toast_no_bonded_r08">No bonded R08 found</string>
+    <string name="toast_mapping_saved">Mapped to %1$s</string>
+    <string name="toast_stable_mode">Stable mode enabled</string>
+    <string name="toast_fast_mode">Fast mode enabled</string>
+    <string name="toast_touch_mode">Touch fallback enabled</string>
 </resources>

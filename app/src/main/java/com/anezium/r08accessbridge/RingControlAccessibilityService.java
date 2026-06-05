@@ -8,7 +8,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,6 +30,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_FORGET_R08 = "forget_r08";
     public static final String COMMAND_CONFIGURE_TOUCH = "configure_touch";
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
+    public static final String COMMAND_SET_FAST_NAVIGATION = "set_fast_navigation";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_FORWARD = "forward";
     public static final String COMMAND_BACKWARD = "backward";
@@ -38,20 +38,16 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_BACK = "back";
     public static final String COMMAND_LONG_PRESS = "long_press";
     public static final String EXTRA_APP_TYPE = "app_type";
+    public static final String EXTRA_ENABLED = "enabled";
 
     private static final String TAG = "R08Bridge";
-    private static final String PREFS = "r08_bridge";
-    private static final String PREF_TOUCH_MODE = "touch_mode";
-    private static final String PREF_DEFAULT_MODE_VERSION = "default_mode_version";
-    private static final int DEFAULT_MODE_VERSION = 1;
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
     private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 190L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;
     private static final long TAP_DUPLICATE_IGNORE_MS = 75L;
-    private static final long DOUBLE_TAP_MAX_MS = 650L;
-    private static final long MULTI_TAP_RESOLVE_DELAY_MS = 380L;
+    private static final long TAP_SEQUENCE_TIMEOUT_MS = 700L;
     private static final long MOTION_TAP_MAX_MS = 280L;
     private static final float MOTION_TAP_SLOP = 32f;
     private static final float MOTION_SWIPE_THRESHOLD = 70f;
@@ -63,7 +59,13 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private AccessibilityNavigator navigator;
     private RingBleController bleController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
+            mainHandler,
+            this::resolveTapGesture,
+            TAP_DUPLICATE_IGNORE_MS,
+            TAP_SEQUENCE_TIMEOUT_MS);
     private boolean touchMode;
+    private boolean fastNavigationMode;
     private long lastDirectionalAt;
     private int lastDirectionalCommand;
     private long lastLauncherDirectionalDownTime;
@@ -71,9 +73,6 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private int launcherDirectionStreakCommand;
     private long launcherDirectionStreakAt;
     private long lastBackAt;
-    private long pendingTapAt;
-    private Runnable pendingTapAction;
-    private int pendingTapCount;
     private long suppressGesturesUntil;
     private float downX;
     private float downY;
@@ -99,6 +98,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 setTouchMode(true);
             } else if (COMMAND_CONFIGURE_GESTURE.equals(command)) {
                 setTouchMode(false);
+            } else if (COMMAND_SET_FAST_NAVIGATION.equals(command)) {
+                setFastNavigationMode(intent.getBooleanExtra(EXTRA_ENABLED, false));
             } else if (COMMAND_PROBE_APP_TYPE.equals(command)) {
                 int appType = intent.getIntExtra(EXTRA_APP_TYPE, -1);
                 showFeedback("Probe appType " + appType);
@@ -121,20 +122,15 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     };
 
     static boolean ensureFastModeDefault(Context context) {
-        SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (prefs.getInt(PREF_DEFAULT_MODE_VERSION, 0) >= DEFAULT_MODE_VERSION) {
-            return false;
-        }
-        prefs.edit()
-                .putBoolean(PREF_TOUCH_MODE, false)
-                .putInt(PREF_DEFAULT_MODE_VERSION, DEFAULT_MODE_VERSION)
-                .apply();
-        return true;
+        return RingModeSettings.ensureDefaults(context);
     }
 
     private void setTouchMode(boolean enabled) {
         touchMode = enabled;
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_TOUCH_MODE, enabled).apply();
+        RingModeSettings.setTouchMode(this, enabled);
+        if (enabled) {
+            setFastNavigationMode(false, false);
+        }
         configureServiceInfo();
         if (bleController != null) {
             if (enabled) {
@@ -147,18 +143,34 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
     }
 
+    private void setFastNavigationMode(boolean enabled) {
+        setFastNavigationMode(enabled, true);
+    }
+
+    private void setFastNavigationMode(boolean enabled, boolean showModeFeedback) {
+        fastNavigationMode = enabled;
+        RingModeSettings.setFastNavigationMode(this, enabled);
+        resetLauncherDirectionStreak();
+        if (showModeFeedback) {
+            showFeedback(enabled ? "Fast mode" : "Stable mode");
+        }
+        Log.d(TAG, "Fast navigation mode=" + enabled);
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         ensureFastModeDefault(this);
-        touchMode = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_TOUCH_MODE, false);
+        touchMode = RingModeSettings.isTouchMode(this);
+        fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
         configureServiceInfo();
         registerCommandReceiver();
         bleController = new RingBleController(this);
         bleController.setTouchMode(touchMode);
         bleController.start();
-        Log.d(TAG, "Accessibility service connected touchMode=" + touchMode);
+        Log.d(TAG, "Accessibility service connected touchMode=" + touchMode
+                + " fastNavigationMode=" + fastNavigationMode);
     }
 
     @Override
@@ -172,11 +184,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         } catch (IllegalArgumentException ignored) {
             // Receiver was not registered.
         }
-        if (pendingTapAction != null) {
-            mainHandler.removeCallbacks(pendingTapAction);
-            pendingTapAction = null;
-            pendingTapCount = 0;
-        }
+        tapRecognizer.cancel();
         super.onDestroy();
     }
 
@@ -205,10 +213,6 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (command == RingCommand.NONE) {
             Log.d(TAG, "Consumed unmapped R08 key=" + event.getKeyCode());
             return true;
-        }
-        if (isNativeDpadKey(event.getKeyCode())) {
-            Log.d(TAG, "Passing native R08 DPAD key=" + event.getKeyCode());
-            return false;
         }
         Log.d(TAG, "R08 key detail code=" + event.getKeyCode()
                 + " downTime=" + event.getDownTime()
@@ -300,15 +304,15 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private int commandForKey(int keyCode) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-            case KeyEvent.KEYCODE_MEDIA_NEXT:
             case KeyEvent.KEYCODE_FORWARD:
             case KeyEvent.KEYCODE_PAGE_DOWN:
-            case KeyEvent.KEYCODE_VOLUME_UP:
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+            case KeyEvent.KEYCODE_VOLUME_DOWN:
                 return RingCommand.FORWARD;
             case KeyEvent.KEYCODE_DPAD_LEFT:
-            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
             case KeyEvent.KEYCODE_PAGE_UP:
-            case KeyEvent.KEYCODE_VOLUME_DOWN:
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
+            case KeyEvent.KEYCODE_VOLUME_UP:
                 return RingCommand.BACKWARD;
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
@@ -368,6 +372,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             executeDebounced(dx > 0 ? RingCommand.FORWARD : RingCommand.BACKWARD, source + ":swipe", 0L, 0L);
             return true;
         }
+        if (absY >= MOTION_SWIPE_THRESHOLD && absY > absX * 1.4f) {
+            executeDebounced(dy > 0 ? RingCommand.FORWARD : RingCommand.BACKWARD, source + ":verticalSwipe", 0L, 0L);
+            return true;
+        }
         if (durationMs <= MOTION_TAP_MAX_MS && absX <= MOTION_TAP_SLOP && absY <= MOTION_TAP_SLOP) {
             executeDebounced(RingCommand.ACTIVATE, source + ":tap", 0L, 0L);
             return true;
@@ -410,7 +418,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             if (launcherActive && inputDownTime != 0L) {
                 lastLauncherDirectionalDownTime = inputDownTime;
             }
-            if (launcherActive && !touchMode) {
+            if (launcherActive && !touchMode && fastNavigationMode) {
                 launcherSteps = recordLauncherDirectionStreak(command, now);
             } else {
                 resetLauncherDirectionStreak();
@@ -456,50 +464,46 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     }
 
     private void handleActivateTap(String source, long now) {
-        if (pendingTapAction != null) {
-            long delta = now - pendingTapAt;
-            if (delta < TAP_DUPLICATE_IGNORE_MS) {
-                Log.d(TAG, "Ignored tap bounce delta=" + delta);
-                return;
-            }
-            if (delta <= DOUBLE_TAP_MAX_MS) {
-                mainHandler.removeCallbacks(pendingTapAction);
-                pendingTapCount++;
-                if (pendingTapCount >= 3) {
-                    pendingTapAction = null;
-                    pendingTapAt = 0L;
-                    pendingTapCount = 0;
-                    showFeedback("Long press");
-                    Log.d(TAG, "R08 triple tap from " + source + " delta=" + delta);
-                    execute(RingCommand.LONG_PRESS, source + ":tripleTap");
-                    return;
-                }
-                pendingTapAt = now;
-                pendingTapAction = () -> {
-                    pendingTapAction = null;
-                    pendingTapAt = 0L;
-                    pendingTapCount = 0;
-                    showFeedback("Back");
-                    Log.d(TAG, "R08 double tap from " + source);
-                    execute(RingCommand.BACK, source + ":doubleTap");
-                };
-                mainHandler.postDelayed(pendingTapAction, MULTI_TAP_RESOLVE_DELAY_MS);
-                return;
-            }
-            mainHandler.removeCallbacks(pendingTapAction);
-            pendingTapAction = null;
-            pendingTapAt = 0L;
-            pendingTapCount = 0;
+        tapRecognizer.onTap(source, now, maxTapCountForCurrentMapping());
+    }
+
+    private int maxTapCountForCurrentMapping() {
+        if (RingActionMappings.quadrupleTap(this) != RingTapAction.NONE) {
+            return 4;
         }
-        pendingTapAt = now;
-        pendingTapCount = 1;
-        pendingTapAction = () -> {
-            pendingTapAction = null;
-            pendingTapAt = 0L;
-            pendingTapCount = 0;
+        if (RingActionMappings.tripleTap(this) != RingTapAction.NONE) {
+            return 3;
+        }
+        return 2;
+    }
+
+    private void resolveTapGesture(String source, int tapCount) {
+        if (tapCount <= 1) {
             execute(RingCommand.ACTIVATE, source);
-        };
-        mainHandler.postDelayed(pendingTapAction, MULTI_TAP_RESOLVE_DELAY_MS);
+            return;
+        }
+        if (tapCount == 2) {
+            showFeedback("Back");
+            Log.d(TAG, "R08 double tap from " + source);
+            execute(RingCommand.BACK, source + ":doubleTap");
+            return;
+        }
+        int safeTapCount = tapCount >= 4 ? 4 : 3;
+        RingTapAction action = RingActionMappings.forTapCount(this, safeTapCount);
+        String tapName = safeTapCount == 4 ? "quadruple" : "triple";
+        Log.d(TAG, "R08 " + tapName + " tap from " + source + " action=" + action.id());
+        executeTapAction(action, source + ":" + tapName + "Tap", safeTapCount);
+    }
+
+    private void executeTapAction(RingTapAction action, String source, int tapCount) {
+        if (action == RingTapAction.NONE) {
+            showFeedback((tapCount >= 4 ? "Quadruple tap" : "Triple tap") + ": no action");
+            return;
+        }
+        showFeedback(action.feedback(this));
+        if (!action.execute(this, navigator)) {
+            Log.w(TAG, "Tap action failed action=" + action.id() + " source=" + source);
+        }
     }
 
     private void execute(int command, String source) {
@@ -529,9 +533,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 break;
             case RingCommand.LONG_PRESS:
                 Log.d(TAG, "R08 long press from " + source);
-                if (!RokidSystemActions.openAiAssist(this)) {
-                    navigator.longPress();
-                }
+                RingTapAction.AI_ASSIST.execute(this, navigator);
                 break;
             default:
                 break;
@@ -555,14 +557,6 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         String name = device.getName();
         return name != null && name.toUpperCase(Locale.US).contains("R08");
-    }
-
-    private boolean isNativeDpadKey(int keyCode) {
-        return keyCode == KeyEvent.KEYCODE_DPAD_LEFT
-                || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
-                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                || keyCode == KeyEvent.KEYCODE_ENTER
-                || keyCode == KeyEvent.KEYCODE_BACK;
     }
 
     void showFeedback(String text) {
