@@ -143,7 +143,7 @@ Download the APK from the GitHub Releases page:
 Then install it on the glasses:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.0.10.apk
+adb install -r R08-Access-Bridge-v1.1.0.apk
 ```
 
 After installation:

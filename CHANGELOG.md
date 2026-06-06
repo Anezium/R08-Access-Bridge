@@ -1,10 +1,10 @@
 # Changelog
 
-## v1.0.10 - 2026-06-05
+## v1.1.0 - 2026-06-06
 
 ### Release packaging
 
-- Ships one APK: `R08-Access-Bridge-v1.0.10.apk`.
+- Ships one APK: `R08-Access-Bridge-v1.1.0.apk`.
 - Removed the old split between a fast APK and a focus-sync APK.
 - Promoted the previous dev/focus-sync behavior to the default Stable mode.
 
