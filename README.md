@@ -25,8 +25,6 @@
 
 R08 Access Bridge lets an R08 smart ring act as a navigation controller for Rokid glasses. It pairs with the ring over Bluetooth LE, configures the ring into a usable input mode, then translates ring input into launcher navigation, app focus movement, activation, and Android Back actions through an Accessibility Service.
 
-This is an independent utility for Rokid glasses workflows. It is not an official Rokid application.
-
 ## Project Details
 
 | Item | Value |
@@ -49,8 +47,6 @@ This is an independent utility for Rokid glasses workflows. It is not an officia
 - Lets you remap triple and quadruple tap actions directly from the glasses UI.
 - Provides an AppType probe screen for testing R08 output modes.
 - Provides a safe Forget R08 flow to remove the saved Bluetooth bond and pair again.
-
-The app does not request internet access and does not send ring or glasses data to a server.
 
 ## Screenshots
 
@@ -216,8 +212,6 @@ R08 Access Bridge requests:
 - Location permission on Android versions where Bluetooth scanning requires it.
 - Accessibility permission so ring input can control launcher/app navigation.
 - Wake lock to keep ring connection maintenance reliable.
-
-It does not request network, camera, microphone, contacts, storage, or account permissions.
 
 ## Notes
 
