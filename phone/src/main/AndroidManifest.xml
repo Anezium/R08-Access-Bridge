@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <queries>
+        <package android:name="com.rokid.sprite.global.aiapp" />
+        <intent>
+            <action android:name="com.rokid.sprite.aiapp.externalapp.AUTHORIZATION" />
+        </intent>
+        <intent>
+            <action android:name="com.rokid.sprite.aiapp.externalapp.MEDIA_STREAM_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/r08_access_bridge_logo_icon"
+        android:label="R08 Companion"
+        android:roundIcon="@drawable/r08_access_bridge_logo_icon"
+        android:theme="@style/PhoneAppTheme"
+        android:supportsRtl="true">
+        <activity
+            android:name=".PhoneCompanionActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

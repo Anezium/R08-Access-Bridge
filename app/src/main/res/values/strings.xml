@@ -33,6 +33,8 @@
 
     <string name="action_accessibility">Accessibility</string>
     <string name="detail_accessibility">Enable the R08 service</string>
+    <string name="action_wifi_settings">Wi-Fi settings</string>
+    <string name="detail_wifi_settings">Open glasses Wi-Fi options</string>
     <string name="action_app_settings">App settings</string>
     <string name="detail_app_settings">Bluetooth permissions and app info</string>
     <string name="action_forget_r08">Forget R08</string>
@@ -51,6 +53,7 @@
     <string name="action_triple_tap">Triple Tap</string>
     <string name="action_quadruple_tap">Quadruple Tap</string>
     <string name="detail_mapping_current">Current: %1$s</string>
+    <string name="detail_mapping_current_bridge">Current: %1$s - %2$s</string>
     <string name="detail_mapping_selected">Selected - %1$s</string>
 
     <string name="action_cancel">Cancel</string>

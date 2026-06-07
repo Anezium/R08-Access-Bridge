@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.2.0 - 2026-06-07
+
+### Hi Rokid shortcut bridge
+
+- Added a bridge-backed `Hi Rokid Shortcut` tap action for the exact two-finger AI shortcut path.
+- Changed Quadruple Tap's default action to `Hi Rokid Shortcut`.
+- Added a shell bridge that converts R08 app requests into the raw Rokid `KEYCODE_SETTINGS` input event.
+- Added a PC helper script at `tools/arm-r08-shortcut-bridge.ps1`.
+- Added an Android `phone` companion app that arms the bridge over ADB Wi-Fi.
+- Added Hi Rokid/CXR-L bootstrap so the phone can start the glasses app, foreground the glasses Wi-Fi panel, receive the glasses Wi-Fi IP, and then arm over ADB TCP when reachable.
+- Added delayed Wi-Fi IP recovery: the glasses now push IP-watch states after opening Wi-Fi, and the phone keeps polling during bootstrap until the IP appears or the attempt times out.
+- Added battery-friendly Wi-Fi control: the companion can ask the shell bridge to turn glasses Wi-Fi off after arming, and the glasses app can ask the bridge to turn Wi-Fi back on during the next CXR bootstrap if the bridge survived.
+- Added phone-side LAN discovery, glasses Wi-Fi IP refresh, and manual ADB recovery actions.
+- Reworked the phone companion UI around a single `Start Bridge` flow with a prominent bridge state, a close-the-app-when-armed message, a manual `Disable bridge` tool, and a monochrome phosphor-green Rokid-style interface.
+- Added the R08 logo as the phone companion launcher icon.
+- Added a shared `bridge-protocol` module so the phone app, glasses app, CXR bootstrap, and shell bridge use one canonical command contract.
+- Added a protected glasses-side `BridgeCommandActivity` for automated setup commands instead of routing phone/ADB command extras through the main UI.
+- Split phone-side ADB arming, LAN discovery, CXR Global service binding, and operation results into focused helper classes.
+- Deduplicated the packaged shell bridge script so the phone APK is generated from the canonical script in `tools/`.
+
 ## v1.1.0 - 2026-06-06
 
 ### Release packaging

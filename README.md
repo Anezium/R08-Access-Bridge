@@ -31,7 +31,10 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 | --- | --- |
 | App name | R08 Access Bridge |
 | Package name | `com.anezium.r08accessbridge` |
+| Companion app | R08 Companion |
+| Companion package | `com.anezium.r08companion` |
 | Minimum Android SDK | 28 |
+| Companion minimum Android SDK | 31 |
 | Target Android SDK | 34 |
 | Primary target | Rokid glasses / YodaOS-Sprite, 480x640 portrait HUD |
 | Input device | R08 BLE ring |
@@ -45,6 +48,8 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 - Keeps the in-app HUD compact and readable on a 480x640 glasses display.
 - Lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
 - Lets you remap triple and quadruple tap actions directly from the glasses UI.
+- Adds a phone companion that can arm the exact Hi Rokid shortcut bridge through Hi Rokid/CXR-L plus ADB Wi-Fi.
+- Turns glasses Wi-Fi back off after arming by default to protect battery life.
 - Provides an AppType probe screen for testing R08 output modes.
 - Provides a safe Forget R08 flow to remove the saved Bluetooth bond and pair again.
 
@@ -68,20 +73,59 @@ By default, the R08 ring is configured to emit media keys in Stable mode:
 | Single tap | Activate the current app, button, or focused item |
 | Double tap | Android Back |
 | Triple tap | Configurable action, defaults to Rokid AI assistant |
-| Quadruple tap | Configurable action, defaults to no action |
+| Quadruple tap | Configurable action, defaults to the Hi Rokid two-finger AI shortcut bridge |
 
 Inside R08 Access Bridge itself, double tap goes back to the previous screen. On the root screen, Back exits the app and returns to the launcher.
 
-Triple tap defaults to the same Rokid AI assistant scene used by the glasses long-press path. The protected Hi Rokid two-finger shortcut broadcast cannot be sent by a normal APK, so this is intentionally an AI/long-press shortcut rather than an exact two-finger shortcut clone.
+Triple tap defaults to the same Rokid AI assistant scene used by the glasses long-press path.
+
+Quadruple tap defaults to `Hi Rokid Shortcut`, which requests the exact two-finger long-press path when the privileged bridge is armed. A normal APK still cannot write `/dev/input` by itself, so the exact shortcut requires either the included phone/ADB bridge, a shell/root helper, or hardware that emits the matching Rokid input event.
 
 Triple and quadruple tap can be remapped in the app to:
 
 - No action
 - Rokid AI
+- Hi Rokid Shortcut
 - Take photo
 - Video toggle
 - AR screenshot
 - AR video toggle
+
+## Hi Rokid Shortcut Bridge
+
+The exact Hi Rokid shortcut is the glasses touchpad `KEYCODE_SETTINGS` path. On tested hardware it is produced by raw input device `/dev/input/event1` with scan code `149`, which Rokid turns into `ACTION_SETTINGS_KEY`, `openAIFunction type: 2`, and CXR `Ai / Both_KeyDown`.
+
+R08 Access Bridge cannot emit that raw input as a normal APK. The repo includes two bridge launchers:
+
+- `tools/arm-r08-shortcut-bridge.ps1` for PC/ADB development.
+- `phone` module, an Android companion APK that bootstraps through Hi Rokid/CXR-L, discovers the glasses IP, then arms the same bridge over ADB Wi-Fi when ADB TCP is reachable.
+
+The bridge runs as the ADB `shell` user on the glasses. R08 writes shortcut requests into its app bridge folder, and the shell bridge converts each request into the real `sendevent` sequence.
+
+The phone companion is intentionally phone-first: a dark monochrome green, phosphor-style control panel with one primary `Start Bridge` flow. Once it shows `Bridge: Armed`, the user can close the companion app.
+
+PC/dev arm:
+
+```powershell
+.\tools\arm-r08-shortcut-bridge.ps1 -Serial 1901092534053723 -Action restart
+```
+
+Phone companion arm:
+
+1. Install `app-debug.apk` on the glasses and `phone-debug.apk` on the Android phone.
+2. In `R08 Companion`, tap `Authorize` once and approve the Hi Rokid authorization screen.
+3. Tap `Start Bridge`. The phone starts R08 Access Bridge through CXR-L, sends `r08.bootstrap.req`, the glasses app opens the Wi-Fi panel and replies on `r08.bootstrap.res` with its Wi-Fi IP. If Android has not assigned an IP yet, the glasses app keeps pushing IP-watch states while the phone polls `refresh_ip`; as soon as the IP appears, the phone connects to ADB TCP and arms the shell bridge automatically. `Wi-Fi off after arm` is enabled by default, so once the bridge is armed, the phone asks the shell bridge to turn glasses Wi-Fi back off for battery life. When the app shows `Bridge: Armed`, the user can close the phone app.
+4. ADB TCP still has to be enabled at least once for shell arming:
+
+   ```powershell
+   adb -s 1901092534053723 shell svc wifi enable
+   adb -s 1901092534053723 tcpip 5555
+   ```
+
+5. If CXR-L is not available, tap `LAN scan / arm` or enter the glasses IP manually and tap `Arm known IP`.
+6. After the bridge is armed, quadruple tap on the R08 ring triggers the exact Hi Rokid shortcut.
+
+Without root, the shell bridge is not persistent across a glasses reboot. If the glasses slept without rebooting, CXR-L can wake R08 Access Bridge and the already-running shell bridge can turn Wi-Fi back on long enough to recover the IP and re-arm. After a full reboot, shell arming still needs ADB TCP, USB/PC recovery, or root.
 
 ## Input Modes
 
@@ -137,17 +181,23 @@ This avoids relying on stale launcher accessibility focus. Fast mode can re-enab
 
 ## Installation
 
-Download the APK from the GitHub Releases page:
+Download the APKs from the GitHub Releases page:
 
 [R08 Access Bridge releases](https://github.com/Anezium/R08-Access-Bridge/releases)
 
-Then install it on the glasses:
+For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.1.0.apk
+adb install -r R08-Access-Bridge-v1.2.0.apk
 ```
 
-After installation:
+For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
+
+```powershell
+adb install -r R08-Companion-v1.2.0.apk
+```
+
+After installing the glasses APK:
 
 1. Open `R08 Access Bridge`.
 2. Grant Bluetooth permissions if Android asks.
@@ -156,14 +206,23 @@ After installation:
 5. Return to the app and select `Pair / Reconnect`.
 6. Keep the R08 ring nearby and allow pairing if Android asks.
 7. Stay in `Stable mode` for the safest launcher behavior, or use `Ring modes` -> `Fast mode` if you want launcher acceleration.
+8. For the exact Hi Rokid shortcut on quadruple tap, arm the bridge from the phone companion or the PC helper.
+
+After installing the companion APK:
+
+1. Open `R08 Companion`.
+2. Tap `Authorize` once and approve the Hi Rokid authorization screen.
+3. Tap `Start Bridge`.
+4. When the status reads `Bridge: Armed`, close the companion app. The shell bridge keeps running on the glasses until it is disabled or the glasses reboot.
 
 ## Build From Source
 
 Requirements:
 
-- Android SDK with API 34 installed.
+- Android SDK with API 36 installed.
 - Java 17.
 - ADB access to the Rokid glasses for install/testing.
+- A phone with Hi Rokid Global installed for the CXR-L companion flow.
 
 Build a debug APK:
 
@@ -181,6 +240,7 @@ Install on a connected device:
 
 ```powershell
 adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb install -r phone\build\outputs\apk\debug\phone-debug.apk
 ```
 
 The current project does not include a private release signing configuration. GitHub release APKs are debug-signed unless a release signing setup is added.
@@ -214,10 +274,15 @@ R08 Access Bridge requests:
 - Accessibility permission so ring input can control launcher/app navigation.
 - Wake lock to keep ring connection maintenance reliable.
 
+R08 Companion requests:
+
+- Internet/network access so it can connect directly to the glasses ADB TCP port on the local Wi-Fi network.
+
 ## Notes
 
 - Stable mode is the recommended default.
 - Fast mode is optional launcher acceleration for devices where visual focus and launched app stay aligned.
 - Touch fallback exists for experimentation when media-key mode is not usable.
 - Native DPAD output was not observed in the tested `appType 0..7` range, so the app bridges media/touch outputs into navigation behavior.
+- The exact Hi Rokid two-finger shortcut is available through the bridge-backed `Hi Rokid Shortcut` action; without the bridge, normal APK permissions are not enough to emit the raw input event.
 - The app is designed for the Rokid glasses HUD, not a phone-first UI.

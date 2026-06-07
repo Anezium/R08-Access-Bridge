@@ -4,18 +4,23 @@ plugins {
 
 android {
     namespace = "com.anezium.r08accessbridge"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.anezium.r08accessbridge"
         minSdk = 28
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.1.0"
+        versionCode = 13
+        versionName = "1.2.0"
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation(project(":bridge-protocol"))
+    implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260212.103714-88")
 }

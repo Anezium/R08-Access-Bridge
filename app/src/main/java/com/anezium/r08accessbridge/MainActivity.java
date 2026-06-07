@@ -56,6 +56,8 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         boolean fastDefaultApplied = RingControlAccessibilityService.ensureFastModeDefault(this);
+        PrivilegedShortcutBridge.ensureReady(this);
+        CxrBootstrapBridge.start(this);
         requestRuntimePermissions();
         setContentView(buildView());
         showHome();
@@ -252,6 +254,8 @@ public final class MainActivity extends Activity {
             case SYSTEM:
                 action(R.string.action_accessibility, R.string.detail_accessibility,
                         v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+                action(R.string.action_wifi_settings, R.string.detail_wifi_settings,
+                        v -> GlassesWifiSettings.enableThenOpen(this));
                 action(R.string.action_app_settings, R.string.detail_app_settings, v -> openAppSettings());
                 action(R.string.action_forget_r08, R.string.detail_forget_r08, v -> showForgetConfirm());
                 break;
@@ -405,6 +409,10 @@ public final class MainActivity extends Activity {
     }
 
     private String mappingSummary(RingTapAction action) {
+        if (action == RingTapAction.HI_ROKID_SHORTCUT) {
+            return getString(R.string.detail_mapping_current_bridge, action.title(),
+                    PrivilegedShortcutBridge.statusLabel(this));
+        }
         return getString(R.string.detail_mapping_current, action.title());
     }
 
@@ -712,7 +720,10 @@ public final class MainActivity extends Activity {
     }
 
     private void handleLaunchIntent(Intent intent) {
-        if (intent == null || !intent.hasExtra(EXTRA_PROBE_APP_TYPE)) {
+        if (intent == null) {
+            return;
+        }
+        if (!intent.hasExtra(EXTRA_PROBE_APP_TYPE)) {
             return;
         }
         int appType = intent.getIntExtra(EXTRA_PROBE_APP_TYPE, -1);
@@ -722,6 +733,8 @@ public final class MainActivity extends Activity {
         probeAppType(appType);
         if (intent.getBooleanExtra(EXTRA_EXIT_AFTER_PROBE, false)) {
             mainHandler.postDelayed(this::finish, 900);
+        } else {
+            render();
         }
     }
 

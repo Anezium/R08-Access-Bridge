@@ -2,9 +2,12 @@ package com.anezium.r08accessbridge;
 
 import android.content.Context;
 
+import com.anezium.r08bridgeprotocol.BridgeProtocol;
+
 enum RingTapAction {
     NONE("none", "No action", "Ignore this tap count", "No action"),
     AI_ASSIST("ai_assist", "Rokid AI", "Open the AI assistant scene", "Rokid AI"),
+    HI_ROKID_SHORTCUT(BridgeProtocol.ACTION_HI_ROKID_SHORTCUT, "Hi Rokid Shortcut", "Trigger the real two-finger AI shortcut via the phone bridge", "Hi shortcut"),
     TAKE_PHOTO("take_photo", "Take photo", "Capture a normal camera photo", "Take photo"),
     VIDEO_RECORD_TOGGLE("toggle_video", "Video toggle", "Start video, then stop on next trigger", "Video"),
     AR_SCREENSHOT("ar_screenshot", "AR screenshot", "Capture the AR/HUD view", "AR screenshot"),
@@ -40,6 +43,8 @@ enum RingTapAction {
 
     String feedback(Context context) {
         switch (this) {
+            case HI_ROKID_SHORTCUT:
+                return PrivilegedShortcutBridge.isArmed(context) ? feedback : "Arm phone bridge";
             case VIDEO_RECORD_TOGGLE:
                 return RingActionMappings.isVideoRecordingRequested(context) ? "Stop video request" : "Start video request";
             case AR_RECORD_TOGGLE:
@@ -60,6 +65,11 @@ enum RingTapAction {
                     return true;
                 }
                 return false;
+            case HI_ROKID_SHORTCUT:
+                if (PrivilegedShortcutBridge.requestHiRokidShortcut(context)) {
+                    return true;
+                }
+                return RokidSystemActions.openAiAssist(context);
             case TAKE_PHOTO:
                 return RokidSystemActions.takePhoto(context);
             case VIDEO_RECORD_TOGGLE:

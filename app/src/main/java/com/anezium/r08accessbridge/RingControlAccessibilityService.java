@@ -122,7 +122,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     };
 
     static boolean ensureFastModeDefault(Context context) {
-        return RingModeSettings.ensureDefaults(context);
+        boolean modeChanged = RingModeSettings.ensureDefaults(context);
+        boolean actionsChanged = RingActionMappings.ensureDefaults(context);
+        return modeChanged || actionsChanged;
     }
 
     private void setTouchMode(boolean enabled) {
@@ -161,6 +163,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     protected void onServiceConnected() {
         super.onServiceConnected();
         ensureFastModeDefault(this);
+        PrivilegedShortcutBridge.ensureReady(this);
+        CxrBootstrapBridge.start(this);
         touchMode = RingModeSettings.isTouchMode(this);
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
