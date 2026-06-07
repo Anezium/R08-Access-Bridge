@@ -323,8 +323,10 @@ public final class PhoneCompanionActivity extends Activity {
         public void onBootstrapState(CxrBootstrapClient.BootstrapState state) {
             runOnUiThread(() -> {
                 String ip = state.wifiIp == null || state.wifiIp.isEmpty() ? "No IP yet" : state.wifiIp;
-                setStatusLine(ipStatusText, "Glasses IP", ip, state.wifiConnected ? ACCENT : WARN);
-                if (state.wifiPanelOpened && !state.wifiConnected) {
+                if (!bridgeArmed || state.wifiConnected) {
+                    setStatusLine(ipStatusText, "Glasses IP", ip, state.wifiConnected ? ACCENT : WARN);
+                }
+                if (!bridgeArmed && state.wifiPanelOpened && !state.wifiConnected) {
                     summary("Wi-Fi panel opened", WARN);
                 }
             });

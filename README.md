@@ -59,7 +59,12 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
   <img src="docs/screenshots/home.png" alt="R08 Access Bridge home screen" width="190">
   <img src="docs/screenshots/ring-modes.png" alt="Ring Modes screen with Stable mode active" width="190">
   <img src="docs/screenshots/action-mapping.png" alt="Action Mapping screen for triple and quadruple tap" width="190">
+  <img src="docs/screenshots/quadruple-tap-bridge.png" alt="Quadruple Tap mapped to the Hi Rokid Shortcut bridge" width="190">
   <img src="docs/screenshots/quadruple-tap-options.png" alt="Quadruple Tap action options" width="190">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/r08-companion.png" alt="R08 Companion phone app with the bridge armed" width="220">
 </p>
 
 ## Controls
