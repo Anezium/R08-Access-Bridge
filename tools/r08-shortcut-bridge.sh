@@ -33,10 +33,32 @@ trigger_shortcut() {
 
 set_wifi_enabled() {
     if [ "$1" = "1" ]; then
-        svc wifi enable
+        for attempt in 1 2 3; do
+            svc wifi enable >/dev/null 2>&1 || true
+            cmd wifi set-wifi-enabled enabled >/dev/null 2>&1 || true
+            sleep 1
+            if wifi_is_enabled; then
+                return 0
+            fi
+        done
     else
-        svc wifi disable
+        for attempt in 1 2 3 4 5; do
+            svc wifi disable >/dev/null 2>&1 || true
+            cmd wifi set-wifi-enabled disabled >/dev/null 2>&1 || true
+            sleep 1
+            if ! wifi_is_enabled; then
+                return 0
+            fi
+        done
     fi
+    return 1
+}
+
+wifi_is_enabled() {
+    if cmd wifi status 2>/dev/null | grep -qi "Wifi is enabled"; then
+        return 0
+    fi
+    [ "$(settings get global wifi_on 2>/dev/null)" = "1" ]
 }
 
 handle_request() {
@@ -85,7 +107,7 @@ run_loop() {
     mkdir -p "$BASE"
     echo "$$" > "$PIDFILE"
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"
-    last=""
+    last="$(cat "$REQUEST" 2>/dev/null)"
     while true; do
         now="$(date +%s)"
         echo "$now" > "$HEARTBEAT"

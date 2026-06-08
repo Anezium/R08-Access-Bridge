@@ -55,6 +55,10 @@ public final class BridgeCommandActivity extends Activity {
             GlassesWifiSettings.enableThenOpen(this);
             handled = true;
         }
+        if (intent.getBooleanExtra(BridgeProtocol.EXTRA_OPEN_WIRELESS_DEBUG_SETUP, false)) {
+            RingControlAccessibilityService.requestWirelessDebugSetup(this);
+            handled = true;
+        }
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_BRIDGE_WIFI_OFF, false)) {
             PrivilegedShortcutBridge.requestWifiEnabled(this, false);
             handled = true;

@@ -26,8 +26,6 @@ import com.anezium.r08bridgeprotocol.BridgeProtocol;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import dadb.Dadb;
-
 public final class PhoneCompanionActivity extends Activity {
     private static final String PREFS = "r08_companion";
     private static final String PREF_HOST = "host";
@@ -68,9 +66,7 @@ public final class PhoneCompanionActivity extends Activity {
     private CxrBootstrapClient cxrClient;
     private AdbBridgeClient adbBridgeClient;
     private LanAdbDiscovery lanDiscovery;
-    private volatile boolean bridgeArmed;
-    private volatile boolean autoArmFromCxr;
-    private volatile String lastAutoArmIp = "";
+    private BridgeSetupCoordinator setupCoordinator;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,6 +77,7 @@ public final class PhoneCompanionActivity extends Activity {
         window.setNavigationBarColor(SURFACE);
         adbBridgeClient = new AdbBridgeClient(this);
         lanDiscovery = new LanAdbDiscovery(adbBridgeClient);
+        setupCoordinator = new BridgeSetupCoordinator();
         cxrClient = new CxrBootstrapClient(this, prefs().getString(PREF_CXR_TOKEN, ""), cxrListener);
         setContentView(buildView());
         handleLaunchIntent();
@@ -182,7 +179,7 @@ public final class PhoneCompanionActivity extends Activity {
         LinearLayout recovery = panel(PANEL, dp(16));
         root.addView(recovery, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         recovery.addView(sectionTitle("Recovery path"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        TextView recoveryCopy = label("Full reboot state: Wi-Fi/IP can recover over CXR-L. Shell arm still needs ADB TCP, USB recovery, or root.", 14, MUTED, Typeface.NORMAL);
+        TextView recoveryCopy = label("Full reboot state: CXR-L wakes the glasses app, opens Wireless Debugging through Accessibility when pairing is missing, reads the dynamic port, then arms over the same Wi-Fi.", 14, MUTED, Typeface.NORMAL);
         recoveryCopy.setLineSpacing(dp(2), 1f);
         recovery.addView(recoveryCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         addGap(recovery, 12);
@@ -193,8 +190,8 @@ public final class PhoneCompanionActivity extends Activity {
         auth.setOnClickListener(v -> cxrClient.requestAuthorization(this));
         recoveryActions.addView(auth, weightButton());
         addGapHorizontal(recoveryActions, 10);
-        Button cxrWifi = button("Open Wi-Fi via CXR", false);
-        cxrWifi.setOnClickListener(v -> runCxrBootstrapTask());
+        Button cxrWifi = button("Wireless setup", false);
+        cxrWifi.setOnClickListener(v -> runWirelessDebuggingSetupTask());
         recoveryActions.addView(cxrWifi, weightButton());
 
         addGap(root, 14);
@@ -279,7 +276,9 @@ public final class PhoneCompanionActivity extends Activity {
             hostField.setText(intent.getStringExtra(EXTRA_HOST));
         }
         if (intent.hasExtra(EXTRA_PORT)) {
-            portField.setText(Integer.toString(intent.getIntExtra(EXTRA_PORT, BridgeProtocol.DEFAULT_ADB_PORT)));
+            int port = intent.getIntExtra(EXTRA_PORT, BridgeProtocol.DEFAULT_ADB_PORT);
+            setupCoordinator.setIntentPort(port);
+            portField.setText(Integer.toString(port));
         }
         if (intent.getBooleanExtra(EXTRA_AUTO_CXR_BOOTSTRAP, false)) {
             hostField.postDelayed(this::runCxrBootstrapTask, 250L);
@@ -292,15 +291,13 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private void runCxrBootstrapTask() {
-        autoArmFromCxr = true;
-        bridgeArmed = false;
-        lastAutoArmIp = "";
+        setupCoordinator.startBridge(parsePort());
         summary("Starting bridge", MUTED);
         setStatusLine(cxrStatusText, "Hi Rokid", cxrClient.hasAuthToken() ? "Connecting" : "Needs authorization", cxrClient.hasAuthToken() ? MUTED : WARN);
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for helper", MUTED);
-        setStatusLine(adbStatusText, "ADB", "Will arm after IP", MUTED);
+        setStatusLine(adbStatusText, "ADB", "Checking pairing", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Starting", MUTED);
-        setDetail("Starting through Hi Rokid. If the Wi-Fi panel appears on the glasses, connect them to the same network as this phone.");
+        setDetail("Starting through Hi Rokid. If Wireless Debugging is not paired yet, the glasses will open the setup screen and the phone will pair automatically from the code.");
         if (!cxrClient.hasAuthToken()) {
             cxrClient.requestAuthorization(this);
             return;
@@ -308,42 +305,51 @@ public final class PhoneCompanionActivity extends Activity {
         cxrClient.bootstrap(true);
     }
 
+    private void runWirelessDebuggingSetupTask() {
+        setupCoordinator.startWirelessSetup();
+        summary("Wireless setup", MUTED);
+        setStatusLine(cxrStatusText, "Hi Rokid", cxrClient.hasAuthToken() ? "Opening setup" : "Needs authorization", cxrClient.hasAuthToken() ? MUTED : WARN);
+        setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
+        setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+        setDetail("Opening Wireless Debugging on the glasses. Keep the phone and glasses on the same Wi-Fi; the pairing code will be consumed automatically.");
+        if (!cxrClient.hasAuthToken()) {
+            cxrClient.requestAuthorization(this);
+            return;
+        }
+        cxrClient.requestWirelessDebuggingSetup();
+    }
+
     private final CxrBootstrapClient.Listener cxrListener = new CxrBootstrapClient.Listener() {
         @Override
         public void onCxrStatus(String status) {
             runOnUiThread(() -> {
-                setStatusLine(cxrStatusText, "Hi Rokid", status, MUTED);
-                if (!bridgeArmed) {
+                boolean error = isCxrErrorStatus(status);
+                setStatusLine(cxrStatusText, "Hi Rokid", status, error ? ERROR : MUTED);
+                if (!setupCoordinator.isBridgeArmed()) {
                     setDetail(status);
+                    if (error) {
+                        summary("Hi Rokid not ready", ERROR);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                    }
                 }
             });
         }
 
         @Override
         public void onBootstrapState(CxrBootstrapClient.BootstrapState state) {
-            runOnUiThread(() -> {
-                String ip = state.wifiIp == null || state.wifiIp.isEmpty() ? "No IP yet" : state.wifiIp;
-                if (!bridgeArmed || state.wifiConnected) {
-                    setStatusLine(ipStatusText, "Glasses IP", ip, state.wifiConnected ? ACCENT : WARN);
-                }
-                if (!bridgeArmed && state.wifiPanelOpened && !state.wifiConnected) {
-                    summary("Wi-Fi panel opened", WARN);
-                }
-            });
+            BridgeSetupCoordinator.Decision decision = setupCoordinator.onBootstrapState(state);
+            runOnUiThread(() -> renderBootstrapState(state));
+            executeSetupDecision(decision);
         }
 
         @Override
         public void onGlassesIp(String ip) {
             runOnUiThread(() -> {
-                updateEndpoint(ip, parsePort());
-                if (!bridgeArmed) {
-                    setDetail("IP received over CXR-L. Trying to arm ADB bridge now.");
+                updateEndpoint(ip, setupCoordinator.currentPort(BridgeProtocol.DEFAULT_ADB_PORT));
+                if (!setupCoordinator.isBridgeArmed() && !setupCoordinator.isWirelessSetupRequested()) {
+                    setDetail("IP received over CXR-L. Waiting for a live Wireless Debugging port before arming.");
                 }
             });
-            if (autoArmFromCxr && !ip.equals(lastAutoArmIp)) {
-                lastAutoArmIp = ip;
-                armResolvedIp(ip, parsePort());
-            }
         }
 
         @Override
@@ -360,20 +366,119 @@ public final class PhoneCompanionActivity extends Activity {
         }
     };
 
-    private void armResolvedIp(String host, int port) {
+    private void renderBootstrapState(CxrBootstrapClient.BootstrapState state) {
+        String ip = state.wifiIp == null || state.wifiIp.isEmpty() ? "No IP yet" : state.wifiIp;
+        if (state.hasLiveWirelessPort()) {
+            portField.setText(Integer.toString(state.adbPort));
+            saveEndpoint(hostField.getText().toString().trim(), state.adbPort);
+        }
+        if (!setupCoordinator.isBridgeArmed() || state.wifiConnected) {
+            setStatusLine(ipStatusText, "Glasses IP", ip, state.wifiConnected ? ACCENT : WARN);
+        }
+        if (!setupCoordinator.isBridgeArmed()) {
+            setStatusLine(adbStatusText, "ADB", adbStateLabel(state), adbStateColor(state));
+        }
+        if (!setupCoordinator.isBridgeArmed() && state.wifiPanelOpened && !state.wifiConnected) {
+            summary("Wi-Fi panel opened", WARN);
+        }
+        if (!setupCoordinator.isBridgeArmed() && !state.setupState.isEmpty()) {
+            setDetail(wirelessSetupLabel(state.setupState));
+            if (BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(state.setupState)) {
+                summary("Enable Accessibility", WARN);
+                setStatusLine(bridgeStatusText, "Bridge", "Not armed", WARN);
+            }
+        }
+    }
+
+    private void executeSetupDecision(BridgeSetupCoordinator.Decision decision) {
+        switch (decision.action) {
+            case REQUEST_WIRELESS_SETUP:
+                summary("Wireless setup", MUTED);
+                runOnUiThread(() -> {
+                    setStatusLine(adbStatusText, "ADB", "Opening Wireless Debugging", MUTED);
+                    setDetail("Glasses Wi-Fi is up. Opening Wireless Debugging so the phone can pair and arm.");
+                    cxrClient.requestWirelessDebuggingSetup();
+                });
+                break;
+            case ARM_LIVE_PORT:
+                runOnUiThread(() -> {
+                    setStatusLine(adbStatusText, "ADB", "Trying port " + decision.port, ACCENT);
+                    setDetail("Live Wireless Debugging port " + decision.port + " received. Trying to arm the bridge.");
+                });
+                armResolvedIp(decision.host, decision.port, decision.continueWirelessSetupOnFailure);
+                break;
+            case PAIR_AND_ARM:
+                pairAndArm(decision);
+                break;
+            case NONE:
+            default:
+                break;
+        }
+    }
+
+    private void pairAndArm(BridgeSetupCoordinator.Decision decision) {
+        summary("Pairing ADB", MUTED);
+        setStatusLine(adbStatusText, "ADB", "Pairing phone", MUTED);
+        setDetail("Pairing this phone with the glasses over Wireless Debugging, then arming the bridge.");
         executor.execute(() -> {
-            try (Dadb dadb = adbBridgeClient.connect(host, port)) {
+            try {
+                adbBridgeClient.pairWirelessDebugging(decision.pairHost, decision.pairPort, decision.pairCode);
+                runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Paired", ACCENT));
+                if (!decision.hasConnectPort()) {
+                    setupCoordinator.markPairingFinished();
+                    runOnUiThread(() -> setDetail("Pairing succeeded. Refreshing the Wireless Debugging port."));
+                    cxrClient.requestRefresh();
+                    return;
+                }
+                try (AdbSession adb = adbBridgeClient.connect(decision.connectHost, decision.connectPort)) {
+                    BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                    runOnUiThread(() -> applyBridgeResult(decision.connectHost, result));
+                }
+            } catch (Throwable throwable) {
+                if (decision.hasConnectPort()) {
+                    try (AdbSession adb = adbBridgeClient.connect(decision.connectHost, decision.connectPort)) {
+                        BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                        runOnUiThread(() -> applyBridgeResult(decision.connectHost, result));
+                        return;
+                    } catch (Throwable fallbackThrowable) {
+                        throwable.addSuppressed(fallbackThrowable);
+                    }
+                }
+                runOnUiThread(() -> {
+                    setupCoordinator.markNotArmed();
+                    setStatusLine(adbStatusText, "ADB", "Pairing failed", ERROR);
+                    setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                    summary("Pairing failed", ERROR);
+                    setDetail(errorMessage(throwable));
+                });
+            } finally {
+                setupCoordinator.markPairingFinished();
+            }
+        });
+    }
+
+    private void armResolvedIp(String host, int port, boolean continueWirelessSetupOnFailure) {
+        executor.execute(() -> {
+            try (AdbSession adb = adbBridgeClient.connect(host, port)) {
                 runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Connected to " + host, ACCENT));
-                BridgeOperationResult result = adbBridgeClient.arm(dadb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
                 runOnUiThread(() -> applyBridgeResult(host, result));
             } catch (Throwable throwable) {
                 runOnUiThread(() -> {
-                    bridgeArmed = false;
-                    setStatusLine(adbStatusText, "ADB", "Recovery needed", ERROR);
-                    setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
-                    summary("Wi-Fi is up, ADB is not", ERROR);
-                    setDetail(errorMessage(throwable));
+                    setupCoordinator.markNotArmed();
+                    if (continueWirelessSetupOnFailure && setupCoordinator.isWirelessSetupRequested()) {
+                        setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+                        summary("Wireless setup", MUTED);
+                        setDetail("Wireless Debugging port " + port + " is visible, but this phone is not paired yet. Waiting for the pairing code on the glasses.");
+                    } else {
+                        setStatusLine(adbStatusText, "ADB", "Recovery needed", ERROR);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        summary("Wi-Fi is up, ADB is not", ERROR);
+                        setDetail(errorMessage(throwable));
+                    }
                 });
+                executeSetupDecision(setupCoordinator.onDirectArmFailure(continueWirelessSetupOnFailure));
             }
         });
     }
@@ -385,15 +490,15 @@ public final class PhoneCompanionActivity extends Activity {
         int port = parsePort();
         saveEndpoint(host, port);
         executor.execute(() -> {
-            try (Dadb dadb = adbBridgeClient.connect(host, port)) {
-                BridgeOperationResult result = work.run(dadb);
+            try (AdbSession adb = adbBridgeClient.connect(host, port)) {
+                BridgeOperationResult result = work.run(adb);
                 runOnUiThread(() -> {
                     setStatusLine(adbStatusText, "ADB", "Connected to " + host, ACCENT);
                     applyBridgeResult(host, result);
                 });
             } catch (Throwable throwable) {
                 runOnUiThread(() -> {
-                    bridgeArmed = false;
+                    setupCoordinator.markNotArmed();
                     setStatusLine(adbStatusText, "ADB", "Failed", ERROR);
                     setDetail(errorMessage(throwable));
                 });
@@ -416,13 +521,13 @@ public final class PhoneCompanionActivity extends Activity {
                     updateEndpoint(host, port);
                     setStatusLine(adbStatusText, "ADB", "Found glasses", ACCENT);
                 });
-                try (Dadb dadb = adbBridgeClient.connect(host, port)) {
-                    BridgeOperationResult result = adbBridgeClient.arm(dadb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                try (AdbSession adb = adbBridgeClient.connect(host, port)) {
+                    BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
                     runOnUiThread(() -> applyBridgeResult(host, result));
                 }
             } catch (Throwable throwable) {
                 runOnUiThread(() -> {
-                    bridgeArmed = false;
+                    setupCoordinator.markNotArmed();
                     setStatusLine(adbStatusText, "ADB", "Scan failed", ERROR);
                     summary("Could not arm over LAN", ERROR);
                     setDetail(errorMessage(throwable));
@@ -434,7 +539,7 @@ public final class PhoneCompanionActivity extends Activity {
     private void applyBridgeResult(String host, BridgeOperationResult result) {
         switch (result.type()) {
             case ARMED:
-                bridgeArmed = true;
+                setupCoordinator.markArmed();
                 setStatusLine(adbStatusText, "ADB",
                         result.wifiOffAfterArm() ? "Armed, Wi-Fi off" : "Connected to " + host, ACCENT);
                 setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
@@ -442,7 +547,7 @@ public final class PhoneCompanionActivity extends Activity {
                 setDetail(armedDetail(result.output()));
                 break;
             case DISABLED:
-                bridgeArmed = false;
+                setupCoordinator.markDisabled();
                 setStatusLine(bridgeStatusText, "Bridge", "Disabled", MUTED);
                 summary("Bridge disabled", MUTED);
                 setDetail(result.output().isEmpty() ? "Bridge disabled." : result.output());
@@ -460,6 +565,7 @@ public final class PhoneCompanionActivity extends Activity {
 
     private void updateEndpoint(String host, int port) {
         hostField.setText(host);
+        portField.setText(Integer.toString(port));
         saveEndpoint(host, port);
         setStatusLine(ipStatusText, "Glasses IP", endpointLabel(host), ACCENT);
     }
@@ -496,7 +602,97 @@ public final class PhoneCompanionActivity extends Activity {
         if (message == null || message.trim().isEmpty()) {
             message = throwable.getClass().getSimpleName();
         }
-        return "Failed: " + message + "\n\nIf Wi-Fi/IP came from CXR-L but ADB failed, ADB TCP is probably off after reboot. Use USB recovery once, then Start Bridge will take over.";
+        return "Failed: " + message
+                + "\n\nTap Start Bridge again. The phone will use Hi Rokid/CXR-L to open Wireless Debugging on the glasses, pair from the code, arm the shell bridge, then turn glasses Wi-Fi back off when the battery option is enabled.";
+    }
+
+    private String adbStateLabel(CxrBootstrapClient.BootstrapState state) {
+        if (state.isPairingReady()) {
+            return "Pairing code ready";
+        }
+        if (state.hasLiveWirelessPort()) {
+            return "Wireless port " + state.adbPort;
+        }
+        if (state.adbWifiEnabled) {
+            return "Wireless debugging on";
+        }
+        if (state.wirelessSetupActive || !BridgeProtocol.SETUP_IDLE.equals(state.setupState)) {
+            return wirelessSetupLabel(state.setupState);
+        }
+        return "Needs Wireless setup";
+    }
+
+    private int adbStateColor(CxrBootstrapClient.BootstrapState state) {
+        if (state.isPairingReady() || state.hasLiveWirelessPort()) {
+            return ACCENT;
+        }
+        if (state.needsManualAction()) {
+            return WARN;
+        }
+        return state.wirelessSetupActive ? MUTED : WARN;
+    }
+
+    private String wirelessSetupLabel(String status) {
+        if (status == null || status.isEmpty()) {
+            return "Wireless setup";
+        }
+        switch (status) {
+            case BridgeProtocol.SETUP_IDLE:
+                return "Wireless setup";
+            case BridgeProtocol.SETUP_BRIDGE_ARMED:
+                return "Bridge already armed";
+            case BridgeProtocol.SETUP_OPENING_DEVELOPER_OPTIONS:
+                return "Opening Developer Options";
+            case BridgeProtocol.SETUP_OPENING_WIRELESS_DEBUGGING:
+                return "Opening Wireless Debugging";
+            case BridgeProtocol.SETUP_SEARCHING_WIRELESS_DEBUGGING:
+                return "Searching Wireless Debugging";
+            case BridgeProtocol.SETUP_TURNING_WIRELESS_DEBUGGING_ON:
+                return "Turning Wireless Debugging on";
+            case BridgeProtocol.SETUP_CONFIRMING_WIRELESS_DEBUGGING:
+                return "Confirming Wireless Debugging";
+            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_OPEN:
+            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_ON:
+                return "Wireless Debugging on";
+            case BridgeProtocol.SETUP_PORT_READY:
+                return "Wireless port ready";
+            case BridgeProtocol.SETUP_OPENING_PAIRING_CODE:
+                return "Opening pairing code";
+            case BridgeProtocol.SETUP_WAITING_FOR_PAIRING_CODE:
+            case BridgeProtocol.SETUP_SEARCHING_PAIRING_CODE:
+                return "Waiting for pairing code";
+            case BridgeProtocol.SETUP_PAIRING_READY:
+                return "Pairing code ready";
+            case BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED:
+                return "Pairing code expired";
+            case BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED:
+                return "Enable R08 Accessibility on glasses";
+            case BridgeProtocol.SETUP_DEVELOPER_OPTIONS_DISABLED:
+                return "Enabling Developer Options";
+            case BridgeProtocol.SETUP_ENABLING_DEVELOPER_OPTIONS:
+                return "Enabling Developer Options";
+            case BridgeProtocol.SETUP_SEARCHING_BUILD_NUMBER:
+                return "Searching Build number";
+            case BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL:
+                return "Manual Developer Options step needed";
+            case BridgeProtocol.SETUP_TIMEOUT:
+                return "Wireless setup timed out";
+            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL:
+                return "Open Wireless Debugging manually";
+            default:
+                return status.replace('_', ' ');
+        }
+    }
+
+    private boolean isCxrErrorStatus(String status) {
+        if (status == null) {
+            return false;
+        }
+        String value = status.toLowerCase(java.util.Locale.US);
+        return value.contains("failed")
+                || value.contains("could not")
+                || value.contains("not installed")
+                || value.contains("authorize hi rokid first");
     }
 
     private String armedDetail(String output) {
@@ -643,6 +839,6 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private interface AdbWork {
-        BridgeOperationResult run(Dadb dadb) throws Exception;
+        BridgeOperationResult run(AdbSession adb) throws Exception;
     }
 }

@@ -12,12 +12,15 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
+
+import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
 import java.util.List;
 import java.util.Locale;
@@ -37,6 +40,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_ACTIVATE = "activate";
     public static final String COMMAND_BACK = "back";
     public static final String COMMAND_LONG_PRESS = "long_press";
+    public static final String COMMAND_START_WIRELESS_DEBUG_SETUP = "start_wireless_debug_setup";
     public static final String EXTRA_APP_TYPE = "app_type";
     public static final String EXTRA_ENABLED = "enabled";
 
@@ -56,7 +60,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final int LAUNCHER_ACCELERATION_START_STREAK = 3;
     private static final int LAUNCHER_ACCELERATED_STEPS = 2;
 
+    private static RingControlAccessibilityService activeService;
+
     private AccessibilityNavigator navigator;
+    private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
     private RingBleController bleController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
@@ -117,6 +124,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 executeDebounced(RingCommand.BACK, "adb", 0L, 0L);
             } else if (COMMAND_LONG_PRESS.equals(command)) {
                 executeDebounced(RingCommand.LONG_PRESS, "adb", 0L, 0L);
+            } else if (COMMAND_START_WIRELESS_DEBUG_SETUP.equals(command)) {
+                requestWirelessDebugSetup(context);
             }
         }
     };
@@ -162,12 +171,14 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        activeService = this;
         ensureFastModeDefault(this);
         PrivilegedShortcutBridge.ensureReady(this);
         CxrBootstrapBridge.start(this);
         touchMode = RingModeSettings.isTouchMode(this);
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
+        wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
         configureServiceInfo();
         registerCommandReceiver();
         bleController = new RingBleController(this);
@@ -179,6 +190,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     @Override
     public void onDestroy() {
+        if (activeService == this) {
+            activeService = null;
+        }
         if (bleController != null) {
             bleController.stop();
             bleController = null;
@@ -189,17 +203,44 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             // Receiver was not registered.
         }
         tapRecognizer.cancel();
+        wirelessDebuggingSetupAutomator = null;
         super.onDestroy();
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Navigation is driven by ring input, not by individual UI events.
+        if (wirelessDebuggingSetupAutomator != null) {
+            wirelessDebuggingSetupAutomator.onAccessibilityEvent(event);
+        }
     }
 
     @Override
     public void onInterrupt() {
         Log.d(TAG, "Accessibility service interrupted");
+    }
+
+    static boolean requestWirelessDebugSetup(Context context) {
+        RingControlAccessibilityService service = activeService;
+        if (service != null && service.wirelessDebuggingSetupAutomator != null) {
+            service.mainHandler.post(service.wirelessDebuggingSetupAutomator::start);
+            return true;
+        }
+        CxrBootstrapBridge.reportWirelessSetup(BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED, false);
+        openAccessibilitySettings(context);
+        return false;
+    }
+
+    private static void openAccessibilitySettings(Context context) {
+        if (context == null) {
+            return;
+        }
+        try {
+            Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Could not open Accessibility settings", exception);
+        }
     }
 
     @Override
@@ -308,14 +349,16 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private int commandForKey(int keyCode) {
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_FORWARD:
             case KeyEvent.KEYCODE_PAGE_DOWN:
-            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
             case KeyEvent.KEYCODE_VOLUME_DOWN:
                 return RingCommand.FORWARD;
             case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_PAGE_UP:
-            case KeyEvent.KEYCODE_MEDIA_NEXT:
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
             case KeyEvent.KEYCODE_VOLUME_UP:
                 return RingCommand.BACKWARD;
             case KeyEvent.KEYCODE_DPAD_CENTER:

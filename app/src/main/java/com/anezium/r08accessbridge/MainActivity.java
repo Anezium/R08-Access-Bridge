@@ -500,7 +500,7 @@ public final class MainActivity extends Activity {
         return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
                 || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
                 || keyCode == KeyEvent.KEYCODE_PAGE_DOWN
-                || keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS
+                || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT
                 || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN;
     }
 
@@ -508,7 +508,7 @@ public final class MainActivity extends Activity {
         return keyCode == KeyEvent.KEYCODE_DPAD_LEFT
                 || keyCode == KeyEvent.KEYCODE_DPAD_UP
                 || keyCode == KeyEvent.KEYCODE_PAGE_UP
-                || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS
                 || keyCode == KeyEvent.KEYCODE_VOLUME_UP;
     }
 

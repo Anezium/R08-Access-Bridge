@@ -15,14 +15,39 @@ public final class BridgeProtocol {
     public static final String TYPE_BOOTSTRAP = "bootstrap";
     public static final String TYPE_REFRESH_IP = "refresh_ip";
     public static final String TYPE_OPEN_WIFI = "open_wifi";
+    public static final String TYPE_WIRELESS_DEBUG_SETUP = "wireless_debug_setup";
     public static final String TYPE_BOOTSTRAP_STATE = "bootstrap_state";
     public static final String SOURCE_PHONE = "phone";
     public static final String SOURCE_GLASSES = "glasses";
+
+    public static final String SETUP_IDLE = "idle";
+    public static final String SETUP_BRIDGE_ARMED = "bridge_armed";
+    public static final String SETUP_ACCESSIBILITY_NEEDED = "accessibility_service_needed";
+    public static final String SETUP_DEVELOPER_OPTIONS_DISABLED = "developer_options_disabled";
+    public static final String SETUP_OPENING_DEVELOPER_OPTIONS = "opening_developer_options";
+    public static final String SETUP_ENABLING_DEVELOPER_OPTIONS = "enabling_developer_options";
+    public static final String SETUP_SEARCHING_BUILD_NUMBER = "searching_build_number";
+    public static final String SETUP_DEVELOPER_OPTIONS_MANUAL = "developer_options_manual_step_needed";
+    public static final String SETUP_OPENING_WIRELESS_DEBUGGING = "opening_wireless_debugging";
+    public static final String SETUP_SEARCHING_WIRELESS_DEBUGGING = "searching_wireless_debugging";
+    public static final String SETUP_TURNING_WIRELESS_DEBUGGING_ON = "turning_wireless_debugging_on";
+    public static final String SETUP_CONFIRMING_WIRELESS_DEBUGGING = "confirming_wireless_debugging";
+    public static final String SETUP_WIRELESS_DEBUGGING_OPEN = "wireless_debugging_open";
+    public static final String SETUP_WIRELESS_DEBUGGING_ON = "wireless_debugging_on";
+    public static final String SETUP_OPENING_PAIRING_CODE = "opening_pairing_code";
+    public static final String SETUP_WAITING_FOR_PAIRING_CODE = "waiting_for_pairing_code";
+    public static final String SETUP_SEARCHING_PAIRING_CODE = "searching_pairing_code";
+    public static final String SETUP_PAIRING_READY = "pairing_ready";
+    public static final String SETUP_PAIRING_CODE_EXPIRED = "pairing_code_expired";
+    public static final String SETUP_PORT_READY = "port_ready";
+    public static final String SETUP_WIRELESS_DEBUGGING_MANUAL = "wireless_debugging_manual_step_needed";
+    public static final String SETUP_TIMEOUT = "wireless_setup_timeout";
 
     public static final String EXTRA_SET_TRIPLE_TAP_ACTION = "set_triple_tap_action";
     public static final String EXTRA_SET_QUADRUPLE_TAP_ACTION = "set_quadruple_tap_action";
     public static final String EXTRA_INIT_SHORTCUT_BRIDGE = "init_shortcut_bridge";
     public static final String EXTRA_OPEN_WIFI_SETTINGS = "open_wifi_settings";
+    public static final String EXTRA_OPEN_WIRELESS_DEBUG_SETUP = "open_wireless_debug_setup";
     public static final String EXTRA_BRIDGE_WIFI_OFF = "bridge_wifi_off";
     public static final String EXTRA_EXIT_AFTER_COMMAND = "exit_after_command";
 

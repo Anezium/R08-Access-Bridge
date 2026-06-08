@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.r08companion"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     compileOptions {
@@ -21,6 +21,12 @@ android {
 
     sourceSets {
         getByName("main").res.srcDir(layout.buildDirectory.dir("generated/bridge-script-res"))
+    }
+
+    packaging {
+        resources {
+            excludes += "META-INF/versions/**"
+        }
     }
 }
 
@@ -38,4 +44,6 @@ dependencies {
     implementation(project(":bridge-protocol"))
     implementation("com.rokid.cxr:client-l:1.0.1")
     implementation("dev.mobile:dadb:1.2.10")
+    implementation("com.flyfishxu:kadb:2.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 }

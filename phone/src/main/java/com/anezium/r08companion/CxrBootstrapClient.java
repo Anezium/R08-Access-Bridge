@@ -35,6 +35,7 @@ final class CxrBootstrapClient {
             "com.rokid.sprite.aiapp.externalapp.AUTHORIZATION";
     private static final int MAX_REFRESH_POLLS = 15;
     private static final long REFRESH_POLL_MS = 4000L;
+    private static final long SESSION_RETRY_MS = 450L;
 
     interface Listener {
         void onCxrStatus(String status);
@@ -54,6 +55,16 @@ final class CxrBootstrapClient {
         final boolean wifiConnected;
         final boolean wifiPanelOpened;
         final int adbPort;
+        final int lastKnownAdbPort;
+        final boolean adbWifiEnabled;
+        final boolean adbPortDynamic;
+        final boolean wirelessSetupActive;
+        final String wirelessSetupStatus;
+        final String setupState;
+        final boolean wirelessPairingReady;
+        final String adbPairCode;
+        final String adbPairHost;
+        final int adbPairPort;
 
         BootstrapState(JSONObject object) {
             type = object.optString("type");
@@ -63,6 +74,35 @@ final class CxrBootstrapClient {
             wifiConnected = object.optBoolean("wifiConnected");
             wifiPanelOpened = object.optBoolean("wifiPanelOpened");
             adbPort = object.optInt("adbPort", BridgeProtocol.DEFAULT_ADB_PORT);
+            lastKnownAdbPort = object.optInt("lastKnownAdbPort");
+            adbWifiEnabled = object.optBoolean("adbWifiEnabled");
+            adbPortDynamic = object.optBoolean("adbPortDynamic");
+            wirelessSetupActive = object.optBoolean("wirelessSetupActive");
+            wirelessSetupStatus = object.optString("wirelessSetupStatus");
+            setupState = object.optString("setupState", wirelessSetupStatus);
+            wirelessPairingReady = object.optBoolean("wirelessPairingReady");
+            adbPairCode = object.optString("adbPairCode");
+            adbPairHost = object.optString("adbPairHost");
+            adbPairPort = object.optInt("adbPairPort");
+        }
+
+        boolean hasLiveWirelessPort() {
+            return adbWifiEnabled
+                    && adbPortDynamic
+                    && adbPort > 0
+                    && adbPort != BridgeProtocol.DEFAULT_ADB_PORT;
+        }
+
+        boolean isPairingReady() {
+            return wirelessPairingReady
+                    || BridgeProtocol.SETUP_PAIRING_READY.equals(setupState);
+        }
+
+        boolean needsManualAction() {
+            return BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(setupState)
+                    || BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL.equals(setupState)
+                    || BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL.equals(setupState)
+                    || BridgeProtocol.SETUP_TIMEOUT.equals(setupState);
         }
     }
 
@@ -78,6 +118,7 @@ final class CxrBootstrapClient {
     private boolean startRequested;
     private boolean commandAfterStart;
     private boolean openWifiAfterStart;
+    private String commandTypeAfterStart = BridgeProtocol.TYPE_REFRESH_IP;
     private boolean awaitingGlassesIp;
     private boolean refreshPollScheduled;
     private int refreshPollsRemaining;
@@ -144,23 +185,62 @@ final class CxrBootstrapClient {
             listener.onAuthorizationChanged(false);
             return;
         }
-        ensureLink();
+        resetLinkForNewSession();
         commandAfterStart = true;
         openWifiAfterStart = openWifi;
+        commandTypeAfterStart = openWifi ? BridgeProtocol.TYPE_BOOTSTRAP : BridgeProtocol.TYPE_REFRESH_IP;
         startRequested = false;
         awaitingGlassesIp = true;
         refreshPollScheduled = false;
         refreshPollsRemaining = MAX_REFRESH_POLLS;
+        configureAndBindSession("Connecting through Hi Rokid...", 0);
+    }
+
+    void requestWirelessDebuggingSetup() {
+        if (!hasAuthToken()) {
+            notifyStatus("Authorize Hi Rokid first.");
+            listener.onAuthorizationChanged(false);
+            return;
+        }
+        resetLinkForNewSession();
+        commandAfterStart = true;
+        openWifiAfterStart = false;
+        commandTypeAfterStart = BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP;
+        startRequested = false;
+        awaitingGlassesIp = true;
+        refreshPollScheduled = false;
+        refreshPollsRemaining = MAX_REFRESH_POLLS;
+        configureAndBindSession("Opening Wireless Debugging on glasses...", 0);
+    }
+
+    private void configureAndBindSession(String readyStatus, int attempt) {
+        ensureLink();
         if (!link.configCXRSession(new CxrDefs.CXRSession(
                 CxrDefs.CXRSessionType.CUSTOMAPP,
                 BridgeProtocol.R08_PACKAGE))) {
-            notifyStatus("CXR-L could not configure the R08 session.");
+            if (attempt == 0) {
+                notifyStatus("Resetting Hi Rokid session...");
+                resetLinkForNewSession();
+                mainHandler.postDelayed(() -> configureAndBindSession(readyStatus, attempt + 1), SESSION_RETRY_MS);
+            } else {
+                commandAfterStart = false;
+                awaitingGlassesIp = false;
+                notifyStatus("CXR-L could not configure the R08 session. Reopen Hi Rokid, then retry.");
+            }
             return;
         }
-        notifyStatus("Connecting through Hi Rokid...");
+        notifyStatus(readyStatus);
         boolean bindStarted = serviceBinder.bind(context, link, authToken);
         if (!bindStarted) {
-            notifyStatus("Hi Rokid service bind failed. Open Hi Rokid, then retry.");
+            if (attempt == 0) {
+                notifyStatus("Resetting Hi Rokid service bind...");
+                resetLinkForNewSession();
+                mainHandler.postDelayed(() -> configureAndBindSession(readyStatus, attempt + 1), SESSION_RETRY_MS);
+            } else {
+                commandAfterStart = false;
+                awaitingGlassesIp = false;
+                notifyStatus("Hi Rokid service bind failed. Open Hi Rokid, then retry.");
+            }
             return;
         }
         maybeStartBridge();
@@ -180,6 +260,10 @@ final class CxrBootstrapClient {
         awaitingGlassesIp = false;
         refreshPollScheduled = false;
         mainHandler.removeCallbacksAndMessages(null);
+        resetLinkForNewSession();
+    }
+
+    private void resetLinkForNewSession() {
         if (link != null) {
             try {
                 link.disconnect();
@@ -188,6 +272,9 @@ final class CxrBootstrapClient {
             }
         }
         link = null;
+        cxrConnected = false;
+        glassBtConnected = false;
+        startRequested = false;
     }
 
     private void requestAuthorizationFallback(Activity activity) {
@@ -267,9 +354,7 @@ final class CxrBootstrapClient {
             public void onOpenAppResult(boolean success) {
                 mainHandler.postDelayed(() -> {
                     notifyStatus(success ? "R08 bridge helper started." : "R08 app start was not confirmed, trying command anyway.");
-                    sendCommand(openWifiAfterStart
-                            ? BridgeProtocol.TYPE_BOOTSTRAP
-                            : BridgeProtocol.TYPE_REFRESH_IP, openWifiAfterStart);
+                    sendCommand(commandTypeAfterStart, openWifiAfterStart);
                 }, 900L);
             }
 
@@ -322,6 +407,7 @@ final class CxrBootstrapClient {
         return BridgeProtocol.TYPE_BOOTSTRAP.equals(trigger)
                 || BridgeProtocol.TYPE_OPEN_WIFI.equals(trigger)
                 || BridgeProtocol.TYPE_REFRESH_IP.equals(trigger)
+                || BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP.equals(trigger)
                 || "ip_watch".equals(trigger)
                 || "startup".equals(trigger)
                 || "connected".equals(trigger);
