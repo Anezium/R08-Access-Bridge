@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.0 - 2026-06-09
+## v1.4.0 - 2026-06-10
 
 ### Reboot persistence and one-tap re-arm
 
