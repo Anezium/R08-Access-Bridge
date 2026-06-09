@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.2 - 2026-06-09
+
+### Shortcut bridge reliability
+
+- Delayed glasses Wi-Fi shutdown after bridge arming to avoid a framework `system_server` watchdog reset.
+- Updated bridge command feedback so the phone shows a Wi-Fi-off-scheduled state before the actual shutdown.
+- Kept the bridge armed and usable in low-power operation after setup completes.
+
 ## v1.2.0 - 2026-06-07
 
 ### Hi Rokid shortcut bridge

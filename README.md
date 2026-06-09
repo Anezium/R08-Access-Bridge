@@ -190,13 +190,13 @@ Download the APKs from the GitHub Releases page:
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.3.0.apk
+adb install -r R08-Access-Bridge-v1.3.2.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
 
 ```powershell
-adb install -r R08-Companion-v1.3.0.apk
+adb install -r R08-Companion-v1.3.2.apk
 ```
 
 After installing the glasses APK:
