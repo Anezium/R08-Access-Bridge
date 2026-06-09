@@ -213,6 +213,28 @@ final class CxrBootstrapClient {
         configureAndBindSession("Opening Wireless Debugging on glasses...", 0);
     }
 
+    /**
+     * Sends a re-arm request to the glasses over CXR/Bluetooth.
+     * The glasses accessibility service will enable Wi-Fi, enable adb-wifi,
+     * and report the live IP+port back via onBootstrapState.
+     */
+    void requestReArm() {
+        if (!hasAuthToken()) {
+            notifyStatus("Authorize Hi Rokid first.");
+            listener.onAuthorizationChanged(false);
+            return;
+        }
+        resetLinkForNewSession();
+        commandAfterStart = true;
+        openWifiAfterStart = false;
+        commandTypeAfterStart = BridgeProtocol.TYPE_REARM_REQ;
+        startRequested = false;
+        awaitingGlassesIp = true;
+        refreshPollScheduled = false;
+        refreshPollsRemaining = MAX_REFRESH_POLLS;
+        configureAndBindSession("Sending re-arm request to glasses over Hi Rokid...", 0);
+    }
+
     private void configureAndBindSession(String readyStatus, int attempt) {
         ensureLink();
         if (!link.configCXRSession(new CxrDefs.CXRSession(
@@ -420,6 +442,7 @@ final class CxrBootstrapClient {
                 || BridgeProtocol.TYPE_OPEN_WIFI.equals(trigger)
                 || BridgeProtocol.TYPE_REFRESH_IP.equals(trigger)
                 || BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP.equals(trigger)
+                || BridgeProtocol.TYPE_REARM_REQ.equals(trigger)
                 || "ip_watch".equals(trigger)
                 || "startup".equals(trigger)
                 || "connected".equals(trigger);

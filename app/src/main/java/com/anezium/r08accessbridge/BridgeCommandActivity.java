@@ -2,6 +2,7 @@ package com.anezium.r08accessbridge;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -49,6 +50,7 @@ public final class BridgeCommandActivity extends Activity {
 
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_INIT_SHORTCUT_BRIDGE, false)) {
             PrivilegedShortcutBridge.ensureReady(this);
+            setBridgeArmed(true);
             handled = true;
         }
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_OPEN_WIFI_SETTINGS, false)) {
@@ -63,6 +65,14 @@ public final class BridgeCommandActivity extends Activity {
             PrivilegedShortcutBridge.requestWifiEnabled(this, false);
             handled = true;
         }
+        if (intent.getBooleanExtra(BridgeProtocol.EXTRA_RUN_ENABLE_WIFI_FLOW, false)) {
+            // Debug hook: runs the accessibility Wi-Fi-enable + adb-wifi flow standalone.
+            // Usage (over USB, signature-permission protected):
+            //   adb shell am start -n com.anezium.r08accessbridge/.BridgeCommandActivity \
+            //       --ez run_enable_wifi_flow true
+            RingControlAccessibilityService.requestEnableWifiFlow(this, "debug");
+            handled = true;
+        }
 
         if (handled && (triple != null || quadruple != null)) {
             Toast.makeText(this, R.string.toast_mapping_saved, Toast.LENGTH_SHORT).show();
@@ -71,5 +81,10 @@ public final class BridgeCommandActivity extends Activity {
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_EXIT_AFTER_COMMAND, true)) {
             mainHandler.postDelayed(this::finish, 300L);
         }
+    }
+
+    private void setBridgeArmed(boolean armed) {
+        SharedPreferences prefs = getSharedPreferences(BridgeProtocol.PREFS_BRIDGE, MODE_PRIVATE);
+        prefs.edit().putBoolean(BridgeProtocol.PREF_BRIDGE_ARMED, armed).apply();
     }
 }

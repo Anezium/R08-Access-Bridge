@@ -39,6 +39,7 @@ public final class PhoneCompanionActivity extends Activity {
     private static final String EXTRA_AUTO_FIND_AND_ARM = "auto_find_and_arm";
     private static final String EXTRA_AUTO_CXR_BOOTSTRAP = "auto_cxr_bootstrap";
 
+    // Phosphor-green dark palette — unchanged from original.
     private static final int SURFACE = Color.rgb(2, 10, 5);
     private static final int PANEL = Color.rgb(5, 22, 11);
     private static final int PANEL_STRONG = Color.rgb(8, 35, 16);
@@ -57,11 +58,13 @@ public final class PhoneCompanionActivity extends Activity {
     private EditText hostField;
     private EditText portField;
     private TextView summaryText;
+    private TextView summaryStatusText;
     private TextView cxrStatusText;
     private TextView ipStatusText;
     private TextView adbStatusText;
     private TextView bridgeStatusText;
     private TextView detailText;
+    private Button primaryButton;
     private CheckBox wifiOffAfterArmCheck;
     private CxrBootstrapClient cxrClient;
     private AdbBridgeClient adbBridgeClient;
@@ -81,6 +84,8 @@ public final class PhoneCompanionActivity extends Activity {
         cxrClient = new CxrBootstrapClient(this, prefs().getString(PREF_CXR_TOKEN, ""), cxrListener);
         setContentView(buildView());
         handleLaunchIntent();
+        // Re-arm runs only when the user taps the primary "Re-arm bridge" button.
+        // Do NOT auto-start any re-arm/connect flow here on launch.
     }
 
     @Override
@@ -107,6 +112,10 @@ public final class PhoneCompanionActivity extends Activity {
         super.onDestroy();
     }
 
+    // -------------------------------------------------------------------------
+    // View construction
+    // -------------------------------------------------------------------------
+
     private View buildView() {
         SharedPreferences prefs = prefs();
         ScrollView scroll = new ScrollView(this);
@@ -120,6 +129,7 @@ public final class PhoneCompanionActivity extends Activity {
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
+        // ── Title ────────────────────────────────────────────────────────────
         TextView title = label("R08 companion", 28, INK, Typeface.BOLD);
         title.setLetterSpacing(0f);
         title.setShadowLayer(dp(6), 0, 0, Color.rgb(17, 112, 38));
@@ -127,18 +137,21 @@ public final class PhoneCompanionActivity extends Activity {
 
         addGap(root, 16);
 
+        // ── Primary hero panel ────────────────────────────────────────────────
         LinearLayout hero = panel(PANEL_STRONG, dp(18));
         root.addView(hero, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        summaryText = label("Start the bridge", 20, INK, Typeface.BOLD);
+
+        summaryText = label(initialHeroTitle(), 20, INK, Typeface.BOLD);
         summaryText.setShadowLayer(dp(4), 0, 0, Color.rgb(15, 116, 38));
         hero.addView(summaryText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        TextView summaryDetail = label("Connects to the glasses, arms the Hi Rokid shortcut, then turns glasses Wi-Fi off if the battery option is enabled.", 14, MUTED, Typeface.NORMAL);
-        summaryDetail.setLineSpacing(dp(2), 1f);
-        hero.addView(summaryDetail, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        summaryStatusText = label(initialHeroSubtitle(), 14, MUTED, Typeface.NORMAL);
+        summaryStatusText.setLineSpacing(dp(2), 1f);
+        hero.addView(summaryStatusText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         addGap(hero, 14);
-        Button primaryButton = button("Start Bridge", true);
-        primaryButton.setOnClickListener(v -> runCxrBootstrapTask());
+        primaryButton = button(initialPrimaryButtonLabel(), true);
+        primaryButton.setOnClickListener(v -> onPrimaryButtonClicked());
         hero.addView(primaryButton, fullWidth(dp(54), 0));
 
         addGap(hero, 10);
@@ -156,6 +169,7 @@ public final class PhoneCompanionActivity extends Activity {
 
         addGap(root, 14);
 
+        // ── Status panel ─────────────────────────────────────────────────────
         LinearLayout statusPanel = panel(PANEL_RAISED, dp(16));
         root.addView(statusPanel, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         statusPanel.addView(sectionTitle("Bridge"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
@@ -176,16 +190,87 @@ public final class PhoneCompanionActivity extends Activity {
 
         addGap(root, 14);
 
-        LinearLayout recovery = panel(PANEL, dp(16));
-        root.addView(recovery, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        recovery.addView(sectionTitle("Recovery path"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        // ── "How this works" collapsible ─────────────────────────────────────
+        root.addView(buildHowItWorksSection(), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        addGap(root, 14);
+
+        // ── Advanced collapsible section ──────────────────────────────────────
+        root.addView(buildAdvancedSection(prefs), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        return scroll;
+    }
+
+    private LinearLayout buildHowItWorksSection() {
+        LinearLayout outer = panel(PANEL, dp(16));
+
+        Button toggle = button("How this works", false);
+        outer.addView(toggle, fullWidth(dp(44), 0));
+        addGap(outer, 8);
+
+        TextView body = label(
+                "The Hi Rokid two-finger shortcut is triggered by a raw input event that a normal "
+                + "Android app cannot send — it requires the ADB shell user.\n\n"
+                + "First-time setup (one-time): tap \"Set up bridge\". The companion sends the glasses app "
+                + "a command through Hi Rokid/CXR-L, the Accessibility Service opens Wireless Debugging, "
+                + "and this phone pairs automatically from the code displayed on the glasses.\n\n"
+                + "After any glasses reboot: open this app and tap \"Re-arm bridge\". The command goes "
+                + "over Hi Rokid/Bluetooth (works with Wi-Fi off). The glasses Accessibility Service "
+                + "opens Wi-Fi Settings, taps the toggle ON, enables Wireless Debugging, then reports "
+                + "the live IP+port back over Bluetooth. This phone connects with its saved key "
+                + "(no re-pairing), restarts the bridge script, then turns glasses Wi-Fi and "
+                + "always-on scanning back off.\n\n"
+                + "Glasses Wi-Fi is off when idle to protect battery. The Bluetooth Hi Rokid channel "
+                + "is always available to trigger the re-arm flow.",
+                13, MUTED, Typeface.NORMAL);
+        body.setLineSpacing(dp(2), 1f);
+        body.setVisibility(View.GONE);
+        outer.addView(body, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        toggle.setOnClickListener(v -> {
+            if (body.getVisibility() == View.GONE) {
+                body.setVisibility(View.VISIBLE);
+                toggle.setText("How this works ▲");
+            } else {
+                body.setVisibility(View.GONE);
+                toggle.setText("How this works");
+            }
+        });
+
+        return outer;
+    }
+
+    private LinearLayout buildAdvancedSection(SharedPreferences prefs) {
+        LinearLayout outer = panel(PANEL, dp(16));
+
+        Button toggle = button("Advanced", false);
+        outer.addView(toggle, fullWidth(dp(44), 0));
+
+        LinearLayout inner = new LinearLayout(this);
+        inner.setOrientation(LinearLayout.VERTICAL);
+        inner.setVisibility(View.GONE);
+        outer.addView(inner, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        toggle.setOnClickListener(v -> {
+            if (inner.getVisibility() == View.GONE) {
+                inner.setVisibility(View.VISIBLE);
+                toggle.setText("Advanced ▲");
+            } else {
+                inner.setVisibility(View.GONE);
+                toggle.setText("Advanced");
+            }
+        });
+
+        // Recovery / first-run path
+        addGap(inner, 14);
+        inner.addView(sectionTitle("Recovery path"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         TextView recoveryCopy = label("Full reboot state: CXR-L wakes the glasses app, opens Wireless Debugging through Accessibility when pairing is missing, reads the dynamic port, then arms over the same Wi-Fi.", 14, MUTED, Typeface.NORMAL);
         recoveryCopy.setLineSpacing(dp(2), 1f);
-        recovery.addView(recoveryCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        addGap(recovery, 12);
+        inner.addView(recoveryCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(inner, 12);
 
         LinearLayout recoveryActions = horizontal();
-        recovery.addView(recoveryActions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(recoveryActions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         Button auth = button("Authorize", false);
         auth.setOnClickListener(v -> cxrClient.requestAuthorization(this));
         recoveryActions.addView(auth, weightButton());
@@ -194,14 +279,13 @@ public final class PhoneCompanionActivity extends Activity {
         cxrWifi.setOnClickListener(v -> runWirelessDebuggingSetupTask());
         recoveryActions.addView(cxrWifi, weightButton());
 
-        addGap(root, 14);
+        addGap(inner, 14);
 
-        LinearLayout connection = panel(PANEL_RAISED, dp(16));
-        root.addView(connection, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        connection.addView(sectionTitle("ADB endpoint"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        // ADB endpoint fields
+        inner.addView(sectionTitle("ADB endpoint"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         LinearLayout fields = horizontal();
-        connection.addView(fields, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(fields, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         hostField = field("Glasses IP", getIntent().getStringExtra(EXTRA_HOST) != null
                 ? getIntent().getStringExtra(EXTRA_HOST)
                 : prefs.getString(PREF_HOST, DEFAULT_HOST), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -211,10 +295,10 @@ public final class PhoneCompanionActivity extends Activity {
                 prefs.getInt(PREF_PORT, BridgeProtocol.DEFAULT_ADB_PORT))), InputType.TYPE_CLASS_NUMBER);
         fields.addView(portField, new LinearLayout.LayoutParams(0, dp(56), 1f));
 
-        addGap(connection, 12);
+        addGap(inner, 12);
 
         LinearLayout adbActions = horizontal();
-        connection.addView(adbActions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(adbActions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         Button scan = button("LAN scan / arm", false);
         scan.setOnClickListener(v -> runDiscoveryArmTask());
         adbActions.addView(scan, weightButton());
@@ -224,14 +308,13 @@ public final class PhoneCompanionActivity extends Activity {
                 dadb -> adbBridgeClient.arm(dadb, wifiOffAfterArm(), this::updateEndpointFromWorker)));
         adbActions.addView(arm, weightButton());
 
-        addGap(root, 14);
+        addGap(inner, 14);
 
-        LinearLayout tools = panel(PANEL_RAISED, dp(16));
-        root.addView(tools, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        tools.addView(sectionTitle("Tools"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        // Tools
+        inner.addView(sectionTitle("Tools"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         LinearLayout toolsRow = horizontal();
-        tools.addView(toolsRow, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(toolsRow, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         Button wifi = button("ADB Wi-Fi panel", false);
         wifi.setOnClickListener(v -> runAdbTask("Opening glasses Wi-Fi", adbBridgeClient::openWifiPanel));
         toolsRow.addView(wifi, weightButton());
@@ -240,10 +323,10 @@ public final class PhoneCompanionActivity extends Activity {
         refreshCxr.setOnClickListener(v -> cxrClient.requestRefresh());
         toolsRow.addView(refreshCxr, weightButton());
 
-        addGap(tools, 10);
+        addGap(inner, 10);
 
         LinearLayout toolsRow2 = horizontal();
-        tools.addView(toolsRow2, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(toolsRow2, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         Button test = button("Test shortcut", false);
         test.setOnClickListener(v -> runAdbTask("Testing shortcut", adbBridgeClient::triggerShortcut));
         toolsRow2.addView(test, weightButton());
@@ -252,10 +335,10 @@ public final class PhoneCompanionActivity extends Activity {
         status.setOnClickListener(v -> runAdbTask("Reading bridge", adbBridgeClient::readStatus));
         toolsRow2.addView(status, weightButton());
 
-        addGap(tools, 10);
+        addGap(inner, 10);
 
         LinearLayout toolsRow3 = horizontal();
-        tools.addView(toolsRow3, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(toolsRow3, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         Button wifiOff = button("Wi-Fi off now", false);
         wifiOff.setOnClickListener(v -> runAdbTask("Turning glasses Wi-Fi off", adbBridgeClient::requestWifiDisable));
         toolsRow3.addView(wifiOff, weightButton());
@@ -264,8 +347,48 @@ public final class PhoneCompanionActivity extends Activity {
         disable.setOnClickListener(v -> runAdbTask("Disabling bridge", adbBridgeClient::disable));
         toolsRow3.addView(disable, weightButton());
 
-        return scroll;
+        return outer;
     }
+
+    // -------------------------------------------------------------------------
+    // Primary button logic
+    // -------------------------------------------------------------------------
+
+    private boolean isArmedBefore() {
+        return prefs().getBoolean(BridgeProtocol.PREF_ARMED, false);
+    }
+
+    private String initialHeroTitle() {
+        return isArmedBefore() ? "Re-arm bridge" : "Set up bridge";
+    }
+
+    private String initialHeroSubtitle() {
+        if (isArmedBefore()) {
+            String host = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
+            return "Sends re-arm command over Hi Rokid/Bluetooth. The glasses enable Wi-Fi via "
+                    + "Accessibility Service, enable ADB, and report the live port. "
+                    + (host.isEmpty() ? "" : "Last endpoint: " + host + ":" + prefs().getInt(BridgeProtocol.PREF_LAST_PORT, BridgeProtocol.DEFAULT_ADB_PORT) + ".");
+        }
+        return "First-time setup: pairs this phone with the glasses over Wireless Debugging, "
+                + "installs the bridge script, and configures quadruple tap. "
+                + "Glasses Wi-Fi is turned off afterward if the battery option is enabled.";
+    }
+
+    private String initialPrimaryButtonLabel() {
+        return isArmedBefore() ? "Re-arm bridge" : "Set up bridge";
+    }
+
+    private void onPrimaryButtonClicked() {
+        if (isArmedBefore()) {
+            runReArmTask();
+        } else {
+            runCxrBootstrapTask();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Launch intent handling
+    // -------------------------------------------------------------------------
 
     private void handleLaunchIntent() {
         Intent intent = getIntent();
@@ -280,14 +403,67 @@ public final class PhoneCompanionActivity extends Activity {
             setupCoordinator.setIntentPort(port);
             portField.setText(Integer.toString(port));
         }
-        if (intent.getBooleanExtra(EXTRA_AUTO_CXR_BOOTSTRAP, false)) {
-            hostField.postDelayed(this::runCxrBootstrapTask, 250L);
-        } else if (intent.getBooleanExtra(EXTRA_AUTO_FIND_AND_ARM, false)) {
-            hostField.postDelayed(this::runDiscoveryArmTask, 250L);
-        } else if (intent.getBooleanExtra(EXTRA_AUTO_ARM, false)) {
-            hostField.postDelayed(() -> runAdbTask("Arming bridge",
-                    dadb -> adbBridgeClient.arm(dadb, wifiOffAfterArm(), this::updateEndpointFromWorker)), 250L);
+        // EXTRA_AUTO_* intents pre-fill endpoint fields but do NOT auto-start any task.
+        // All re-arm/connect flows require an explicit tap on the primary button.
+    }
+
+    // -------------------------------------------------------------------------
+    // Tasks
+    // -------------------------------------------------------------------------
+
+    private void runReArmTask() {
+        // Preferred path: send re-arm command over CXR/Bluetooth so the glasses accessibility
+        // service enables Wi-Fi, then we connect to the live port with the saved key.
+        if (cxrClient.hasAuthToken()) {
+            runCxrReArmTask();
+            return;
         }
+        // CXR not authorized — try the direct ADB fast path if we have a saved endpoint.
+        runDirectReArmTask();
+    }
+
+    /** Re-arm via CXR/Bluetooth: glasses enable Wi-Fi via accessibility, report live port, phone connects. */
+    private void runCxrReArmTask() {
+        setupCoordinator.startBridge(parsePort());
+        summary("Re-arming via Hi Rokid", MUTED);
+        setStatusLine(cxrStatusText, "Hi Rokid", "Sending re-arm command", MUTED);
+        setStatusLine(ipStatusText, "Glasses IP", "Waiting for glasses Wi-Fi", MUTED);
+        setStatusLine(adbStatusText, "ADB", "Waiting for live port", MUTED);
+        setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
+        setDetail("Sending re-arm command over Hi Rokid/Bluetooth. The glasses accessibility service will enable Wi-Fi and report the live ADB port.");
+        cxrClient.requestReArm();
+    }
+
+    /** Direct fast re-arm using the saved endpoint — used when CXR is not authorized. */
+    private void runDirectReArmTask() {
+        String host = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
+        int port = prefs().getInt(BridgeProtocol.PREF_LAST_PORT, BridgeProtocol.DEFAULT_ADB_PORT);
+        if (host.isEmpty()) {
+            setDetail("No saved endpoint and Hi Rokid not authorized. Tap Authorize in Advanced, then Re-arm.");
+            runCxrBootstrapTask();
+            return;
+        }
+        summary("Re-arming bridge", MUTED);
+        setStatusLine(adbStatusText, "ADB", "Connecting to " + host + ":" + port, MUTED);
+        setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
+        setDetail("Connecting to saved endpoint " + host + ":" + port + "…");
+        executor.execute(() -> {
+            try (AdbSession adb = adbBridgeClient.connect(host, port)) {
+                runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Connected to " + host, ACCENT));
+                BridgeOperationResult result = adbBridgeClient.reArm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                runOnUiThread(() -> applyBridgeResult(host, result));
+            } catch (Throwable throwable) {
+                // Direct path failed — fall back to full CXR bootstrap.
+                runOnUiThread(() -> {
+                    setupCoordinator.markNotArmed();
+                    setStatusLine(adbStatusText, "ADB", "Re-arm failed, trying full setup", WARN);
+                    setDetail("Could not reconnect to " + host + ":" + port + " — "
+                            + shortMessage(throwable) + "\n\nFalling back to full bridge setup via Hi Rokid.");
+                    summary("Full setup fallback", WARN);
+                    runCxrBootstrapTask();
+                });
+            }
+        });
     }
 
     private void runCxrBootstrapTask() {
@@ -318,6 +494,10 @@ public final class PhoneCompanionActivity extends Activity {
         }
         cxrClient.requestWirelessDebuggingSetup();
     }
+
+    // -------------------------------------------------------------------------
+    // CXR listener
+    // -------------------------------------------------------------------------
 
     private final CxrBootstrapClient.Listener cxrListener = new CxrBootstrapClient.Listener() {
         @Override
@@ -358,7 +538,7 @@ public final class PhoneCompanionActivity extends Activity {
                 if (authorized) {
                     prefs().edit().putString(PREF_CXR_TOKEN, cxrClient.authToken()).apply();
                     setStatusLine(cxrStatusText, "Hi Rokid", "Authorized", ACCENT);
-                    setDetail("Authorization saved. Tap Start Bridge again.");
+                    setDetail("Authorization saved. Tap " + initialPrimaryButtonLabel() + " again.");
                 } else {
                     setStatusLine(cxrStatusText, "Hi Rokid", "Needs authorization", WARN);
                 }
@@ -536,10 +716,16 @@ public final class PhoneCompanionActivity extends Activity {
         });
     }
 
+    // -------------------------------------------------------------------------
+    // Result handling
+    // -------------------------------------------------------------------------
+
     private void applyBridgeResult(String host, BridgeOperationResult result) {
         switch (result.type()) {
             case ARMED:
                 setupCoordinator.markArmed();
+                saveArmedEndpoint(host, parsePort());
+                updatePrimaryButtonForState(true);
                 setStatusLine(adbStatusText, "ADB",
                         result.wifiOffAfterArm() ? "Armed, Wi-Fi off scheduled" : "Connected to " + host, ACCENT);
                 setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
@@ -548,6 +734,8 @@ public final class PhoneCompanionActivity extends Activity {
                 break;
             case DISABLED:
                 setupCoordinator.markDisabled();
+                clearArmedEndpoint();
+                updatePrimaryButtonForState(false);
                 setStatusLine(bridgeStatusText, "Bridge", "Disabled", MUTED);
                 summary("Bridge disabled", MUTED);
                 setDetail(result.output().isEmpty() ? "Bridge disabled." : result.output());
@@ -558,6 +746,35 @@ public final class PhoneCompanionActivity extends Activity {
                 break;
         }
     }
+
+    private void updatePrimaryButtonForState(boolean armed) {
+        runOnUiThread(() -> {
+            primaryButton.setText(armed ? "Re-arm bridge" : "Set up bridge");
+            summaryText.setText(armed ? "Re-arm bridge" : "Set up bridge");
+            summaryStatusText.setText(armed
+                    ? "Bridge is armed. Tap to re-arm after a glasses reboot."
+                    : "First-time setup needed. Tap to pair and arm.");
+        });
+    }
+
+    private void saveArmedEndpoint(String host, int port) {
+        String h = (host == null || host.trim().isEmpty()) ? "" : host.trim();
+        prefs().edit()
+                .putBoolean(BridgeProtocol.PREF_ARMED, true)
+                .putString(BridgeProtocol.PREF_LAST_HOST, h)
+                .putInt(BridgeProtocol.PREF_LAST_PORT, port)
+                .apply();
+    }
+
+    private void clearArmedEndpoint() {
+        prefs().edit()
+                .putBoolean(BridgeProtocol.PREF_ARMED, false)
+                .apply();
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private void updateEndpointFromWorker(String ip) {
         runOnUiThread(() -> updateEndpoint(ip, parsePort()));
@@ -578,6 +795,9 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private int parsePort() {
+        if (portField == null) {
+            return prefs().getInt(BridgeProtocol.PREF_LAST_PORT, BridgeProtocol.DEFAULT_ADB_PORT);
+        }
         try {
             return Integer.parseInt(portField.getText().toString().trim());
         } catch (NumberFormatException ignored) {
@@ -597,13 +817,21 @@ public final class PhoneCompanionActivity extends Activity {
         return host == null || host.trim().isEmpty() ? "Not known yet" : host;
     }
 
+    private String shortMessage(Throwable throwable) {
+        if (throwable == null) return "unknown";
+        String msg = throwable.getMessage();
+        return (msg == null || msg.trim().isEmpty()) ? throwable.getClass().getSimpleName() : msg.trim();
+    }
+
     private String errorMessage(Throwable throwable) {
         String message = throwable.getMessage();
         if (message == null || message.trim().isEmpty()) {
             message = throwable.getClass().getSimpleName();
         }
         return "Failed: " + message
-                + "\n\nTap Start Bridge again. The phone will use Hi Rokid/CXR-L to open Wireless Debugging on the glasses, pair from the code, arm the shell bridge, then turn glasses Wi-Fi back off when the battery option is enabled.";
+                + "\n\nIf the glasses rebooted, just tap Re-arm bridge — the phone will reconnect "
+                + "to the saved endpoint without re-pairing. If that also fails, tap Set up bridge "
+                + "for the full CXR/Wireless Debugging flow.";
     }
 
     private String adbStateLabel(CxrBootstrapClient.BootstrapState state) {
@@ -637,50 +865,34 @@ public final class PhoneCompanionActivity extends Activity {
             return "Wireless setup";
         }
         switch (status) {
-            case BridgeProtocol.SETUP_IDLE:
-                return "Wireless setup";
-            case BridgeProtocol.SETUP_BRIDGE_ARMED:
-                return "Bridge already armed";
-            case BridgeProtocol.SETUP_OPENING_DEVELOPER_OPTIONS:
-                return "Opening Developer Options";
-            case BridgeProtocol.SETUP_OPENING_WIRELESS_DEBUGGING:
-                return "Opening Wireless Debugging";
-            case BridgeProtocol.SETUP_SEARCHING_WIRELESS_DEBUGGING:
-                return "Searching Wireless Debugging";
-            case BridgeProtocol.SETUP_TURNING_WIRELESS_DEBUGGING_ON:
-                return "Turning Wireless Debugging on";
-            case BridgeProtocol.SETUP_CONFIRMING_WIRELESS_DEBUGGING:
-                return "Confirming Wireless Debugging";
+            case BridgeProtocol.SETUP_IDLE:                         return "Wireless setup";
+            case BridgeProtocol.SETUP_BRIDGE_ARMED:                 return "Bridge already armed";
+            case BridgeProtocol.SETUP_OPENING_DEVELOPER_OPTIONS:    return "Opening Developer Options";
+            case BridgeProtocol.SETUP_OPENING_WIRELESS_DEBUGGING:   return "Opening Wireless Debugging";
+            case BridgeProtocol.SETUP_SEARCHING_WIRELESS_DEBUGGING: return "Searching Wireless Debugging";
+            case BridgeProtocol.SETUP_TURNING_WIRELESS_DEBUGGING_ON:return "Turning Wireless Debugging on";
+            case BridgeProtocol.SETUP_CONFIRMING_WIRELESS_DEBUGGING:return "Confirming Wireless Debugging";
             case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_OPEN:
-            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_ON:
-                return "Wireless Debugging on";
-            case BridgeProtocol.SETUP_PORT_READY:
-                return "Wireless port ready";
-            case BridgeProtocol.SETUP_OPENING_PAIRING_CODE:
-                return "Opening pairing code";
+            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_ON:        return "Wireless Debugging on";
+            case BridgeProtocol.SETUP_PORT_READY:                   return "Wireless port ready";
+            case BridgeProtocol.SETUP_OPENING_PAIRING_CODE:         return "Opening pairing code";
             case BridgeProtocol.SETUP_WAITING_FOR_PAIRING_CODE:
-            case BridgeProtocol.SETUP_SEARCHING_PAIRING_CODE:
-                return "Waiting for pairing code";
-            case BridgeProtocol.SETUP_PAIRING_READY:
-                return "Pairing code ready";
-            case BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED:
-                return "Pairing code expired";
-            case BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED:
-                return "Enable R08 Accessibility on glasses";
+            case BridgeProtocol.SETUP_SEARCHING_PAIRING_CODE:       return "Waiting for pairing code";
+            case BridgeProtocol.SETUP_PAIRING_READY:                return "Pairing code ready";
+            case BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED:         return "Pairing code expired";
+            case BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED:         return "Enable R08 Accessibility on glasses";
             case BridgeProtocol.SETUP_DEVELOPER_OPTIONS_DISABLED:
-                return "Enabling Developer Options";
-            case BridgeProtocol.SETUP_ENABLING_DEVELOPER_OPTIONS:
-                return "Enabling Developer Options";
-            case BridgeProtocol.SETUP_SEARCHING_BUILD_NUMBER:
-                return "Searching Build number";
-            case BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL:
-                return "Manual Developer Options step needed";
-            case BridgeProtocol.SETUP_TIMEOUT:
-                return "Wireless setup timed out";
-            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL:
-                return "Open Wireless Debugging manually";
-            default:
-                return status.replace('_', ' ');
+            case BridgeProtocol.SETUP_ENABLING_DEVELOPER_OPTIONS:   return "Enabling Developer Options";
+            case BridgeProtocol.SETUP_SEARCHING_BUILD_NUMBER:       return "Searching Build number";
+            case BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL:     return "Manual Developer Options step needed";
+            case BridgeProtocol.SETUP_TIMEOUT:                      return "Wireless setup timed out";
+            case BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL:    return "Open Wireless Debugging manually";
+            case BridgeProtocol.SETUP_REARM_ENABLING_WIFI:          return "Enabling Wi-Fi on glasses";
+            case BridgeProtocol.SETUP_REARM_WIFI_ON:                return "Wi-Fi on, enabling ADB";
+            case BridgeProtocol.SETUP_REARM_ADB_WIFI:              return "Enabling wireless debugging";
+            case BridgeProtocol.SETUP_REARM_READY:                  return "Re-arm port ready";
+            case BridgeProtocol.SETUP_REARM_WIFI_TIMEOUT:           return "Wi-Fi enable timed out";
+            default: return status.replace('_', ' ');
         }
     }
 
@@ -699,6 +911,10 @@ public final class PhoneCompanionActivity extends Activity {
         String base = "Done. You can close this app now; the shortcut bridge keeps running on the glasses.";
         return output == null || output.trim().isEmpty() ? base : base + "\n\n" + output.trim();
     }
+
+    // -------------------------------------------------------------------------
+    // UI primitives (unchanged from original)
+    // -------------------------------------------------------------------------
 
     private LinearLayout panel(int color, int padding) {
         LinearLayout panel = new LinearLayout(this);

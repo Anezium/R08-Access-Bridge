@@ -23,6 +23,24 @@ final class WirelessAdbController {
     private WirelessAdbController() {
     }
 
+    /**
+     * Writes adb_wifi_enabled=1 via Settings.Global, which is allowed when the app holds
+     * WRITE_SECURE_SETTINGS (granted by the phone companion over ADB during arm).
+     * Returns true if the value was successfully set.
+     */
+    static boolean enableAdbWifi(Context context) {
+        if (context == null) {
+            return false;
+        }
+        try {
+            Settings.Global.putInt(context.getContentResolver(), ADB_WIFI_ENABLED, 1);
+            return true;
+        } catch (RuntimeException exception) {
+            Log.d(TAG, "enableAdbWifi failed", exception);
+            return false;
+        }
+    }
+
     static boolean isEnabled(Context context) {
         if (context == null) {
             return false;

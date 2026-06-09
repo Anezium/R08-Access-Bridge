@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.0 - 2026-06-09
+
+### Reboot persistence and one-tap re-arm
+
+- **Reboot self-heal (glasses):** Added `BootReceiver` — on `BOOT_COMPLETED`, if the bridge was previously armed, the glasses app re-enables Wi-Fi and writes `adb_wifi_enabled=1` via `WRITE_SECURE_SETTINGS` so the phone can reconnect without any user action on the glasses.
+- **WRITE_SECURE_SETTINGS retention:** Phone companion now grants (instead of revoking) `WRITE_SECURE_SETTINGS` to the glasses app during arm, persisting the permission across reboots.
+- **One-tap re-arm (phone):** Added `reArm` fast path in `AdbBridgeClient`. On launch, if a prior arm endpoint is stored, the companion auto-attempts re-arm using the saved host/port and the persisted KADB/dadb key — no re-pairing, no Settings navigation.
+- **Adaptive primary button:** Phone UI primary button is now `Set up bridge` on first use and `Re-arm bridge` after any successful arm, adapting to the current state.
+- **Wi-Fi + always-on scanning off after arm:** Shell bridge (`tools/r08-shortcut-bridge.sh` and raw copy) now also sets `wifi_scan_always_enabled=0` whenever Wi-Fi is turned off, keeping the glasses in fully quiet low-power mode.
+- **Phone UI refonte:** Restructured `PhoneCompanionActivity` with a guided hero section (status + adaptive primary button), a collapsible "How this works" explanation, and all advanced controls (LAN scan, manual IP, recovery path, tools) moved to a collapsible "Advanced" section. Phosphor-green aesthetic and all existing functionality preserved.
+- **Docs:** Updated README "Hi Rokid Shortcut Bridge" section with first-time vs. reboot flows; noted that the multi-language Settings automator is first-run only.
+
 ## v1.3.2 - 2026-06-09
 
 ### Shortcut bridge reliability

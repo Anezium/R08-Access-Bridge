@@ -17,11 +17,19 @@ public final class BridgeProtocol {
     public static final String TYPE_OPEN_WIFI = "open_wifi";
     public static final String TYPE_WIRELESS_DEBUG_SETUP = "wireless_debug_setup";
     public static final String TYPE_BOOTSTRAP_STATE = "bootstrap_state";
+    /** Phone → glasses: re-arm request. Glasses enable Wi-Fi via accessibility, then adb-wifi. */
+    public static final String TYPE_REARM_REQ = "r08.rearm.req";
     public static final String SOURCE_PHONE = "phone";
     public static final String SOURCE_GLASSES = "glasses";
 
     public static final String SETUP_IDLE = "idle";
     public static final String SETUP_BRIDGE_ARMED = "bridge_armed";
+    // Re-arm flow states (glasses enabling Wi-Fi via accessibility service).
+    public static final String SETUP_REARM_ENABLING_WIFI = "rearm_enabling_wifi";
+    public static final String SETUP_REARM_WIFI_ON = "rearm_wifi_on";
+    public static final String SETUP_REARM_ADB_WIFI = "rearm_enabling_adb_wifi";
+    public static final String SETUP_REARM_READY = "rearm_ready";
+    public static final String SETUP_REARM_WIFI_TIMEOUT = "rearm_wifi_timeout";
     public static final String SETUP_ACCESSIBILITY_NEEDED = "accessibility_service_needed";
     public static final String SETUP_DEVELOPER_OPTIONS_DISABLED = "developer_options_disabled";
     public static final String SETUP_OPENING_DEVELOPER_OPTIONS = "opening_developer_options";
@@ -50,6 +58,8 @@ public final class BridgeProtocol {
     public static final String EXTRA_OPEN_WIRELESS_DEBUG_SETUP = "open_wireless_debug_setup";
     public static final String EXTRA_BRIDGE_WIFI_OFF = "bridge_wifi_off";
     public static final String EXTRA_EXIT_AFTER_COMMAND = "exit_after_command";
+    /** Debug extra: --ez run_enable_wifi_flow true → runs the re-arm enable-Wi-Fi+adb flow standalone. */
+    public static final String EXTRA_RUN_ENABLE_WIFI_FLOW = "run_enable_wifi_flow";
 
     public static final String ACTION_HI_ROKID_SHORTCUT = "hi_rokid_shortcut";
     public static final String BRIDGE_DIR_NAME = "shortcut_bridge";
@@ -66,6 +76,17 @@ public final class BridgeProtocol {
     public static final String REMOTE_LOGFILE = "/data/local/tmp/r08-shortcut-bridge.log";
     public static final String DEFAULT_INPUT_DEVICE = "/dev/input/event1";
     public static final int DEFAULT_SETTINGS_SCAN_CODE = 149;
+
+    // SharedPreferences key used by the glasses app to record that the bridge has been armed at
+    // least once (survives reboot, enables self-heal in BootReceiver).
+    public static final String PREF_BRIDGE_ARMED = "bridge_armed";
+    // SharedPreferences file name used by the glasses app for bridge state.
+    public static final String PREFS_BRIDGE = "r08_bridge";
+
+    // SharedPreferences keys used by the phone companion to remember the last successful endpoint.
+    public static final String PREF_ARMED = "armed";
+    public static final String PREF_LAST_HOST = "last_host";
+    public static final String PREF_LAST_PORT = "last_port";
 
     private BridgeProtocol() {
     }

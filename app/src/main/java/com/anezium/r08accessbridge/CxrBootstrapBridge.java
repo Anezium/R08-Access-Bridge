@@ -134,6 +134,11 @@ final class CxrBootstrapBridge {
                 || BridgeProtocol.TYPE_BOOTSTRAP.equals(type)
                 || BridgeProtocol.TYPE_OPEN_WIFI.equals(type);
 
+        if (BridgeProtocol.TYPE_REARM_REQ.equals(type)) {
+            startReArmFlow(id);
+            return;
+        }
+
         if (BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP.equals(type)) {
             startWirelessDebuggingSetup(id);
             return;
@@ -167,15 +172,38 @@ final class CxrBootstrapBridge {
         MAIN.postDelayed(IP_WATCH_TICK, IP_WATCH_INTERVAL_MS);
     }
 
+    /** Called by WifiEnableAutomator to report progress (state only, no port yet). */
+    static void reportReArmState(String state, String replyId) {
+        setupState = normalizeSetupState(state);
+        wirelessSetupActive = true;
+        wirelessPairingReady = false;
+        sendState(BridgeProtocol.TYPE_REARM_REQ, replyId, false, false);
+    }
+
+    /** Called by WifiEnableAutomator when Wi-Fi is on, adb-wifi is enabled, and port is live. */
+    static void reportReArmReady(String replyId, int livePort) {
+        setupState = BridgeProtocol.SETUP_REARM_READY;
+        wirelessSetupActive = false;
+        wirelessPairingReady = false;
+        if (livePort > 0) {
+            lastKnownAdbPort = livePort;
+        }
+        sendState(BridgeProtocol.TYPE_REARM_REQ, replyId, false, true);
+    }
+
     static void reportWirelessSetup(String status, boolean active) {
+        Log.d("R08WirelessSetup", "setupState=" + status + " active=" + active);
         updateWirelessSetup(status, active, false, "", "", 0, 0);
     }
 
     static void reportWirelessConnectPort(String status, String host, int port) {
+        Log.d("R08WirelessSetup", "setupState=" + status + " connectEndpoint=" + host + ":" + port);
         updateWirelessSetup(status, true, false, "", host, 0, port);
     }
 
     static void reportWirelessPairing(String status, String code, String host, int pairPort, int connectPort) {
+        Log.d("R08WirelessSetup", "setupState=" + status + " pairingReady=true"
+                + " host=" + host + " pairPort=" + pairPort + " connectPort=" + connectPort);
         updateWirelessSetup(status, false, true, code, host, pairPort, connectPort);
     }
 
@@ -206,6 +234,17 @@ final class CxrBootstrapBridge {
             lastKnownAdbPort = connectPort;
         }
         sendState(BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP, null, false, false);
+    }
+
+    private static void startReArmFlow(String replyTo) {
+        Context context = appContext;
+        setupState = BridgeProtocol.SETUP_REARM_ENABLING_WIFI;
+        wirelessSetupActive = true;
+        wirelessPairingReady = false;
+        sendState(BridgeProtocol.TYPE_REARM_REQ, replyTo, false, false);
+        if (context != null) {
+            RingControlAccessibilityService.requestEnableWifiFlow(context, replyTo);
+        }
     }
 
     private static void startWirelessDebuggingSetup(String replyTo) {

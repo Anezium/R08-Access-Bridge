@@ -41,6 +41,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_BACK = "back";
     public static final String COMMAND_LONG_PRESS = "long_press";
     public static final String COMMAND_START_WIRELESS_DEBUG_SETUP = "start_wireless_debug_setup";
+    public static final String COMMAND_ENABLE_WIFI_FLOW = "enable_wifi_flow";
+    public static final String EXTRA_REARM_REPLY_ID = "rearm_reply_id";
     public static final String EXTRA_APP_TYPE = "app_type";
     public static final String EXTRA_ENABLED = "enabled";
 
@@ -64,6 +66,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private AccessibilityNavigator navigator;
     private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
+    private WifiEnableAutomator wifiEnableAutomator;
     private RingBleController bleController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
@@ -126,6 +129,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 executeDebounced(RingCommand.LONG_PRESS, "adb", 0L, 0L);
             } else if (COMMAND_START_WIRELESS_DEBUG_SETUP.equals(command)) {
                 requestWirelessDebugSetup(context);
+            } else if (COMMAND_ENABLE_WIFI_FLOW.equals(command)) {
+                String replyId = intent.getStringExtra(EXTRA_REARM_REPLY_ID);
+                startWifiEnableFlow(replyId);
             }
         }
     };
@@ -179,6 +185,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
+        wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
         configureServiceInfo();
         registerCommandReceiver();
         bleController = new RingBleController(this);
@@ -204,6 +211,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         tapRecognizer.cancel();
         wirelessDebuggingSetupAutomator = null;
+        wifiEnableAutomator = null;
         super.onDestroy();
     }
 
@@ -211,6 +219,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public void onAccessibilityEvent(AccessibilityEvent event) {
         if (wirelessDebuggingSetupAutomator != null) {
             wirelessDebuggingSetupAutomator.onAccessibilityEvent(event);
+        }
+        if (wifiEnableAutomator != null) {
+            wifiEnableAutomator.onAccessibilityEvent(event);
         }
     }
 
@@ -228,6 +239,33 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         CxrBootstrapBridge.reportWirelessSetup(BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED, false);
         openAccessibilitySettings(context);
         return false;
+    }
+
+    /**
+     * Sends a broadcast to this service (via commandReceiver) to start the Wi-Fi enable flow.
+     * Safe to call from any thread.
+     */
+    static boolean requestEnableWifiFlow(Context context, String replyId) {
+        RingControlAccessibilityService service = activeService;
+        if (service == null || service.wifiEnableAutomator == null) {
+            CxrBootstrapBridge.reportReArmState(BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED, replyId);
+            openAccessibilitySettings(context);
+            return false;
+        }
+        Intent intent = new Intent(ACTION_COMMAND);
+        intent.setPackage(context.getPackageName());
+        intent.putExtra(EXTRA_COMMAND, COMMAND_ENABLE_WIFI_FLOW);
+        if (replyId != null) {
+            intent.putExtra(EXTRA_REARM_REPLY_ID, replyId);
+        }
+        context.sendBroadcast(intent, COMMAND_PERMISSION);
+        return true;
+    }
+
+    private void startWifiEnableFlow(String replyId) {
+        if (wifiEnableAutomator != null) {
+            mainHandler.post(() -> wifiEnableAutomator.start(replyId));
+        }
     }
 
     private static void openAccessibilitySettings(Context context) {

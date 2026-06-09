@@ -104,7 +104,8 @@ final class AdbBridgeClient {
             progress.onGlassesIp(glassesIp);
         }
 
-        String revokeStatus = revokePcSecureSettingsGrant(adb);
+        // Grant (not revoke) WRITE_SECURE_SETTINGS so the glasses app can self-heal at next boot.
+        String grantStatus = ensureSecureSettingsGrant(adb);
         installScript(adb);
         runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop >/dev/null 2>&1 || true");
         runChecked(adb, "rm -rf " + BridgeProtocol.bridgeDir());
@@ -128,11 +129,48 @@ final class AdbBridgeClient {
         String ipLabel = glassesIp.isEmpty() ? "IP unknown" : "IP " + glassesIp;
         return BridgeOperationResult.armed("Armed (" + ipLabel + ")\n"
                         + bridgeStatus
-                        + revokeStatus
+                        + grantStatus
                         + homeStatus
                         + wifiOffStatus,
                 wifiOffAfterArm);
+    }
+
+    /**
+     * Fast re-arm path. Connects to the saved endpoint (already authorized), stops any stale
+     * bridge instance, reinstalls the script, and starts the bridge without touching pairing.
+     * Progress callback is optional.
+     */
+    BridgeOperationResult reArm(AdbSession adb, boolean wifiOffAfterArm, Progress progress) throws Exception {
+        String glassesIp = readGlassesWifiIp(adb);
+        if (!glassesIp.isEmpty() && progress != null) {
+            progress.onGlassesIp(glassesIp);
         }
+
+        installScript(adb);
+        runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop >/dev/null 2>&1 || true");
+        runChecked(adb, commandActivityStart()
+                + " --ez " + BridgeProtocol.EXTRA_INIT_SHORTCUT_BRIDGE + " true"
+                + " --ez " + BridgeProtocol.EXTRA_EXIT_AFTER_COMMAND + " true");
+        waitForBridgeRequestFile(adb);
+
+        String bridgeStatus = runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " start").trim();
+        String homeStatus = returnGlassesHome(adb);
+        String wifiOffStatus = "";
+        if (wifiOffAfterArm) {
+            try {
+                wifiOffStatus = "\n" + requestWifiDisable(adb).output();
+            } catch (IOException exception) {
+                wifiOffStatus = "\nRe-armed, but Wi-Fi off request failed: " + exception.getMessage();
+            }
+        }
+
+        String ipLabel = glassesIp.isEmpty() ? "IP unknown" : "IP " + glassesIp;
+        return BridgeOperationResult.armed("Re-armed (" + ipLabel + ")\n"
+                        + bridgeStatus
+                        + homeStatus
+                        + wifiOffStatus,
+                wifiOffAfterArm);
+    }
 
     BridgeOperationResult openWifiPanel(AdbSession adb) throws IOException {
         return BridgeOperationResult.output(runChecked(adb, commandActivityStart()
@@ -223,27 +261,19 @@ final class AdbBridgeClient {
         return parseIpv4FromIpOutput(response.getOutput());
     }
 
-    private String revokePcSecureSettingsGrant(AdbSession adb) {
+    /**
+     * Grants WRITE_SECURE_SETTINGS to the glasses app so it can self-heal at next boot
+     * (re-enable wireless debugging via Settings.Global). Best-effort; does not throw.
+     */
+    private String ensureSecureSettingsGrant(AdbSession adb) {
         try {
-            if (!hasSecureSettingsGrant(adb)) {
-                return "";
-            }
-            adb.shell("pm revoke --user 0 " + BridgeProtocol.R08_PACKAGE
+            adb.shell("pm grant " + BridgeProtocol.R08_PACKAGE
                     + " android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1 || true");
-            if (!hasSecureSettingsGrant(adb)) {
-                return "\nRemoved old PC secure-settings grant.";
-            }
+            return "\nWRITE_SECURE_SETTINGS granted for boot self-heal.";
         } catch (IOException ignored) {
-            // Best-effort cleanup for APKs that used to request WRITE_SECURE_SETTINGS.
+            // Best-effort; failure is not fatal — boot self-heal will not work but everything else will.
         }
         return "";
-    }
-
-    private boolean hasSecureSettingsGrant(AdbSession adb) throws IOException {
-        ShellResult response = adb.shell("dumpsys package " + BridgeProtocol.R08_PACKAGE
-                + " | grep -A2 android.permission.WRITE_SECURE_SETTINGS || true");
-        return response.getOutput().contains("android.permission.WRITE_SECURE_SETTINGS")
-                && response.getOutput().contains("granted=true");
     }
 
     private String parseIpv4FromIpOutput(String output) {
