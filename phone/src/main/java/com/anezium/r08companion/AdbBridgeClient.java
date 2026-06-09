@@ -144,12 +144,7 @@ final class AdbBridgeClient {
         runChecked(adb, commandActivityStart()
                 + " --ez " + BridgeProtocol.EXTRA_BRIDGE_WIFI_OFF + " true"
                 + " --ez " + BridgeProtocol.EXTRA_EXIT_AFTER_COMMAND + " true");
-        try {
-            adb.shell("svc wifi disable >/dev/null 2>&1 || true");
-        } catch (IOException ignored) {
-            // The wireless ADB session may disappear immediately after Wi-Fi turns off.
-        }
-        return BridgeOperationResult.output("Glasses Wi-Fi off requested.");
+        return BridgeOperationResult.output("Glasses Wi-Fi off scheduled. The bridge stays armed locally.");
     }
 
     BridgeOperationResult disable(AdbSession adb) throws IOException {

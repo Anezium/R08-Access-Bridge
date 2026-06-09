@@ -10,6 +10,7 @@ LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
 POLL_SECONDS="${R08_POLL_SECONDS:-0.2}"
+WIFI_DISABLE_DELAY_SECONDS="${R08_WIFI_DISABLE_DELAY_SECONDS:-12}"
 
 log_msg() {
     echo "$(date +%s) $*" >> "$LOGFILE"
@@ -54,6 +55,23 @@ set_wifi_enabled() {
     return 1
 }
 
+schedule_wifi_disable() {
+    request="$1"
+    now="$2"
+    echo "scheduled wifi_disable $request $now delay=${WIFI_DISABLE_DELAY_SECONDS}s" > "$RESPONSE"
+    log_msg "wifi disable scheduled request=$request delay=${WIFI_DISABLE_DELAY_SECONDS}s"
+    # Let the wireless ADB client close before Wi-Fi drops; Rokid firmware can
+    # wedge system_server if the radio disappears while adbwifi is mid-teardown.
+    (
+        sleep "$WIFI_DISABLE_DELAY_SECONDS"
+        if set_wifi_enabled 0; then
+            log_msg "wifi disable ok request=$request"
+        else
+            log_msg "wifi disable failed request=$request"
+        fi
+    ) >/dev/null 2>&1 &
+}
+
 wifi_is_enabled() {
     if cmd wifi status 2>/dev/null | grep -qi "Wifi is enabled"; then
         return 0
@@ -88,13 +106,7 @@ handle_request() {
             fi
             ;;
         wifi_disable)
-            if set_wifi_enabled 0; then
-                echo "ok wifi_disable $request $now" > "$RESPONSE"
-                log_msg "wifi disable ok request=$request"
-            else
-                echo "failed wifi_disable $request $now" > "$RESPONSE"
-                log_msg "wifi disable failed request=$request"
-            fi
+            schedule_wifi_disable "$request" "$now"
             ;;
         *)
             echo "ignored $request $now" > "$RESPONSE"

@@ -313,11 +313,23 @@ final class CxrBootstrapClient {
             }
 
             @Override
+            public void onGlassDeviceInfo(com.rokid.cxr.link.utils.GlassInfo glassInfo) {
+            }
+
+            @Override
+            public void onGlassWearingStatus(boolean wearing) {
+            }
+
+            @Override
             public void onGlassAiAssistStart() {
             }
 
             @Override
             public void onGlassAiAssistStop() {
+            }
+
+            @Override
+            public void onGlassAiInterrupt(boolean interrupted) {
             }
         });
         link.setCXRCustomCmdCbk(new ICustomCmdCbk() {
@@ -447,7 +459,7 @@ final class CxrBootstrapClient {
         try {
             Caps caps = new Caps();
             caps.write(request.toString());
-            Integer result = localLink.sendCustomCmd(BridgeProtocol.CXR_REQUEST_KEY, caps.serialize());
+            Integer result = localLink.sendCustomCmd(BridgeProtocol.CXR_REQUEST_KEY, caps);
             notifyStatus(result == null || result < 0 ? "CXR-L send failed." : "Bootstrap sent.");
         } catch (RuntimeException exception) {
             notifyStatus("CXR-L command failed.");

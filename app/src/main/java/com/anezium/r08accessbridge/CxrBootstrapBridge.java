@@ -101,6 +101,10 @@ final class CxrBootstrapBridge {
                 @Override
                 public void onRokidAccountChanged(String account) {
                 }
+
+                @Override
+                public void onAudioNoise(float noise) {
+                }
             };
 
     private static final CXRServiceBridge.MsgCallback MSG_CALLBACK =

@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.r08accessbridge"
         minSdk = 28
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.3.0"
+        versionCode = 15
+        versionName = "1.3.1"
     }
 
     compileOptions {
@@ -22,5 +22,5 @@ android {
 
 dependencies {
     implementation(project(":bridge-protocol"))
-    implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260212.103714-88")
+    implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
 }

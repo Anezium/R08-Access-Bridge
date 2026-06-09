@@ -541,7 +541,7 @@ public final class PhoneCompanionActivity extends Activity {
             case ARMED:
                 setupCoordinator.markArmed();
                 setStatusLine(adbStatusText, "ADB",
-                        result.wifiOffAfterArm() ? "Armed, Wi-Fi off" : "Connected to " + host, ACCENT);
+                        result.wifiOffAfterArm() ? "Armed, Wi-Fi off scheduled" : "Connected to " + host, ACCENT);
                 setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
                 summary("Setup complete", ACCENT);
                 setDetail(armedDetail(result.output()));
