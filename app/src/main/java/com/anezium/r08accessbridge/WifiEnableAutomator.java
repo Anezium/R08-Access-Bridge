@@ -261,6 +261,8 @@ final class WifiEnableAutomator {
                 Log.i(TAG, "Re-arm TLS port=" + port);
                 CxrBootstrapBridge.reportReArmReady(reArmReplyId, port);
                 service.showFeedback("Re-arm: ADB port " + port);
+                handler.postDelayed(() ->
+                        RingControlAccessibilityService.returnHome(service, "rearm_port_ready"), 300L);
             });
         }, "wifi-enable-adb").start();
     }

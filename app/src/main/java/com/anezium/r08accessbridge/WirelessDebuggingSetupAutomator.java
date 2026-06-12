@@ -41,6 +41,9 @@ final class WirelessDebuggingSetupAutomator {
             Pattern.compile("\\b(\\d{4,5})\\b");
     private static final long PAIRING_DIALOG_POLL_MS = 600L;
     private static final long PAIRING_DIALOG_MAX_WAIT_MS = 9000L;
+    private static final long PAIRING_DIALOG_HOLD_MS = 60000L;
+    private static final long PAIRING_PORT_GRACE_MS = 1800L;
+    private static final long PAIRING_READY_REPORT_INTERVAL_MS = 2000L;
 
     private final RingControlAccessibilityService service;
     private final Handler handler;
@@ -49,6 +52,15 @@ final class WirelessDebuggingSetupAutomator {
     private boolean pairingRequested;
     private long pairingRequestedAt;
     private boolean pairingDialogDumped;
+    private boolean pairingReadyReported;
+    private long pairingReadyReportedAt;
+    private long pairingCodeOnlySeenAt;
+    private long lastPairingReadyReportAt;
+    private String lastPairingReadyToken = "";
+    private String lastPairingCode = "";
+    private String lastPairingHost = "";
+    private int lastPairingPort;
+    private int lastPairingConnectPort;
     private boolean awaitingWirelessDebugConfirmation;
     private boolean deviceInfoFallback;
     private boolean developerEnableFlow;
@@ -76,6 +88,15 @@ final class WirelessDebuggingSetupAutomator {
         pairingRequested = false;
         pairingRequestedAt = 0L;
         pairingDialogDumped = false;
+        pairingReadyReported = false;
+        pairingReadyReportedAt = 0L;
+        pairingCodeOnlySeenAt = 0L;
+        lastPairingReadyReportAt = 0L;
+        lastPairingReadyToken = "";
+        lastPairingCode = "";
+        lastPairingHost = "";
+        lastPairingPort = 0;
+        lastPairingConnectPort = 0;
         awaitingWirelessDebugConfirmation = false;
         deviceInfoFallback = false;
         developerEnableFlow = false;
@@ -127,8 +148,26 @@ final class WirelessDebuggingSetupAutomator {
             finish(BridgeProtocol.SETUP_BRIDGE_ARMED, true);
             return;
         }
+        if (pairingReadyReported
+                && pairingReadyReportedAt > 0L
+                && SystemClock.uptimeMillis() - pairingReadyReportedAt > PAIRING_DIALOG_HOLD_MS) {
+            finish(BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED, false);
+            return;
+        }
 
         AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        if (pairingReadyReported) {
+            // The pairing dialog can briefly disappear from the active accessibility root even
+            // while it remains visible. Once a code has been seen, keep the setup state pinned
+            // to pairing_ready until the code expires or the bridge becomes armed.
+            if (root != null && readPairingDialog(root)) {
+                return;
+            }
+            Log.d(TAG, "step[pairingHold]: dialog root not readable, keeping pairing_ready");
+            reportCachedPairingReady();
+            schedule(PAIRING_DIALOG_POLL_MS);
+            return;
+        }
         if (root == null) {
             CxrBootstrapBridge.reportWirelessSetup("waiting_for_settings", true);
             schedule(STEP_DELAY_MS);
@@ -470,14 +509,23 @@ final class WirelessDebuggingSetupAutomator {
     }
 
     private boolean readPairingDialog(AccessibilityNodeInfo root) {
-        // --- Step 1: read 6-digit pairing code ---
-        String code = textByViewId(root, "com.android.settings:id/pairing_code");
+        // --- Step 1: only treat a 6-digit number as a pairing code inside the real
+        // Wireless Debugging pairing UI. The About phone page can contain 6-digit
+        // build fragments, which must not be consumed as pairing codes.
+        AccessibilityNodeInfo codeNode = firstByViewId(root, "com.android.settings:id/pairing_code");
+        String code = codeNode == null ? "" : firstCodeInText(rawText(codeNode));
+        String endpoint = textByViewId(root, "com.android.settings:id/ip_addr");
+        boolean hasPairingContext = codeNode != null
+                || !endpoint.isEmpty()
+                || hasPairingDialogText(root);
+        if (!hasPairingContext) {
+            return false;
+        }
         if (code.isEmpty()) {
             code = firstCode(root);
         }
 
         // --- Step 2: read IP+port via known view-id or full IP:port regex ---
-        String endpoint = textByViewId(root, "com.android.settings:id/ip_addr");
         String host = "";
         int pairPort = 0;
 
@@ -519,30 +567,117 @@ final class WirelessDebuggingSetupAutomator {
             Log.d(TAG, "pairingDialog: no IPv4 in dialog, defaulting host=" + host);
         }
 
-        // --- Step 6: Validate and succeed or report partial ---
-        if (code.isEmpty() || pairPort <= 0) {
-            if (!code.isEmpty() || pairPort > 0 || !endpoint.isEmpty()) {
-                Log.d(TAG, "pairingDialog: partial data code.empty=" + code.isEmpty()
-                        + " pairPort=" + pairPort + " endpoint=" + endpoint);
-            }
-            return false;
-        }
-
-        if (host.isEmpty()) {
-            Log.d(TAG, "pairingDialog: have code and port but no host yet, waiting");
-            return false;
-        }
-
         int connectPort = WirelessAdbController.readWirelessPort();
         if (connectPort <= 0) {
             connectPort = lastConnectPort;
         }
+
+        // --- Step 6: Validate and succeed, or report code-only for phone mDNS fallback ---
+        if (code.isEmpty()) {
+            return false;
+        }
+
+        if (host.isEmpty()) {
+            Log.d(TAG, "pairingDialog: have code but no host, phone will fall back to Wi-Fi IP");
+        }
+
+        if (pairPort <= 0) {
+            long now = SystemClock.uptimeMillis();
+            if (!pairingReadyReported) {
+                if (pairingCodeOnlySeenAt == 0L) {
+                    pairingCodeOnlySeenAt = now;
+                }
+                if (now - pairingCodeOnlySeenAt < PAIRING_PORT_GRACE_MS) {
+                    Log.d(TAG, "pairingDialog: code ready but port missing, waiting briefly for port"
+                            + " endpoint=" + endpoint + " connectPort=" + connectPort);
+                    CxrBootstrapBridge.reportWirelessSetup(
+                            BridgeProtocol.SETUP_WAITING_FOR_PAIRING_CODE,
+                            true);
+                    schedule(PAIRING_DIALOG_POLL_MS);
+                    return true;
+                }
+            }
+            Log.d(TAG, "pairingDialog: code ready but pair port missing, reporting for mDNS fallback"
+                    + " endpoint=" + endpoint + " connectPort=" + connectPort);
+            return reportPairingReadyAndHold(code, host, 0, connectPort, "ADB pairing code ready");
+        }
         Log.d(TAG, "pairingDialog: ready — code=<redacted len=" + code.length() + ">"
                 + " host=" + host + " pairPort=" + pairPort + " connectPort=" + connectPort);
-        active = false;
-        CxrBootstrapBridge.reportWirelessPairing(BridgeProtocol.SETUP_PAIRING_READY, code, host, pairPort, connectPort);
-        service.showFeedback("ADB pairing ready");
+        return reportPairingReadyAndHold(code, host, pairPort, connectPort, "ADB pairing ready");
+    }
+
+    private boolean hasPairingDialogText(AccessibilityNodeInfo root) {
+        return containsInTree(root,
+                "pair with device",
+                "pair device",
+                "wi-fi pairing code",
+                "wifi pairing code",
+                "wireless pairing code",
+                "pairing code",
+                "ip address & port",
+                "ip address and port",
+                "associer un appareil",
+                "associer l'appareil",
+                "associer avec un appareil",
+                "code d'association wi-fi",
+                "code d'association wifi",
+                "code association wi-fi",
+                "code association wifi",
+                "adresse ip et port",
+                "adresse ip & port");
+    }
+
+    private boolean reportPairingReadyAndHold(
+            String code,
+            String host,
+            int pairPort,
+            int connectPort,
+            String feedback) {
+        long now = SystemClock.uptimeMillis();
+        String token = code + "|" + host + "|" + pairPort + "|" + connectPort;
+        lastPairingCode = code;
+        lastPairingHost = host;
+        lastPairingPort = pairPort;
+        lastPairingConnectPort = connectPort;
+        pairingRequested = true;
+        awaitingWirelessDebugConfirmation = false;
+        deviceInfoFallback = false;
+        developerEnableFlow = false;
+        if (!pairingReadyReported) {
+            pairingReadyReported = true;
+            pairingReadyReportedAt = now;
+            service.showFeedback(feedback);
+        }
+        if (!token.equals(lastPairingReadyToken)
+                || now - lastPairingReadyReportAt >= PAIRING_READY_REPORT_INTERVAL_MS) {
+            lastPairingReadyToken = token;
+            lastPairingReadyReportAt = now;
+            CxrBootstrapBridge.reportWirelessPairing(
+                    BridgeProtocol.SETUP_PAIRING_READY,
+                    code,
+                    host,
+                    pairPort,
+                    connectPort);
+        }
+        schedule(PAIRING_DIALOG_POLL_MS);
         return true;
+    }
+
+    private void reportCachedPairingReady() {
+        if (lastPairingCode.isEmpty()) {
+            return;
+        }
+        long now = SystemClock.uptimeMillis();
+        if (now - lastPairingReadyReportAt < PAIRING_READY_REPORT_INTERVAL_MS) {
+            return;
+        }
+        lastPairingReadyReportAt = now;
+        CxrBootstrapBridge.reportWirelessPairing(
+                BridgeProtocol.SETUP_PAIRING_READY,
+                lastPairingCode,
+                lastPairingHost,
+                lastPairingPort,
+                lastPairingConnectPort);
     }
 
     /**
@@ -972,7 +1107,11 @@ final class WirelessDebuggingSetupAutomator {
         if (node == null) {
             return "";
         }
-        Matcher matcher = PAIRING_CODE.matcher(rawText(node));
+        return firstCodeInText(rawText(node));
+    }
+
+    private String firstCodeInText(String text) {
+        Matcher matcher = PAIRING_CODE.matcher(text == null ? "" : text);
         return matcher.find() ? matcher.group(1) : "";
     }
 
@@ -1033,8 +1172,13 @@ final class WirelessDebuggingSetupAutomator {
     private void finish(String status, boolean success) {
         Log.d(TAG, "finish: status=" + status + " success=" + success);
         active = false;
+        handler.removeCallbacks(stepRunnable);
         CxrBootstrapBridge.reportWirelessSetup(status, false);
         service.showFeedback(success ? "Wireless Debugging ready" : "Wireless setup needs a tap");
+        if (success) {
+            handler.postDelayed(() ->
+                    RingControlAccessibilityService.returnHome(service, "wireless_setup_success"), 300L);
+        }
     }
 
     private void schedule(long delayMs) {

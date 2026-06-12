@@ -577,6 +577,7 @@ public final class MainActivity extends Activity {
     private void navigateBack() {
         clearPendingSelect();
         if (backStack.isEmpty()) {
+            RingControlAccessibilityService.returnHome(this, "main_activity_back");
             finish();
         } else {
             setScreen(backStack.pop());

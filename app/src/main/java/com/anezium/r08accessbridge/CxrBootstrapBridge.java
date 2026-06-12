@@ -34,6 +34,8 @@ final class CxrBootstrapBridge {
     private static int adbPairPort;
     private static int lastKnownAdbPort;
     private static long wirelessPairingReadyAt;
+    private static String pendingAccessibilityAction = "";
+    private static String pendingAccessibilityReplyTo;
 
     private static final Runnable IP_WATCH_TICK = new Runnable() {
         @Override
@@ -69,6 +71,43 @@ final class CxrBootstrapBridge {
         int result = nextBridge.subscribe(BridgeProtocol.CXR_REQUEST_KEY, MSG_CALLBACK);
         Log.i(TAG, "subscribe key=" + BridgeProtocol.CXR_REQUEST_KEY + " result=" + result);
         sendState("startup", null, false, false);
+    }
+
+    static void onAccessibilityServiceConnected(Context context) {
+        if (context != null) {
+            appContext = context.getApplicationContext();
+        }
+        if (!BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(setupState)) {
+            return;
+        }
+        String action = pendingAccessibilityAction;
+        String replyTo = pendingAccessibilityReplyTo;
+        if (BridgeProtocol.TYPE_REARM_REQ.equals(action)) {
+            setupState = BridgeProtocol.SETUP_REARM_ENABLING_WIFI;
+            wirelessSetupActive = true;
+            wirelessPairingReady = false;
+            clearPairingFields();
+            clearPendingAccessibility();
+            sendState("accessibility_ready", replyTo, false, true);
+            if (appContext != null) {
+                RingControlAccessibilityService.requestEnableWifiFlow(appContext, replyTo);
+            }
+            return;
+        }
+        if (BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP.equals(action)) {
+            setupState = BridgeProtocol.SETUP_OPENING_WIRELESS_DEBUGGING;
+            wirelessSetupActive = true;
+            wirelessPairingReady = false;
+            clearPairingFields();
+            clearPendingAccessibility();
+            sendState("accessibility_ready", replyTo, false, true);
+            if (appContext != null) {
+                RingControlAccessibilityService.requestWirelessDebugSetup(appContext);
+            }
+            return;
+        }
+        resetWirelessSetup(BridgeProtocol.SETUP_IDLE);
+        sendState("accessibility_ready", null, false, true);
     }
 
     private static final CXRServiceBridge.StatusListener STATUS_LISTENER =
@@ -145,14 +184,21 @@ final class CxrBootstrapBridge {
         }
 
         boolean bridgeArmed = appContext != null && PrivilegedShortcutBridge.isArmed(appContext);
+        if (!bridgeArmed && BridgeProtocol.SETUP_BRIDGE_ARMED.equals(setupState)) {
+            resetWirelessSetup(BridgeProtocol.SETUP_IDLE);
+        }
         if (openWifi && bridgeArmed) {
             resetWirelessSetup(BridgeProtocol.SETUP_BRIDGE_ARMED);
             Log.d(TAG, "ignored openWifi while shortcut bridge is armed type=" + type);
             sendState(BridgeProtocol.SETUP_BRIDGE_ARMED, id, false, true);
+            returnHomeSoon("bootstrap_already_armed");
             return;
         }
 
         if (openWifi) {
+            if (isRetryableSetupState(setupState)) {
+                resetWirelessSetup(BridgeProtocol.SETUP_IDLE);
+            }
             PrivilegedShortcutBridge.requestWifiEnabled(appContext, true);
             GlassesWifiSettings.open(appContext);
         } else if (!BridgeProtocol.TYPE_REFRESH_IP.equals(type)) {
@@ -177,6 +223,7 @@ final class CxrBootstrapBridge {
         setupState = normalizeSetupState(state);
         wirelessSetupActive = true;
         wirelessPairingReady = false;
+        clearPairingFields();
         sendState(BridgeProtocol.TYPE_REARM_REQ, replyId, false, false);
     }
 
@@ -185,6 +232,7 @@ final class CxrBootstrapBridge {
         setupState = BridgeProtocol.SETUP_REARM_READY;
         wirelessSetupActive = false;
         wirelessPairingReady = false;
+        clearPairingFields();
         if (livePort > 0) {
             lastKnownAdbPort = livePort;
         }
@@ -220,15 +268,18 @@ final class CxrBootstrapBridge {
         wirelessPairingReady = pairingReady;
         if (pairingReady) {
             wirelessPairingReadyAt = System.currentTimeMillis();
+            if (code != null && !code.isEmpty()) {
+                adbPairCode = code;
+            }
+            if (host != null && !host.isEmpty()) {
+                adbPairHost = host;
+            }
+            adbPairPort = Math.max(pairPort, 0);
+        } else {
+            clearPairingFields();
         }
-        if (code != null && !code.isEmpty()) {
-            adbPairCode = code;
-        }
-        if (host != null && !host.isEmpty()) {
-            adbPairHost = host;
-        }
-        if (pairPort > 0) {
-            adbPairPort = pairPort;
+        if (!BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(setupState)) {
+            clearPendingAccessibility();
         }
         if (connectPort > 0) {
             lastKnownAdbPort = connectPort;
@@ -241,9 +292,14 @@ final class CxrBootstrapBridge {
         setupState = BridgeProtocol.SETUP_REARM_ENABLING_WIFI;
         wirelessSetupActive = true;
         wirelessPairingReady = false;
+        clearPairingFields();
         sendState(BridgeProtocol.TYPE_REARM_REQ, replyTo, false, false);
+        rememberPendingAccessibility(BridgeProtocol.TYPE_REARM_REQ, replyTo);
         if (context != null) {
-            RingControlAccessibilityService.requestEnableWifiFlow(context, replyTo);
+            boolean started = RingControlAccessibilityService.requestEnableWifiFlow(context, replyTo);
+            if (started) {
+                clearPendingAccessibility();
+            }
         }
     }
 
@@ -253,17 +309,23 @@ final class CxrBootstrapBridge {
             resetWirelessSetup(BridgeProtocol.SETUP_BRIDGE_ARMED);
             rememberPort(WirelessAdbController.readWirelessPort());
             sendState(BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP, replyTo, false, true);
+            returnHomeSoon("wireless_setup_already_armed");
             return;
         }
         wirelessSetupActive = true;
         wirelessPairingReady = false;
         setupState = BridgeProtocol.SETUP_OPENING_WIRELESS_DEBUGGING;
         adbPairCode = "";
+        adbPairHost = "";
         adbPairPort = 0;
         wirelessPairingReadyAt = 0L;
         rememberPort(WirelessAdbController.readWirelessPort());
+        rememberPendingAccessibility(BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP, replyTo);
         if (context != null) {
-            RingControlAccessibilityService.requestWirelessDebugSetup(context);
+            boolean started = RingControlAccessibilityService.requestWirelessDebugSetup(context);
+            if (started) {
+                clearPendingAccessibility();
+            }
         }
         sendState(BridgeProtocol.TYPE_WIRELESS_DEBUG_SETUP, replyTo, false, true);
     }
@@ -300,6 +362,7 @@ final class CxrBootstrapBridge {
             response.put("lastKnownAdbPort", lastKnownAdbPort);
             response.put("adbWifiEnabled", adbWifiEnabled);
             response.put("adbPortDynamic", liveWirelessPort);
+            response.put("accessibilityServiceReady", RingControlAccessibilityService.isServiceActive());
             response.put("wirelessSetupActive", wirelessSetupActive);
             response.put("wirelessSetupStatus", visibleSetupState);
             response.put("setupState", visibleSetupState);
@@ -329,9 +392,25 @@ final class CxrBootstrapBridge {
         wirelessSetupActive = false;
         wirelessPairingReady = false;
         setupState = normalizeSetupState(state);
+        clearPairingFields();
+        clearPendingAccessibility();
+    }
+
+    private static void clearPairingFields() {
         adbPairCode = "";
+        adbPairHost = "";
         adbPairPort = 0;
         wirelessPairingReadyAt = 0L;
+    }
+
+    private static void rememberPendingAccessibility(String action, String replyTo) {
+        pendingAccessibilityAction = action == null ? "" : action;
+        pendingAccessibilityReplyTo = replyTo;
+    }
+
+    private static void clearPendingAccessibility() {
+        pendingAccessibilityAction = "";
+        pendingAccessibilityReplyTo = null;
     }
 
     private static void rememberPort(int port) {
@@ -340,9 +419,20 @@ final class CxrBootstrapBridge {
         }
     }
 
+    private static void returnHomeSoon(String reason) {
+        Context context = appContext;
+        if (context == null) {
+            return;
+        }
+        MAIN.postDelayed(() -> RingControlAccessibilityService.returnHome(context, reason), 300L);
+    }
+
     private static String visibleSetupState(boolean liveWirelessPort) {
         if (appContext != null && PrivilegedShortcutBridge.isArmed(appContext)) {
             return BridgeProtocol.SETUP_BRIDGE_ARMED;
+        }
+        if (BridgeProtocol.SETUP_BRIDGE_ARMED.equals(setupState)) {
+            return BridgeProtocol.SETUP_IDLE;
         }
         if (wirelessPairingReady) {
             return BridgeProtocol.SETUP_PAIRING_READY;
@@ -361,6 +451,14 @@ final class CxrBootstrapBridge {
         return state == null || state.isEmpty() ? BridgeProtocol.SETUP_IDLE : state;
     }
 
+    private static boolean isRetryableSetupState(String state) {
+        String normalized = normalizeSetupState(state);
+        return BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED.equals(normalized)
+                || BridgeProtocol.SETUP_TIMEOUT.equals(normalized)
+                || BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL.equals(normalized)
+                || BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL.equals(normalized);
+    }
+
     private static void expireStalePairingCode() {
         if (!wirelessPairingReady || wirelessPairingReadyAt <= 0L) {
             return;
@@ -368,6 +466,7 @@ final class CxrBootstrapBridge {
         if (System.currentTimeMillis() - wirelessPairingReadyAt > 60000L) {
             wirelessPairingReady = false;
             adbPairCode = "";
+            adbPairHost = "";
             adbPairPort = 0;
             wirelessPairingReadyAt = 0L;
             setupState = BridgeProtocol.SETUP_PAIRING_CODE_EXPIRED;

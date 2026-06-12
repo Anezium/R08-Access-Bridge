@@ -22,6 +22,7 @@ import com.rokid.sprite.aiapp.externalapp.auth.AuthorizationHelper;
 
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 final class CxrBootstrapClient {
@@ -58,6 +59,7 @@ final class CxrBootstrapClient {
         final int lastKnownAdbPort;
         final boolean adbWifiEnabled;
         final boolean adbPortDynamic;
+        final boolean accessibilityServiceReady;
         final boolean wirelessSetupActive;
         final String wirelessSetupStatus;
         final String setupState;
@@ -77,6 +79,7 @@ final class CxrBootstrapClient {
             lastKnownAdbPort = object.optInt("lastKnownAdbPort");
             adbWifiEnabled = object.optBoolean("adbWifiEnabled");
             adbPortDynamic = object.optBoolean("adbPortDynamic");
+            accessibilityServiceReady = object.optBoolean("accessibilityServiceReady");
             wirelessSetupActive = object.optBoolean("wirelessSetupActive");
             wirelessSetupStatus = object.optString("wirelessSetupStatus");
             setupState = object.optString("setupState", wirelessSetupStatus);
@@ -99,7 +102,7 @@ final class CxrBootstrapClient {
         }
 
         boolean needsManualAction() {
-            return BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(setupState)
+            return (BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(setupState) && !accessibilityServiceReady)
                     || BridgeProtocol.SETUP_DEVELOPER_OPTIONS_MANUAL.equals(setupState)
                     || BridgeProtocol.SETUP_WIRELESS_DEBUGGING_MANUAL.equals(setupState)
                     || BridgeProtocol.SETUP_TIMEOUT.equals(setupState);
@@ -362,8 +365,10 @@ final class CxrBootstrapClient {
                 }
                 String json = payloadToText(payload);
                 if (json.isEmpty()) {
+                    Log.d(TAG, "empty bootstrap response payload len=" + (payload == null ? 0 : payload.length));
                     return;
                 }
+                Log.d(TAG, "bootstrap response len=" + json.length());
                 mainHandler.post(() -> handleBootstrapResponse(json));
             }
         });
@@ -415,6 +420,19 @@ final class CxrBootstrapClient {
             return;
         }
         BootstrapState state = new BootstrapState(object);
+        Log.d(TAG, "bootstrap state type=" + state.type
+                + " trigger=" + state.trigger
+                + " setup=" + state.setupState
+                + " wifi=" + state.wifiConnected
+                + " ip=" + redactHost(state.wifiIp)
+                + " adbPort=" + state.adbPort
+                + " lastPort=" + state.lastKnownAdbPort
+                + " adbWifi=" + state.adbWifiEnabled
+                + " dynamic=" + state.adbPortDynamic
+                + " a11yReady=" + state.accessibilityServiceReady
+                + " active=" + state.wirelessSetupActive
+                + " pairing=" + state.isPairingReady()
+                + " pair=" + redactHost(state.adbPairHost) + ":" + state.adbPairPort);
         listener.onBootstrapState(state);
         if (state.wifiIp != null && !state.wifiIp.isEmpty()) {
             awaitingGlassesIp = false;
@@ -428,6 +446,15 @@ final class CxrBootstrapClient {
                     ? "Wi-Fi panel is open on the glasses. Waiting for IP..."
                     : "Waiting for glasses Wi-Fi IP...");
         }
+    }
+
+    private String redactHost(String host) {
+        if (host == null || host.trim().isEmpty()) {
+            return "";
+        }
+        String value = host.trim();
+        int dot = value.lastIndexOf('.');
+        return dot > 0 ? value.substring(0, dot + 1) + "x" : "redacted";
     }
 
     private boolean shouldKeepPollingForIp(BootstrapState state) {
@@ -493,6 +520,10 @@ final class CxrBootstrapClient {
     private String payloadToText(byte[] payload) {
         if (payload == null || payload.length == 0) {
             return "";
+        }
+        String raw = new String(payload, StandardCharsets.UTF_8).trim();
+        if (raw.startsWith("{")) {
+            return raw;
         }
         try {
             Caps caps = Caps.fromBytes(payload);

@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.4.1 - 2026-06-12
+
+### Wireless setup resilience
+
+- Added mDNS fallback for `_adb-tls-pairing._tcp` so the phone can recover the temporary Wireless Debugging pairing port when Settings text is incomplete or ambiguous.
+- Kept the pairing-code dialog open long enough for the phone to pair, and avoided leaving Settings too early.
+- Fixed stale `accessibility_service_needed`, `bridge_armed`, and expired pairing states so retrying setup does not get stuck after enabling R08 Accessibility, clearing the phone app, or stopping the bridge.
+- Added phone-side Wi-Fi reachability checks and clearer logs for CXR, ADB pairing, and pairing-port resolution.
+- Hardened KADB pairing with a watchdog so the phone UI cannot hang indefinitely while waiting for pairing.
+- Returned the glasses to Home after successful setup/already-armed flows and made Back from the app root escape cleanly.
+
 ## v1.4.0 - 2026-06-10
 
 ### Reboot persistence and one-tap re-arm

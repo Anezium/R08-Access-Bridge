@@ -9,6 +9,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -27,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class PhoneCompanionActivity extends Activity {
+    private static final String TAG = "R08Phone";
     private static final String PREFS = "r08_companion";
     private static final String PREF_HOST = "host";
     private static final String PREF_PORT = "port";
@@ -68,8 +70,11 @@ public final class PhoneCompanionActivity extends Activity {
     private CheckBox wifiOffAfterArmCheck;
     private CxrBootstrapClient cxrClient;
     private AdbBridgeClient adbBridgeClient;
+    private AdbMdnsPairingResolver mdnsPairingResolver;
     private LanAdbDiscovery lanDiscovery;
     private BridgeSetupCoordinator setupCoordinator;
+    private boolean continueBootstrapAfterAuthorization;
+    private boolean continueWirelessSetupAfterAuthorization;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,6 +84,7 @@ public final class PhoneCompanionActivity extends Activity {
         window.setStatusBarColor(SURFACE);
         window.setNavigationBarColor(SURFACE);
         adbBridgeClient = new AdbBridgeClient(this);
+        mdnsPairingResolver = new AdbMdnsPairingResolver(this);
         lanDiscovery = new LanAdbDiscovery(adbBridgeClient);
         setupCoordinator = new BridgeSetupCoordinator();
         cxrClient = new CxrBootstrapClient(this, prefs().getString(PREF_CXR_TOKEN, ""), cxrListener);
@@ -424,7 +430,7 @@ public final class PhoneCompanionActivity extends Activity {
 
     /** Re-arm via CXR/Bluetooth: glasses enable Wi-Fi via accessibility, report live port, phone connects. */
     private void runCxrReArmTask() {
-        setupCoordinator.startBridge(parsePort());
+        setupCoordinator.startReArm(parsePort());
         summary("Re-arming via Hi Rokid", MUTED);
         setStatusLine(cxrStatusText, "Hi Rokid", "Sending re-arm command", MUTED);
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for glasses Wi-Fi", MUTED);
@@ -475,6 +481,8 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(bridgeStatusText, "Bridge", "Starting", MUTED);
         setDetail("Starting through Hi Rokid. If Wireless Debugging is not paired yet, the glasses will open the setup screen and the phone will pair automatically from the code.");
         if (!cxrClient.hasAuthToken()) {
+            continueBootstrapAfterAuthorization = true;
+            continueWirelessSetupAfterAuthorization = false;
             cxrClient.requestAuthorization(this);
             return;
         }
@@ -489,6 +497,8 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
         setDetail("Opening Wireless Debugging on the glasses. Keep the phone and glasses on the same Wi-Fi; the pairing code will be consumed automatically.");
         if (!cxrClient.hasAuthToken()) {
+            continueBootstrapAfterAuthorization = false;
+            continueWirelessSetupAfterAuthorization = true;
             cxrClient.requestAuthorization(this);
             return;
         }
@@ -518,6 +528,16 @@ public final class PhoneCompanionActivity extends Activity {
         @Override
         public void onBootstrapState(CxrBootstrapClient.BootstrapState state) {
             BridgeSetupCoordinator.Decision decision = setupCoordinator.onBootstrapState(state);
+            Log.d(TAG, "bootstrap state setup=" + state.setupState
+                    + " trigger=" + state.trigger
+                    + " wifi=" + state.wifiConnected
+                    + " ip=" + redactHost(state.wifiIp)
+                    + " adbPort=" + state.adbPort
+                    + " livePort=" + state.hasLiveWirelessPort()
+                    + " a11yReady=" + state.accessibilityServiceReady
+                    + " pairingReady=" + state.isPairingReady()
+                    + " pair=" + redactHost(state.adbPairHost) + ":" + state.adbPairPort
+                    + " decision=" + decision.action);
             runOnUiThread(() -> renderBootstrapState(state));
             executeSetupDecision(decision);
         }
@@ -538,8 +558,20 @@ public final class PhoneCompanionActivity extends Activity {
                 if (authorized) {
                     prefs().edit().putString(PREF_CXR_TOKEN, cxrClient.authToken()).apply();
                     setStatusLine(cxrStatusText, "Hi Rokid", "Authorized", ACCENT);
-                    setDetail("Authorization saved. Tap " + initialPrimaryButtonLabel() + " again.");
+                    if (continueWirelessSetupAfterAuthorization) {
+                        continueWirelessSetupAfterAuthorization = false;
+                        setDetail("Authorization saved. Opening Wireless Debugging setup.");
+                        cxrClient.requestWirelessDebuggingSetup();
+                    } else if (continueBootstrapAfterAuthorization) {
+                        continueBootstrapAfterAuthorization = false;
+                        setDetail("Authorization saved. Continuing bridge setup.");
+                        cxrClient.bootstrap(true);
+                    } else {
+                        setDetail("Authorization saved. Tap " + initialPrimaryButtonLabel() + " again.");
+                    }
                 } else {
+                    continueBootstrapAfterAuthorization = false;
+                    continueWirelessSetupAfterAuthorization = false;
                     setStatusLine(cxrStatusText, "Hi Rokid", "Needs authorization", WARN);
                 }
             });
@@ -547,6 +579,10 @@ public final class PhoneCompanionActivity extends Activity {
     };
 
     private void renderBootstrapState(CxrBootstrapClient.BootstrapState state) {
+        if (BridgeProtocol.SETUP_BRIDGE_ARMED.equals(state.setupState)) {
+            renderAlreadyArmedBootstrapState(state);
+            return;
+        }
         String ip = state.wifiIp == null || state.wifiIp.isEmpty() ? "No IP yet" : state.wifiIp;
         if (state.hasLiveWirelessPort()) {
             portField.setText(Integer.toString(state.adbPort));
@@ -564,10 +600,37 @@ public final class PhoneCompanionActivity extends Activity {
         if (!setupCoordinator.isBridgeArmed() && !state.setupState.isEmpty()) {
             setDetail(wirelessSetupLabel(state.setupState));
             if (BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(state.setupState)) {
-                summary("Enable Accessibility", WARN);
+                if (state.accessibilityServiceReady) {
+                    summary("Retrying setup", MUTED);
+                    setDetail("R08 Accessibility is enabled. Retrying Wireless Debugging setup.");
+                } else {
+                    summary("Enable Accessibility", WARN);
+                }
                 setStatusLine(bridgeStatusText, "Bridge", "Not armed", WARN);
             }
         }
+    }
+
+    private void renderAlreadyArmedBootstrapState(CxrBootstrapClient.BootstrapState state) {
+        setupCoordinator.markArmed();
+        updatePrimaryButtonForState(true);
+        String host = state.wifiIp == null ? "" : state.wifiIp.trim();
+        int port = state.hasLiveWirelessPort() ? state.adbPort : parsePort();
+        if (!host.isEmpty()) {
+            saveArmedEndpoint(host, port);
+            updateEndpoint(host, port);
+        } else {
+            prefs().edit().putBoolean(BridgeProtocol.PREF_ARMED, true).apply();
+            setStatusLine(ipStatusText, "Glasses IP",
+                    state.wifiConnected ? "No IP yet" : "Wi-Fi off after arm", MUTED);
+        }
+        setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
+        setStatusLine(adbStatusText, "ADB",
+                state.wifiConnected ? "Bridge already armed" : "Armed, glasses Wi-Fi off", ACCENT);
+        summary("Setup complete", ACCENT);
+        setDetail(state.wifiConnected
+                ? "Bridge is already armed on the glasses. You can close this app."
+                : "Bridge is already armed on the glasses. Wi-Fi is off after arm, so no glasses IP is needed until re-arm.");
     }
 
     private void executeSetupDecision(BridgeSetupCoordinator.Decision decision) {
@@ -601,8 +664,42 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(adbStatusText, "ADB", "Pairing phone", MUTED);
         setDetail("Pairing this phone with the glasses over Wireless Debugging, then arming the bridge.");
         executor.execute(() -> {
+            String pairHost = decision.pairHost;
+            int pairPort = decision.pairPort;
+            boolean resolvedPairingPortWithMdns = false;
             try {
-                adbBridgeClient.pairWirelessDebugging(decision.pairHost, decision.pairPort, decision.pairCode);
+                if (shouldResolvePairingPortWithMdns(decision, pairPort)) {
+                    AdbMdnsPairingResolver.PairingEndpoint endpoint = resolvePairingPortWithMdns(decision);
+                    pairHost = endpoint.host;
+                    pairPort = endpoint.port;
+                    resolvedPairingPortWithMdns = true;
+                }
+                try {
+                    adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, decision.pairCode);
+                } catch (Throwable pairingThrowable) {
+                    if (resolvedPairingPortWithMdns) {
+                        throw pairingThrowable;
+                    }
+                    AdbMdnsPairingResolver.PairingEndpoint endpoint;
+                    try {
+                        endpoint = resolvePairingPortWithMdns(decision);
+                    } catch (Throwable retryThrowable) {
+                        pairingThrowable.addSuppressed(retryThrowable);
+                        throw pairingThrowable;
+                    }
+                    if (endpoint.port == pairPort && endpoint.host.equals(pairHost)) {
+                        throw pairingThrowable;
+                    }
+                    pairHost = endpoint.host;
+                    pairPort = endpoint.port;
+                    resolvedPairingPortWithMdns = true;
+                    try {
+                        adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, decision.pairCode);
+                    } catch (Throwable retryThrowable) {
+                        pairingThrowable.addSuppressed(retryThrowable);
+                        throw pairingThrowable;
+                    }
+                }
                 runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Paired", ACCENT));
                 if (!decision.hasConnectPort()) {
                     setupCoordinator.markPairingFinished();
@@ -635,6 +732,26 @@ public final class PhoneCompanionActivity extends Activity {
                 setupCoordinator.markPairingFinished();
             }
         });
+    }
+
+    private boolean shouldResolvePairingPortWithMdns(BridgeSetupCoordinator.Decision decision, int pairPort) {
+        return pairPort <= 0 || (decision.hasConnectPort() && pairPort == decision.connectPort);
+    }
+
+    private AdbMdnsPairingResolver.PairingEndpoint resolvePairingPortWithMdns(
+            BridgeSetupCoordinator.Decision decision) throws Exception {
+        String expectedHost = decision.pairHost == null || decision.pairHost.trim().isEmpty()
+                ? decision.connectHost
+                : decision.pairHost;
+        runOnUiThread(() -> {
+            setStatusLine(adbStatusText, "ADB", "Finding pairing port", MUTED);
+            setDetail("Pairing code is visible. Finding the temporary Wireless Debugging pairing port over mDNS.");
+        });
+        AdbMdnsPairingResolver.PairingEndpoint endpoint =
+                mdnsPairingResolver.resolvePairingEndpoint(expectedHost);
+        runOnUiThread(() -> setDetail("Pairing port " + endpoint.port
+                + " found over mDNS. Pairing this phone with the glasses."));
+        return endpoint;
     }
 
     private void armResolvedIp(String host, int port, boolean continueWirelessSetupOnFailure) {
@@ -815,6 +932,15 @@ public final class PhoneCompanionActivity extends Activity {
 
     private String endpointLabel(String host) {
         return host == null || host.trim().isEmpty() ? "Not known yet" : host;
+    }
+
+    private String redactHost(String host) {
+        if (host == null || host.trim().isEmpty()) {
+            return "";
+        }
+        String value = host.trim();
+        int dot = value.lastIndexOf('.');
+        return dot > 0 ? value.substring(0, dot + 1) + "x" : "redacted";
     }
 
     private String shortMessage(Throwable throwable) {

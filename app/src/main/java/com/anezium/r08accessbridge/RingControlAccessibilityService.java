@@ -186,6 +186,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         navigator = new AccessibilityNavigator(this);
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
         wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
+        CxrBootstrapBridge.onAccessibilityServiceConnected(this);
         configureServiceInfo();
         registerCommandReceiver();
         bleController = new RingBleController(this);
@@ -230,6 +231,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         Log.d(TAG, "Accessibility service interrupted");
     }
 
+    static boolean isServiceActive() {
+        return activeService != null;
+    }
+
     static boolean requestWirelessDebugSetup(Context context) {
         RingControlAccessibilityService service = activeService;
         if (service != null && service.wirelessDebuggingSetupAutomator != null) {
@@ -265,6 +270,29 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private void startWifiEnableFlow(String replyId) {
         if (wifiEnableAutomator != null) {
             mainHandler.post(() -> wifiEnableAutomator.start(replyId));
+        }
+    }
+
+    static void returnHome(Context context, String reason) {
+        RingControlAccessibilityService service = activeService;
+        if (service != null) {
+            service.mainHandler.post(() -> {
+                Log.d(TAG, "Returning to Home via accessibility reason=" + reason);
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME);
+            });
+            return;
+        }
+        if (context == null) {
+            return;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            Log.d(TAG, "Returning to Home via intent reason=" + reason);
+            context.startActivity(intent);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Could not return to Home reason=" + reason, exception);
         }
     }
 
