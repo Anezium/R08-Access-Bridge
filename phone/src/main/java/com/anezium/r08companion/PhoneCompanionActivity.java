@@ -664,70 +664,107 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(adbStatusText, "ADB", "Pairing phone", MUTED);
         setDetail("Pairing this phone with the glasses over Wireless Debugging, then arming the bridge.");
         executor.execute(() -> {
-            String pairHost = decision.pairHost;
-            int pairPort = decision.pairPort;
-            boolean resolvedPairingPortWithMdns = false;
             try {
-                if (shouldResolvePairingPortWithMdns(decision, pairPort)) {
-                    AdbMdnsPairingResolver.PairingEndpoint endpoint = resolvePairingPortWithMdns(decision);
-                    pairHost = endpoint.host;
-                    pairPort = endpoint.port;
-                    resolvedPairingPortWithMdns = true;
-                }
+                String pairHost = decision.pairHost;
+                int pairPort = decision.pairPort;
+                boolean resolvedPairingPortWithMdns = false;
                 try {
-                    adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, decision.pairCode);
-                } catch (Throwable pairingThrowable) {
-                    if (resolvedPairingPortWithMdns) {
-                        throw pairingThrowable;
+                    if (shouldResolvePairingPortWithMdns(decision, pairPort)) {
+                        AdbMdnsPairingResolver.PairingEndpoint endpoint = resolvePairingPortWithMdns(decision);
+                        pairHost = endpoint.host;
+                        pairPort = endpoint.port;
+                        resolvedPairingPortWithMdns = true;
                     }
-                    AdbMdnsPairingResolver.PairingEndpoint endpoint;
-                    try {
-                        endpoint = resolvePairingPortWithMdns(decision);
-                    } catch (Throwable retryThrowable) {
-                        pairingThrowable.addSuppressed(retryThrowable);
-                        throw pairingThrowable;
-                    }
-                    if (endpoint.port == pairPort && endpoint.host.equals(pairHost)) {
-                        throw pairingThrowable;
-                    }
-                    pairHost = endpoint.host;
-                    pairPort = endpoint.port;
-                    resolvedPairingPortWithMdns = true;
                     try {
                         adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, decision.pairCode);
-                    } catch (Throwable retryThrowable) {
-                        pairingThrowable.addSuppressed(retryThrowable);
-                        throw pairingThrowable;
+                    } catch (Throwable pairingThrowable) {
+                        if (resolvedPairingPortWithMdns) {
+                            throw pairingThrowable;
+                        }
+                        AdbMdnsPairingResolver.PairingEndpoint endpoint;
+                        try {
+                            endpoint = resolvePairingPortWithMdns(decision);
+                        } catch (Throwable retryThrowable) {
+                            pairingThrowable.addSuppressed(retryThrowable);
+                            throw pairingThrowable;
+                        }
+                        if (endpoint.port == pairPort && endpoint.host.equals(pairHost)) {
+                            throw pairingThrowable;
+                        }
+                        pairHost = endpoint.host;
+                        pairPort = endpoint.port;
+                        try {
+                            adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, decision.pairCode);
+                        } catch (Throwable retryThrowable) {
+                            pairingThrowable.addSuppressed(retryThrowable);
+                            throw pairingThrowable;
+                        }
                     }
+                } catch (Throwable pairingThrowable) {
+                    if (decision.hasConnectPort()) {
+                        try (AdbSession adb = connectAfterPairing(decision.connectHost, decision.connectPort)) {
+                            BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                            runOnUiThread(() -> applyBridgeResult(decision.connectHost, result));
+                            return;
+                        } catch (Throwable fallbackThrowable) {
+                            pairingThrowable.addSuppressed(fallbackThrowable);
+                        }
+                    }
+                    runOnUiThread(() -> {
+                        setupCoordinator.markNotArmed();
+                        setStatusLine(adbStatusText, "ADB", "Pairing failed", ERROR);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        summary("Pairing failed", ERROR);
+                        setDetail(errorMessage(pairingThrowable));
+                    });
+                    return;
                 }
+
+                setupCoordinator.markPairingSucceeded(decision);
                 runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Paired", ACCENT));
                 if (!decision.hasConnectPort()) {
-                    setupCoordinator.markPairingFinished();
-                    runOnUiThread(() -> setDetail("Pairing succeeded. Refreshing the Wireless Debugging port."));
+                    runOnUiThread(() -> {
+                        setStatusLine(adbStatusText, "ADB", "Paired, waiting for port", ACCENT);
+                        setDetail("Pairing succeeded. Refreshing the Wireless Debugging port.");
+                    });
                     cxrClient.requestRefresh();
                     return;
                 }
-                try (AdbSession adb = adbBridgeClient.connect(decision.connectHost, decision.connectPort)) {
+
+                AdbSession adb;
+                try {
+                    runOnUiThread(() -> {
+                        setStatusLine(adbStatusText, "ADB", "Connecting port " + decision.connectPort, MUTED);
+                        setDetail("Pairing accepted. Connecting to Wireless Debugging port " + decision.connectPort + ".");
+                    });
+                    adb = connectAfterPairing(decision.connectHost, decision.connectPort);
+                } catch (Throwable connectThrowable) {
+                    runOnUiThread(() -> {
+                        setStatusLine(adbStatusText, "ADB", "Paired, waiting for port", WARN);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+                        summary("Wireless setup", MUTED);
+                        setDetail("Pairing was accepted, but port " + decision.connectPort
+                                + " did not accept the key yet. Refreshing the Wireless Debugging port. "
+                                + shortMessage(connectThrowable));
+                    });
+                    cxrClient.requestRefresh();
+                    return;
+                }
+
+                try {
                     BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
                     runOnUiThread(() -> applyBridgeResult(decision.connectHost, result));
+                } catch (Throwable armThrowable) {
+                    runOnUiThread(() -> {
+                        setupCoordinator.markNotArmed();
+                        setStatusLine(adbStatusText, "ADB", "Arm failed", ERROR);
+                        setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        summary("Arm failed", ERROR);
+                        setDetail(errorMessage(armThrowable));
+                    });
+                } finally {
+                    adb.close();
                 }
-            } catch (Throwable throwable) {
-                if (decision.hasConnectPort()) {
-                    try (AdbSession adb = adbBridgeClient.connect(decision.connectHost, decision.connectPort)) {
-                        BridgeOperationResult result = adbBridgeClient.arm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
-                        runOnUiThread(() -> applyBridgeResult(decision.connectHost, result));
-                        return;
-                    } catch (Throwable fallbackThrowable) {
-                        throwable.addSuppressed(fallbackThrowable);
-                    }
-                }
-                runOnUiThread(() -> {
-                    setupCoordinator.markNotArmed();
-                    setStatusLine(adbStatusText, "ADB", "Pairing failed", ERROR);
-                    setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
-                    summary("Pairing failed", ERROR);
-                    setDetail(errorMessage(throwable));
-                });
             } finally {
                 setupCoordinator.markPairingFinished();
             }
@@ -752,6 +789,36 @@ public final class PhoneCompanionActivity extends Activity {
         runOnUiThread(() -> setDetail("Pairing port " + endpoint.port
                 + " found over mDNS. Pairing this phone with the glasses."));
         return endpoint;
+    }
+
+    private AdbSession connectAfterPairing(String host, int port) throws Exception {
+        Throwable lastFailure = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                return adbBridgeClient.connect(host, port);
+            } catch (Throwable throwable) {
+                lastFailure = throwable;
+                if (attempt >= 3) {
+                    break;
+                }
+                final int nextAttempt = attempt + 1;
+                runOnUiThread(() -> setStatusLine(adbStatusText, "ADB",
+                        "Retrying port " + port + " (" + nextAttempt + "/3)", MUTED));
+                try {
+                    Thread.sleep(1200L);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw exception;
+                }
+            }
+        }
+        if (lastFailure instanceof Exception) {
+            throw (Exception) lastFailure;
+        }
+        if (lastFailure instanceof Error) {
+            throw (Error) lastFailure;
+        }
+        throw new IllegalStateException("ADB connection failed");
     }
 
     private void armResolvedIp(String host, int port, boolean continueWirelessSetupOnFailure) {

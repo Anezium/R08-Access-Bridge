@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.2 - 2026-06-13
+
+### Wireless setup post-pair recovery
+
+- Fixed the phone companion getting stuck after `Paired` when the glasses kept reporting `pairing_ready` while the Wireless Debugging pairing dialog was still visible.
+- After a successful ADB pairing, the companion now arms the live Wireless Debugging port even if the next CXR state still says `Pairing code ready`.
+- Added short post-pair ADB connection retries and clearer `Paired, waiting for port` / `Arm failed` status transitions instead of collapsing every post-pair issue into `Pairing failed`.
+
 ## v1.4.1 - 2026-06-12
 
 ### Wireless setup resilience

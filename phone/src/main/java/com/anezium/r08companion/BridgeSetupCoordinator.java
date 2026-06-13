@@ -83,6 +83,7 @@ final class BridgeSetupCoordinator {
     private boolean reArmInProgress;
     private String lastAutoArmEndpoint = "";
     private String lastPairingToken = "";
+    private String lastSuccessfulPairingIdentity = "";
     private int lastLiveAdbPort = BridgeProtocol.DEFAULT_ADB_PORT;
 
     void startBridge(int fallbackPort) {
@@ -94,6 +95,7 @@ final class BridgeSetupCoordinator {
         reArmInProgress = false;
         lastAutoArmEndpoint = "";
         lastPairingToken = "";
+        lastSuccessfulPairingIdentity = "";
         lastLiveAdbPort = BridgeProtocol.DEFAULT_ADB_PORT;
     }
 
@@ -115,6 +117,7 @@ final class BridgeSetupCoordinator {
         reArmInProgress = false;
         lastAutoArmEndpoint = "";
         lastPairingToken = "";
+        lastSuccessfulPairingIdentity = "";
         lastLiveAdbPort = BridgeProtocol.DEFAULT_ADB_PORT;
     }
 
@@ -144,6 +147,9 @@ final class BridgeSetupCoordinator {
             return Decision.NONE;
         }
         if (state.isPairingReady()) {
+            if (state.hasLiveWirelessPort() && pairingSucceededFor(state)) {
+                return armDecision(connectHost(state), state.adbPort, false);
+            }
             return pairDecision(state);
         }
         if (BridgeProtocol.SETUP_ACCESSIBILITY_NEEDED.equals(state.setupState)
@@ -183,6 +189,10 @@ final class BridgeSetupCoordinator {
         pairingInProgress = false;
     }
 
+    void markPairingSucceeded(Decision decision) {
+        lastSuccessfulPairingIdentity = pairingIdentity(decision.pairHost, decision.pairCode);
+    }
+
     void markArmed() {
         bridgeArmed = true;
         autoArmFromCxr = false;
@@ -214,10 +224,7 @@ final class BridgeSetupCoordinator {
     }
 
     private Decision pairDecision(CxrBootstrapClient.BootstrapState state) {
-        String pairHost = state.adbPairHost == null ? "" : state.adbPairHost.trim();
-        if (pairHost.isEmpty() && state.wifiIp != null) {
-            pairHost = state.wifiIp.trim();
-        }
+        String pairHost = pairHost(state);
         String pairCode = state.adbPairCode == null ? "" : state.adbPairCode.trim();
         int pairPort = state.adbPairPort;
         if (pairHost.isEmpty() || pairCode.isEmpty()) {
@@ -230,9 +237,33 @@ final class BridgeSetupCoordinator {
         lastPairingToken = token;
         pairingInProgress = true;
         int connectPort = state.hasLiveWirelessPort() ? state.adbPort : 0;
-        String connectHost = state.wifiIp == null || state.wifiIp.isEmpty()
-                ? pairHost
-                : state.wifiIp;
-        return Decision.pairAndArm(pairHost, pairPort, pairCode, connectHost, connectPort);
+        return Decision.pairAndArm(pairHost, pairPort, pairCode, connectHost(state), connectPort);
+    }
+
+    private boolean pairingSucceededFor(CxrBootstrapClient.BootstrapState state) {
+        String identity = pairingIdentity(pairHost(state), state.adbPairCode);
+        return !identity.isEmpty() && identity.equals(lastSuccessfulPairingIdentity);
+    }
+
+    private String pairHost(CxrBootstrapClient.BootstrapState state) {
+        String pairHost = state.adbPairHost == null ? "" : state.adbPairHost.trim();
+        if (pairHost.isEmpty() && state.wifiIp != null) {
+            pairHost = state.wifiIp.trim();
+        }
+        return pairHost;
+    }
+
+    private String connectHost(CxrBootstrapClient.BootstrapState state) {
+        String wifiIp = state.wifiIp == null ? "" : state.wifiIp.trim();
+        return wifiIp.isEmpty() ? pairHost(state) : wifiIp;
+    }
+
+    private String pairingIdentity(String host, String code) {
+        String cleanHost = host == null ? "" : host.trim();
+        String cleanCode = code == null ? "" : code.trim();
+        if (cleanHost.isEmpty() || cleanCode.isEmpty()) {
+            return "";
+        }
+        return cleanHost + ":" + cleanCode;
     }
 }
