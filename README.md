@@ -202,7 +202,7 @@ Download the APKs from the GitHub Releases page:
 
 Before pairing the ring with R08 Access Bridge, connect it to the official R08 Ring app and let the official app install any available ring firmware update.
 
-Outdated ring firmware can make alternate input modes behave incorrectly: some modes may scroll like a mouse wheel, while others may disable input entirely. If this happens, update the ring in the official app, disconnect it there, then reconnect it in R08 Access Bridge.
+This matters for Stable mode / R08 `appType 1`: before the ring firmware update, `appType 1` may only emit swipe / previous / next input. Tap and double-tap Back may not work at all. After updating the ring in the official app, disconnect it there, then reconnect it in R08 Access Bridge so Stable mode exposes the expected swipe, tap, and Back behavior.
 
 Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 
