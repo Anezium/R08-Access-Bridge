@@ -198,6 +198,14 @@ Download the APKs from the GitHub Releases page:
 
 [R08 Access Bridge releases](https://github.com/Anezium/R08-Access-Bridge/releases)
 
+### Important: update the ring first
+
+Before pairing the ring with R08 Access Bridge, connect it to the official R08 Ring app and let the official app install any available ring firmware update.
+
+Outdated ring firmware can make alternate input modes behave incorrectly: some modes may scroll like a mouse wheel, while others may disable input entirely. If this happens, update the ring in the official app, disconnect it there, then reconnect it in R08 Access Bridge.
+
+Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
+
 For the normal ring controller, install the glasses APK:
 
 ```powershell
