@@ -2,6 +2,7 @@ package com.anezium.r08accessbridge;
 
 import android.accessibilityservice.AccessibilityService;
 import android.graphics.Rect;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -18,15 +19,21 @@ final class AccessibilityNavigator {
     private static final int MIN_NODE_SIZE = 6;
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
+    private static final int ACTION_SET_PROGRESS =
+            AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId();
 
     private final RingControlAccessibilityService service;
     private final GestureDispatcher gestures;
     private final LauncherNavigator launcherNavigator;
+    private final ReaderaCompatibility readeraCompatibility;
+    private final ArbookCompatibility arbookCompatibility;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
         gestures = new GestureDispatcher(service);
         launcherNavigator = new LauncherNavigator(service, gestures);
+        readeraCompatibility = new ReaderaCompatibility(service, gestures);
+        arbookCompatibility = new ArbookCompatibility(service, gestures);
     }
 
     void moveForward() {
@@ -36,6 +43,15 @@ final class AccessibilityNavigator {
     void moveForward(int launcherSteps) {
         if (launcherNavigator.isActive()) {
             launcherNavigator.move(true, launcherSteps);
+            return;
+        }
+        if (readeraCompatibility.move(true)) {
+            return;
+        }
+        if (arbookCompatibility.move(true)) {
+            return;
+        }
+        if (adjustFocusedRange(true)) {
             return;
         }
         if (moveFocus(true, needsStrongFocusFeedback())) {
@@ -56,6 +72,15 @@ final class AccessibilityNavigator {
             launcherNavigator.move(false, launcherSteps);
             return;
         }
+        if (readeraCompatibility.move(false)) {
+            return;
+        }
+        if (arbookCompatibility.move(false)) {
+            return;
+        }
+        if (adjustFocusedRange(false)) {
+            return;
+        }
         if (moveFocus(false, needsStrongFocusFeedback())) {
             return;
         }
@@ -67,6 +92,12 @@ final class AccessibilityNavigator {
 
     void activate() {
         if (launcherNavigator.isActive() && launcherNavigator.activateCenter()) {
+            return;
+        }
+        if (readeraCompatibility.activate()) {
+            return;
+        }
+        if (arbookCompatibility.activate()) {
             return;
         }
         AccessibilityNodeInfo current = findCurrentFocus();
@@ -304,6 +335,104 @@ final class AccessibilityNavigator {
     private boolean tryScroll(boolean forward) {
         AccessibilityNodeInfo current = findCurrentFocus();
         return tryScrollFrom(current, forward) || tryScrollTree(service.getRootInActiveWindow(), forward, new TraversalBudget());
+    }
+
+    private boolean adjustFocusedRange(boolean forward) {
+        AccessibilityNodeInfo adjustable = findAdjustable(findCurrentFocus());
+        if (adjustable == null && isRokidManagerActive()) {
+            adjustable = findFirstAdjustable(service.getRootInActiveWindow(), new TraversalBudget());
+        }
+        if (adjustable == null) {
+            return false;
+        }
+        if (performRangeAdjustment(adjustable, forward)) {
+            focusNode(adjustable, needsStrongFocusFeedback());
+            return true;
+        }
+        return false;
+    }
+
+    private AccessibilityNodeInfo findAdjustable(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo cursor = node;
+        while (cursor != null) {
+            if (isAdjustable(cursor)) {
+                return cursor;
+            }
+            cursor = cursor.getParent();
+        }
+        return null;
+    }
+
+    private AccessibilityNodeInfo findFirstAdjustable(AccessibilityNodeInfo node, TraversalBudget budget) {
+        if (node == null || budget.exhausted()) {
+            return null;
+        }
+        budget.visit();
+        if (isAdjustable(node)) {
+            return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo match = findFirstAdjustable(node.getChild(i), budget);
+            if (match != null) {
+                return match;
+            }
+        }
+        return null;
+    }
+
+    private boolean isAdjustable(AccessibilityNodeInfo node) {
+        return node != null
+                && node.isVisibleToUser()
+                && node.isEnabled()
+                && node.getRangeInfo() != null
+                && (supports(node, ACTION_SET_PROGRESS)
+                || supports(node, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                || supports(node, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                || node.isScrollable());
+    }
+
+    private boolean performRangeAdjustment(AccessibilityNodeInfo node, boolean forward) {
+        if (performScroll(node, forward)) {
+            return true;
+        }
+        AccessibilityNodeInfo.RangeInfo range = node.getRangeInfo();
+        if (range == null || !supports(node, ACTION_SET_PROGRESS)) {
+            return false;
+        }
+        float min = range.getMin();
+        float max = range.getMax();
+        if (max <= min) {
+            return false;
+        }
+        float current = range.getCurrent();
+        float step = rangeStep(range);
+        float target = clamp(current + (forward ? step : -step), min, max);
+        if (target == current) {
+            return false;
+        }
+        Bundle arguments = new Bundle();
+        arguments.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target);
+        boolean adjusted = node.performAction(ACTION_SET_PROGRESS, arguments);
+        Log.d(TAG, "Adjusted range forward=" + forward
+                + " current=" + current
+                + " target=" + target
+                + " ok=" + adjusted);
+        return adjusted;
+    }
+
+    private float rangeStep(AccessibilityNodeInfo.RangeInfo range) {
+        float span = range.getMax() - range.getMin();
+        if (span <= 0f) {
+            return 1f;
+        }
+        if (range.getType() == AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT) {
+            return Math.max(1f, Math.round(span / 16f));
+        }
+        return Math.max(span / 20f, 0.01f);
+    }
+
+    private float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private boolean tryScrollFrom(AccessibilityNodeInfo node, boolean forward) {

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Reader app compatibility
+
+- Added automatic Readera compatibility for opening visible books, using the `Read` action from the document sheet, and page turning from the reader canvas.
+- Added automatic `檐字阅读` / `com.arbook.reader` compatibility for opening visible books and turning reader pages with left/right tap zones.
+- Improved focused slider handling so brightness/volume-style controls can react to ring swipes through Accessibility range actions.
+
 ## v1.4.2 - 2026-06-13
 
 ### Wireless setup post-pair recovery
