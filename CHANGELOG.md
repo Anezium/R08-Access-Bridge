@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.4.3 - 2026-06-14
 
 ### Reader app compatibility
 
