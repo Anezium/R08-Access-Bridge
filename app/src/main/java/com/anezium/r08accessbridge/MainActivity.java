@@ -70,6 +70,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        requestRingBatteryRefresh();
         render();
     }
 
@@ -638,10 +639,14 @@ public final class MainActivity extends Activity {
     }
 
     private GradientDrawable modeOutline() {
+        return compactBadgeOutline(modeColor());
+    }
+
+    private GradientDrawable compactBadgeOutline(int color) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(Color.TRANSPARENT);
         drawable.setCornerRadius(dp(5));
-        drawable.setStroke(dp(1), modeColor());
+        drawable.setStroke(dp(1), color);
         return drawable;
     }
 
@@ -751,6 +756,15 @@ public final class MainActivity extends Activity {
             }
         }
         Toast.makeText(this, R.string.toast_pair_reconnect_started, Toast.LENGTH_SHORT).show();
+    }
+
+    private void requestRingBatteryRefresh() {
+        if (isAccessibilityEnabled()) {
+            sendServiceCommand(RingControlAccessibilityService.COMMAND_REQUEST_BATTERY);
+        }
+        if (activityBleController != null) {
+            activityBleController.requestBatteryNow();
+        }
     }
 
     private void forgetR08() {

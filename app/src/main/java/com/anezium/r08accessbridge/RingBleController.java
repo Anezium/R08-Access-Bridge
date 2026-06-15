@@ -41,13 +41,15 @@ final class RingBleController {
     private static final UUID NOTIFY_CHAR_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
+    private static final byte OPCODE_BATTERY = 0x03;
     private static final byte OPCODE_TOUCH_CONTROL = 0x3B;
     private static final byte APP_TYPE_MUSIC_KEYS = 0x01;
     private static final byte APP_TYPE_EBOOK_TOUCH = 0x04;
+    private static final int FLAG_MASK_ERROR = 0x80;
     private static final int PACKET_SIZE = 16;
     private static final long SCAN_TIMEOUT_MS = 25_000L;
-    private static final long KEEPALIVE_MS = 18_000L;
     private static final long RECONNECT_MS = 5_000L;
+    private static final long BATTERY_REFRESH_MS = 5 * 60_000L;
 
     private final Context context;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -63,6 +65,8 @@ final class RingBleController {
     private boolean touchMode;
     private boolean scanning;
     private boolean writing;
+    private boolean descriptorWriting;
+    private boolean notificationsEnabled;
 
     private final Runnable scanTimeout = () -> {
         if (scanning) {
@@ -72,14 +76,14 @@ final class RingBleController {
         }
     };
 
-    private final Runnable keepAlive = new Runnable() {
+    private final Runnable batteryRefresh = new Runnable() {
         @Override
         public void run() {
-            if (!started || writeCharacteristic == null) {
+            if (!started || !notificationsEnabled || writeCharacteristic == null) {
                 return;
             }
-            sendTpSleepWake();
-            handler.postDelayed(this, KEEPALIVE_MS);
+            requestBattery("refresh");
+            handler.postDelayed(this, BATTERY_REFRESH_MS);
         }
     };
 
@@ -131,6 +135,8 @@ final class RingBleController {
                 writeCharacteristic = null;
                 writes.clear();
                 writing = false;
+                descriptorWriting = false;
+                notificationsEnabled = false;
                 bluetoothGatt.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 closeGatt();
@@ -157,11 +163,11 @@ final class RingBleController {
                 scheduleReconnect();
                 return;
             }
-            // Writes are enough for mode control; avoiding CCCD writes keeps the GATT queue deterministic.
-            Log.d(TAG, "R08 GATT ready");
-            configureCurrentMode();
-            handler.removeCallbacks(keepAlive);
-            handler.postDelayed(keepAlive, KEEPALIVE_MS);
+            BluetoothGattCharacteristic notifyCharacteristic = service.getCharacteristic(NOTIFY_CHAR_UUID);
+            if (!enableNotifications(notifyCharacteristic)) {
+                Log.w(TAG, "R08 notifications unavailable; battery status disabled");
+                onGattReady(false);
+            }
         }
 
         @Override
@@ -173,15 +179,22 @@ final class RingBleController {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic characteristic) {
-            byte[] value = characteristic.getValue();
-            if (value != null) {
-                Log.d(TAG, "Notify len=" + value.length);
-            }
+            handleNotification(characteristic, characteristic.getValue());
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            Log.d(TAG, "Notify len=" + (value == null ? 0 : value.length));
+            handleNotification(characteristic, value);
+        }
+
+        @Override
+        public void onDescriptorWrite(BluetoothGatt bluetoothGatt, BluetoothGattDescriptor descriptor, int status) {
+            descriptorWriting = false;
+            boolean success = status == BluetoothGatt.GATT_SUCCESS;
+            notificationsEnabled = success;
+            Log.d(TAG, "R08 notifications enabled=" + success + " status=" + status);
+            onGattReady(success);
+            drainWrites();
         }
     };
 
@@ -247,6 +260,10 @@ final class RingBleController {
                 startScan();
             }
         }
+    }
+
+    void requestBatteryNow() {
+        requestBattery("manual");
     }
 
     boolean forgetBondedR08() {
@@ -322,6 +339,15 @@ final class RingBleController {
 
     private void sendTpSleepWake() {
         enqueue(tpSleepWake(activeAppType, (byte) 1));
+    }
+
+    private void onGattReady(boolean canReadBattery) {
+        Log.d(TAG, "R08 GATT ready notifications=" + canReadBattery);
+        configureCurrentMode();
+        if (canReadBattery) {
+            requestBattery("gatt_ready");
+            scheduleBatteryRefresh();
+        }
     }
 
     private void ensureAdapter() {
@@ -409,8 +435,10 @@ final class RingBleController {
     }
 
     private void closeGatt() {
-        handler.removeCallbacks(keepAlive);
+        handler.removeCallbacks(batteryRefresh);
         writeCharacteristic = null;
+        descriptorWriting = false;
+        notificationsEnabled = false;
         if (gatt != null && hasConnectPermission()) {
             gatt.disconnect();
             gatt.close();
@@ -431,16 +459,35 @@ final class RingBleController {
         }, RECONNECT_MS);
     }
 
-    private void enableNotifications(BluetoothGattCharacteristic notifyCharacteristic) {
+    private boolean enableNotifications(BluetoothGattCharacteristic notifyCharacteristic) {
         if (notifyCharacteristic == null || gatt == null) {
-            return;
+            return false;
         }
-        gatt.setCharacteristicNotification(notifyCharacteristic, true);
+        if (!gatt.setCharacteristicNotification(notifyCharacteristic, true)) {
+            Log.w(TAG, "R08 setCharacteristicNotification failed");
+            return false;
+        }
         BluetoothGattDescriptor descriptor = notifyCharacteristic.getDescriptor(CCCD_UUID);
-        if (descriptor != null) {
-            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            gatt.writeDescriptor(descriptor);
+        if (descriptor == null) {
+            Log.w(TAG, "R08 notify CCCD missing");
+            return false;
         }
+        descriptorWriting = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            int result = gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            if (result == BluetoothGatt.GATT_SUCCESS) {
+                return true;
+            }
+            Log.w(TAG, "R08 notify descriptor write returned=" + result);
+        } else {
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            if (gatt.writeDescriptor(descriptor)) {
+                return true;
+            }
+            Log.w(TAG, "R08 notify descriptor write submit failed");
+        }
+        descriptorWriting = false;
+        return false;
     }
 
     private void enqueue(byte[] packet) {
@@ -452,7 +499,7 @@ final class RingBleController {
     }
 
     private void drainWrites() {
-        if (writing || writeCharacteristic == null || gatt == null || writes.isEmpty()) {
+        if (descriptorWriting || writing || writeCharacteristic == null || gatt == null || writes.isEmpty()) {
             return;
         }
         byte[] packet = writes.poll();
@@ -473,6 +520,60 @@ final class RingBleController {
                 handler.postDelayed(this::drainWrites, 160);
             }
         }
+    }
+
+    private void requestBattery(String reason) {
+        if (!notificationsEnabled) {
+            Log.d(TAG, "Battery request skipped: notifications not ready reason=" + reason);
+            return;
+        }
+        Log.d(TAG, "Requesting ring battery reason=" + reason);
+        enqueue(simpleCommand(OPCODE_BATTERY));
+    }
+
+    private void scheduleBatteryRefresh() {
+        handler.removeCallbacks(batteryRefresh);
+        handler.postDelayed(batteryRefresh, BATTERY_REFRESH_MS);
+    }
+
+    private void handleNotification(BluetoothGattCharacteristic characteristic, byte[] value) {
+        if (characteristic == null || !NOTIFY_CHAR_UUID.equals(characteristic.getUuid())) {
+            return;
+        }
+        int length = value == null ? 0 : value.length;
+        Log.d(TAG, "Notify len=" + length);
+        if (value == null || value.length < 4) {
+            return;
+        }
+        if (!checkCrc(value)) {
+            Log.w(TAG, "Notify ignored: crc mismatch len=" + value.length);
+            return;
+        }
+        int command = (value[0] & 0xFF) & ~FLAG_MASK_ERROR;
+        if (command == (OPCODE_BATTERY & 0xFF)) {
+            parseBattery(value);
+        }
+    }
+
+    private void parseBattery(byte[] value) {
+        int percent = value[1] & 0xFF;
+        if (percent > 100) {
+            Log.w(TAG, "Ring battery ignored percent=" + percent);
+            return;
+        }
+        boolean charging = value[2] == 1;
+        RingBatteryStatus.save(context, percent, charging);
+        Intent intent = new Intent(RingBatteryStatus.ACTION_CHANGED);
+        intent.setPackage(context.getPackageName());
+        context.sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
+        Log.d(TAG, "Ring battery=" + percent + " charging=" + charging);
+    }
+
+    private byte[] simpleCommand(byte command) {
+        byte[] packet = new byte[PACKET_SIZE];
+        packet[0] = command;
+        addCrc(packet);
+        return packet;
     }
 
     private byte[] touchConfig(byte appType, int sleepMinutes) {
@@ -514,6 +615,14 @@ final class RingBleController {
             crc += packet[i] & 0xFF;
         }
         packet[packet.length - 1] = (byte) (crc & 0xFF);
+    }
+
+    private boolean checkCrc(byte[] packet) {
+        int crc = 0;
+        for (int i = 0; i < packet.length - 1; i++) {
+            crc += packet[i] & 0xFF;
+        }
+        return (packet[packet.length - 1] & 0xFF) == (crc & 0xFF);
     }
 
     private boolean isR08(BluetoothDevice device) {

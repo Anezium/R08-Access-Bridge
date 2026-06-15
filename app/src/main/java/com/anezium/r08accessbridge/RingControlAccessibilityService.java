@@ -35,6 +35,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
     public static final String COMMAND_SET_FAST_NAVIGATION = "set_fast_navigation";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
+    public static final String COMMAND_REQUEST_BATTERY = "request_battery";
     public static final String COMMAND_FORWARD = "forward";
     public static final String COMMAND_BACKWARD = "backward";
     public static final String COMMAND_ACTIVATE = "activate";
@@ -67,6 +68,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private AccessibilityNavigator navigator;
     private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
     private WifiEnableAutomator wifiEnableAutomator;
+    private RingBatteryLauncherOverlay batteryLauncherOverlay;
     private RingBleController bleController;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
@@ -88,6 +90,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private float downY;
     private long downAt;
     private boolean trackingMotion;
+    private boolean batteryReceiverRegistered;
 
     private final BroadcastReceiver commandReceiver = new BroadcastReceiver() {
         @Override
@@ -117,6 +120,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                     Log.d(TAG, "Probe appType requested appType=" + appType);
                     bleController.configureProbeAppType(appType);
                 }
+            } else if (COMMAND_REQUEST_BATTERY.equals(command)) {
+                if (bleController != null) {
+                    bleController.requestBatteryNow();
+                }
             } else if (COMMAND_FORWARD.equals(command)) {
                 executeDebounced(RingCommand.FORWARD, "adb", 0L, 0L);
             } else if (COMMAND_BACKWARD.equals(command)) {
@@ -132,6 +139,16 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             } else if (COMMAND_ENABLE_WIFI_FLOW.equals(command)) {
                 String replyId = intent.getStringExtra(EXTRA_REARM_REPLY_ID);
                 startWifiEnableFlow(replyId);
+            }
+        }
+    };
+
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (RingBatteryStatus.ACTION_CHANGED.equals(intent.getAction())
+                    && batteryLauncherOverlay != null) {
+                batteryLauncherOverlay.onBatteryChanged();
             }
         }
     };
@@ -186,9 +203,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         navigator = new AccessibilityNavigator(this);
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
         wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
+        batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
         CxrBootstrapBridge.onAccessibilityServiceConnected(this);
         configureServiceInfo();
         registerCommandReceiver();
+        registerBatteryReceiver();
+        batteryLauncherOverlay.start();
         bleController = new RingBleController(this);
         bleController.setTouchMode(touchMode);
         bleController.start();
@@ -210,6 +230,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         } catch (IllegalArgumentException ignored) {
             // Receiver was not registered.
         }
+        unregisterBatteryReceiver();
+        if (batteryLauncherOverlay != null) {
+            batteryLauncherOverlay.stop();
+            batteryLauncherOverlay = null;
+        }
         tapRecognizer.cancel();
         wirelessDebuggingSetupAutomator = null;
         wifiEnableAutomator = null;
@@ -223,6 +248,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         if (wifiEnableAutomator != null) {
             wifiEnableAutomator.onAccessibilityEvent(event);
+        }
+        if (batteryLauncherOverlay != null) {
+            batteryLauncherOverlay.onAccessibilityEvent(event);
         }
     }
 
@@ -409,6 +437,32 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             registerReceiver(commandReceiver, filter, COMMAND_PERMISSION, null, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(commandReceiver, filter, COMMAND_PERMISSION, null);
+        }
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerBatteryReceiver() {
+        if (batteryReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter(RingBatteryStatus.ACTION_CHANGED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(batteryReceiver, filter, COMMAND_PERMISSION, null, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(batteryReceiver, filter, COMMAND_PERMISSION, null);
+        }
+        batteryReceiverRegistered = true;
+    }
+
+    private void unregisterBatteryReceiver() {
+        if (!batteryReceiverRegistered) {
+            return;
+        }
+        batteryReceiverRegistered = false;
+        try {
+            unregisterReceiver(batteryReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
         }
     }
 

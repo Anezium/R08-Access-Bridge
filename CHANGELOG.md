@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Ring battery and power
+
+- Added QRing-compatible BLE notifications and battery parsing for the R08 ring.
+- Added a compact ring battery overlay next to the glasses battery on the Rokid launcher.
+- Removed the infinite 18-second TP sleep/wake loop while keeping one-shot wake calls around mode changes and reconnects.
+
 ## v1.4.3 - 2026-06-14
 
 ### Reader app compatibility

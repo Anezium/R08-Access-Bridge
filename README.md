@@ -42,6 +42,7 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 ## What It Does
 
 - Pairs or reconnects to an R08 ring over Bluetooth LE.
+- Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
 - Enables Stable mode by default using R08 `appType 1`, which emits media key events.
 - Converts ring inputs into one-axis navigation suitable for Rokid glasses.
 - Uses Android Accessibility to move focus, scroll, click, inject launcher swipes, and perform Back.
@@ -137,6 +138,8 @@ After first-time setup, a glasses reboot requires only one user action:
 The phone connects to the saved endpoint using the already-authorized key pair. No re-pairing, no Settings navigation. The glasses self-heal on boot: the glasses app (which holds `WRITE_SECURE_SETTINGS` granted during arm) re-enables Wi-Fi and wireless debugging in a `BootReceiver` so the phone can reach them. After the phone re-arms, Wi-Fi and always-on scanning are turned off again.
 
 **Battery note:** glasses Wi-Fi is enabled only for the duration of the re-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation.
+
+**Ring battery note:** the glasses app reads the R08 battery through the QRing-compatible BLE notification path after reconnect, refreshes it sparingly while connected, and overlays the latest reading next to the glasses battery on the Rokid launcher.
 
 The full CXR/Wireless Debugging pairing flow remains available under `Advanced → Recovery path` as a fallback for first-time setup or if the saved pairing expires. The multi-language Settings automator is only needed during first-time setup.
 
@@ -304,6 +307,7 @@ R08 Companion requests:
 - Stable mode is the recommended default.
 - Fast mode is optional launcher acceleration for devices where visual focus and launched app stay aligned.
 - Touch fallback exists for experimentation when media-key mode is not usable.
+- The app lets the ring's touch sleep timer work instead of sending an infinite wake command every few seconds, which keeps idle ring power use lower.
 - Native DPAD output was not observed in the tested `appType 0..7` range, so the app bridges media/touch outputs into navigation behavior.
 - The exact Hi Rokid two-finger shortcut is available through the bridge-backed `Hi Rokid Shortcut` action; without the bridge, normal APK permissions are not enough to emit the raw input event.
 - The app is designed for the Rokid glasses HUD, not a phone-first UI.
