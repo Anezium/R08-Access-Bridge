@@ -141,7 +141,7 @@ The phone connects to the saved endpoint using the already-authorized key pair. 
 
 **Battery note:** glasses Wi-Fi is enabled only for the duration of the re-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation.
 
-**Ring battery note:** the glasses app reads the R08 battery through the QRing-compatible BLE notification path after reconnect, refreshes it sparingly while connected, and overlays the latest reading next to the glasses battery on the Rokid launcher.
+**Ring battery note:** the glasses app reads the R08 battery through the QRing-compatible BLE notification path after reconnect and after real ring input, throttled to once every 4 minutes, then overlays the latest reading next to the glasses battery on the Rokid launcher.
 
 The full CXR/Wireless Debugging pairing flow remains available under `Advanced → Recovery path` as a fallback for first-time setup or if the saved pairing expires. The multi-language Settings automator is only needed during first-time setup.
 
@@ -214,7 +214,7 @@ Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.4.4.apk
+adb install -r R08-Access-Bridge-v1.4.5.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:

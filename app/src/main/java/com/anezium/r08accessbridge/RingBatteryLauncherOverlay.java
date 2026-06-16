@@ -210,7 +210,7 @@ final class RingBatteryLauncherOverlay {
         icon = new ImageView(service);
         icon.setImageResource(R.drawable.ic_ring_status);
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(14), dp(14));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(12), dp(12));
         root.addView(icon, iconParams);
 
         label = new TextView(service);

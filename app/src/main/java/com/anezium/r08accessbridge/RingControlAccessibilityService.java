@@ -555,6 +555,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         int launcherSteps = 1;
         if (command == RingCommand.ACTIVATE) {
             resetLauncherDirectionStreak();
+            requestBatteryAfterRingActivity(source);
             handleActivateTap(source, now);
             return;
         }
@@ -603,7 +604,15 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         } else {
             resetLauncherDirectionStreak();
         }
+        requestBatteryAfterRingActivity(source);
         execute(command, source, launcherSteps);
+    }
+
+    private void requestBatteryAfterRingActivity(String source) {
+        if (bleController == null || source == null || source.startsWith("adb")) {
+            return;
+        }
+        bleController.requestBatteryAfterRingActivity(source);
     }
 
     private int recordLauncherDirectionStreak(int command, long now) {

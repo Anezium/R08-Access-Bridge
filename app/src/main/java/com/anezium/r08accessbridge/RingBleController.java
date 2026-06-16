@@ -23,6 +23,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.lang.reflect.Method;
@@ -49,7 +50,7 @@ final class RingBleController {
     private static final int PACKET_SIZE = 16;
     private static final long SCAN_TIMEOUT_MS = 25_000L;
     private static final long RECONNECT_MS = 5_000L;
-    private static final long BATTERY_REFRESH_MS = 5 * 60_000L;
+    private static final long ACTIVITY_BATTERY_REFRESH_MS = 4 * 60_000L;
 
     private final Context context;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -67,23 +68,13 @@ final class RingBleController {
     private boolean writing;
     private boolean descriptorWriting;
     private boolean notificationsEnabled;
+    private long lastBatteryRequestAt;
 
     private final Runnable scanTimeout = () -> {
         if (scanning) {
             stopScan();
             Log.d(TAG, "R08 scan timed out");
             scheduleReconnect();
-        }
-    };
-
-    private final Runnable batteryRefresh = new Runnable() {
-        @Override
-        public void run() {
-            if (!started || !notificationsEnabled || writeCharacteristic == null) {
-                return;
-            }
-            requestBattery("refresh");
-            handler.postDelayed(this, BATTERY_REFRESH_MS);
         }
     };
 
@@ -266,6 +257,17 @@ final class RingBleController {
         requestBattery("manual");
     }
 
+    void requestBatteryAfterRingActivity(String source) {
+        long now = SystemClock.uptimeMillis();
+        long elapsed = now - lastBatteryRequestAt;
+        if (lastBatteryRequestAt > 0L && elapsed < ACTIVITY_BATTERY_REFRESH_MS) {
+            Log.d(TAG, "Battery request skipped after activity source=" + source
+                    + " elapsed=" + elapsed);
+            return;
+        }
+        requestBattery("activity:" + source);
+    }
+
     boolean forgetBondedR08() {
         ensureAdapter();
         stopScan();
@@ -346,7 +348,6 @@ final class RingBleController {
         configureCurrentMode();
         if (canReadBattery) {
             requestBattery("gatt_ready");
-            scheduleBatteryRefresh();
         }
     }
 
@@ -435,7 +436,6 @@ final class RingBleController {
     }
 
     private void closeGatt() {
-        handler.removeCallbacks(batteryRefresh);
         writeCharacteristic = null;
         descriptorWriting = false;
         notificationsEnabled = false;
@@ -528,12 +528,8 @@ final class RingBleController {
             return;
         }
         Log.d(TAG, "Requesting ring battery reason=" + reason);
+        lastBatteryRequestAt = SystemClock.uptimeMillis();
         enqueue(simpleCommand(OPCODE_BATTERY));
-    }
-
-    private void scheduleBatteryRefresh() {
-        handler.removeCallbacks(batteryRefresh);
-        handler.postDelayed(batteryRefresh, BATTERY_REFRESH_MS);
     }
 
     private void handleNotification(BluetoothGattCharacteristic characteristic, byte[] value) {

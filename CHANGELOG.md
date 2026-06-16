@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.4.5 - 2026-06-16
+
+### Ring battery and launcher polish
+
+- Stopped polling the R08 ring battery every 5 minutes; the app now reads battery on BLE connection and after real ring input, throttled to once every 4 minutes.
+- Reduced the launcher ring battery overlay icon from 14dp to 12dp.
+
 ## v1.4.4 - 2026-06-16
 
 ### No-bridge system controls
