@@ -43,6 +43,8 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 
 - Pairs or reconnects to an R08 ring over Bluetooth LE.
 - Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
+- Lets ring swipes adjust the Rokid volume screen directly without the privileged bridge.
+- Lets a single ring tap trigger a photo from the active Rokid camera page without the privileged bridge.
 - Enables Stable mode by default using R08 `appType 1`, which emits media key events.
 - Converts ring inputs into one-axis navigation suitable for Rokid glasses.
 - Uses Android Accessibility to move focus, scroll, click, inject launcher swipes, and perform Back.
@@ -212,7 +214,7 @@ Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.4.3.apk
+adb install -r R08-Access-Bridge-v1.4.4.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:

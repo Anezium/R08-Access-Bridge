@@ -1,7 +1,9 @@
 package com.anezium.r08accessbridge;
 
 import android.accessibilityservice.AccessibilityService;
+import android.content.Context;
 import android.graphics.Rect;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
@@ -16,6 +18,12 @@ import java.util.List;
 final class AccessibilityNavigator {
     private static final String TAG = "R08Navigator";
     private static final String ROKID_MANAGER_PACKAGE = "com.example.advancedsettingsmanager";
+    private static final String ROKID_LAUNCHER_PACKAGE = "com.rokid.os.sprite.launcher";
+    private static final String ROKID_ASSIST_PACKAGE = "com.rokid.os.sprite.assistserver";
+    private static final String ROKID_VOLUME_LAYOUT_ID =
+            ROKID_LAUNCHER_PACKAGE + ":id/main_focus_volume_layout";
+    private static final String ROKID_CAMERA_PREVIEW_ID =
+            ROKID_ASSIST_PACKAGE + ":id/preview_content_lay";
     private static final int MIN_NODE_SIZE = 6;
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
@@ -41,6 +49,9 @@ final class AccessibilityNavigator {
     }
 
     void moveForward(int launcherSteps) {
+        if (adjustRokidVolume(true)) {
+            return;
+        }
         if (launcherNavigator.isActive()) {
             launcherNavigator.move(true, launcherSteps);
             return;
@@ -68,6 +79,9 @@ final class AccessibilityNavigator {
     }
 
     void moveBackward(int launcherSteps) {
+        if (adjustRokidVolume(false)) {
+            return;
+        }
         if (launcherNavigator.isActive()) {
             launcherNavigator.move(false, launcherSteps);
             return;
@@ -91,6 +105,10 @@ final class AccessibilityNavigator {
     }
 
     void activate() {
+        if (isRokidCameraPageActive() && RokidSystemActions.takePhoto(service)) {
+            Log.d(TAG, "Requested Rokid camera capture from active camera page");
+            return;
+        }
         if (launcherNavigator.isActive() && launcherNavigator.activateCenter()) {
             return;
         }
@@ -176,6 +194,48 @@ final class AccessibilityNavigator {
         return root != null
                 && root.getPackageName() != null
                 && packageName.contentEquals(root.getPackageName());
+    }
+
+    private boolean adjustRokidVolume(boolean forward) {
+        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        if (!hasNodeWithViewId(root, ROKID_VOLUME_LAYOUT_ID)) {
+            return false;
+        }
+        AudioManager audioManager = (AudioManager) service.getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager == null) {
+            Log.w(TAG, "Rokid volume adjust skipped: AudioManager missing");
+            return false;
+        }
+        int direction = forward ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER;
+        try {
+            audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0);
+            Log.d(TAG, "Adjusted Rokid volume via AudioManager forward=" + forward);
+            return true;
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Rokid volume adjust failed", exception);
+            return false;
+        }
+    }
+
+    private boolean isRokidCameraPageActive() {
+        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        return root != null
+                && root.getPackageName() != null
+                && ROKID_ASSIST_PACKAGE.contentEquals(root.getPackageName())
+                && hasNodeWithViewId(root, ROKID_CAMERA_PREVIEW_ID);
+    }
+
+    private boolean hasNodeWithViewId(AccessibilityNodeInfo root, String viewId) {
+        if (root == null) {
+            return false;
+        }
+        try {
+            List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByViewId(viewId);
+            return matches != null && !matches.isEmpty();
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "View-id lookup failed id=" + viewId, exception);
+            return false;
+        }
     }
 
     private boolean needsStrongFocusFeedback() {

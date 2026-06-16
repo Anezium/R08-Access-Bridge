@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v1.4.4 - 2026-06-16
+
+### No-bridge system controls
+
+- Added direct volume adjustment on the Rokid volume screen using Android audio APIs, so ring swipes work without the privileged bridge.
+- Added single-tap capture from the active Rokid camera page using the normal Rokid photo scene command.
+
 ### Ring battery and power
 
 - Added QRing-compatible BLE notifications and battery parsing for the R08 ring.
