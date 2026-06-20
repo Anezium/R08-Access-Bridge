@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v1.4.6 - 2026-06-16
+
+### Launcher focus
+
+- Made launcher carousel navigation less timing- and layout-sensitive by deriving swipe distance from visible app spacing, using carousel-relative center targeting, and delaying center activation until queued launcher swipes settle.
+
 ## v1.4.5 - 2026-06-16
 
 ### Ring battery and launcher polish

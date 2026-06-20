@@ -25,7 +25,8 @@ final class LauncherNavigator {
     private static final float LAUNCHER_APP_STEP_FRACTION = 0.27f;
     private static final long LAUNCHER_APP_STEP_DURATION_MS = 220L;
     private static final long LAUNCHER_APP_BOOST_DURATION_MS = 260L;
-    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 45L;
+    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 120L;
+    private static final long LAUNCHER_APP_SETTLE_MS = 180L;
     private static final int MAX_LAUNCHER_BURST_STEPS = 3;
     private static final int MAX_LAUNCHER_QUEUED_STEPS = 6;
 
@@ -59,6 +60,9 @@ final class LauncherNavigator {
     }
 
     boolean activateCenter() {
+        if (postAfterLauncherQueueSettles(this::activateCenter)) {
+            return true;
+        }
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
             if (clickOrTapCenterNode(appRecycler, false)) {
@@ -92,6 +96,9 @@ final class LauncherNavigator {
     }
 
     boolean longPressCenter() {
+        if (postAfterLauncherQueueSettles(this::longPressCenter)) {
+            return true;
+        }
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
             if (clickOrTapCenterNode(appRecycler, true)) {
@@ -205,38 +212,68 @@ final class LauncherNavigator {
 
     private AccessibilityNodeInfo findClickableNearestScreenCenter(AccessibilityNodeInfo root) {
         ArrayList<AccessibilityNodeInfo> nodes = new ArrayList<>();
-        collectLauncherClickables(root, nodes, new TraversalBudget());
+        Rect searchBounds = new Rect();
+        if (root != null) {
+            root.getBoundsInScreen(searchBounds);
+        }
+        collectLauncherClickables(root, nodes, new TraversalBudget(), searchBounds);
         if (nodes.isEmpty()) {
             return null;
         }
         DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-        final float centerX = metrics.widthPixels / 2f;
+        final float centerX = searchBounds.isEmpty() ? metrics.widthPixels / 2f : searchBounds.centerX();
+        final float centerY = searchBounds.isEmpty()
+                ? metrics.heightPixels * 0.31f
+                : searchBounds.centerY();
         Collections.sort(nodes, (left, right) -> {
             Rect a = new Rect();
             Rect b = new Rect();
             left.getBoundsInScreen(a);
             right.getBoundsInScreen(b);
-            float da = Math.abs(a.centerX() - centerX) + Math.abs(a.centerY() - metrics.heightPixels * 0.31f) * 0.4f;
-            float db = Math.abs(b.centerX() - centerX) + Math.abs(b.centerY() - metrics.heightPixels * 0.31f) * 0.4f;
+            float da = Math.abs(a.centerX() - centerX) + Math.abs(a.centerY() - centerY) * 0.4f;
+            float db = Math.abs(b.centerX() - centerX) + Math.abs(b.centerY() - centerY) * 0.4f;
             return Float.compare(da, db);
         });
         return nodes.get(0);
     }
 
-    private void collectLauncherClickables(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> out, TraversalBudget budget) {
+    private void collectLauncherClickables(
+            AccessibilityNodeInfo node,
+            List<AccessibilityNodeInfo> out,
+            TraversalBudget budget,
+            Rect searchBounds
+    ) {
         if (node == null || budget.exhausted()) {
             return;
         }
         budget.visit();
+        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
         Rect rect = new Rect();
         node.getBoundsInScreen(rect);
-        boolean appBand = rect.centerY() >= 135 && rect.centerY() <= 270;
-        boolean iconLike = rect.width() >= 55 && rect.width() <= 130 && rect.height() >= 55 && rect.height() <= 130;
-        if (appBand && iconLike && node.isVisibleToUser() && node.isClickable() && node.isEnabled()) {
+        boolean inSearchBounds = searchBounds.isEmpty() || Rect.intersects(searchBounds, rect);
+        boolean appBand;
+        if (searchBounds.isEmpty()
+                || (searchBounds.width() > metrics.widthPixels * 0.80f
+                && searchBounds.height() > metrics.heightPixels * 0.80f)) {
+            appBand = rect.centerY() >= metrics.heightPixels * 0.21f
+                    && rect.centerY() <= metrics.heightPixels * 0.43f;
+        } else {
+            appBand = rect.centerY() >= searchBounds.top - 4
+                    && rect.centerY() <= searchBounds.bottom + 4;
+        }
+        float shortSide = Math.min(metrics.widthPixels, metrics.heightPixels);
+        float minIconSize = Math.max(40f, shortSide * 0.075f);
+        float maxIconWidth = Math.max(130f, metrics.widthPixels * 0.40f);
+        float maxIconHeight = Math.max(130f, metrics.heightPixels * 0.28f);
+        boolean iconLike = rect.width() >= minIconSize
+                && rect.width() <= maxIconWidth
+                && rect.height() >= minIconSize
+                && rect.height() <= maxIconHeight;
+        if (inSearchBounds && appBand && iconLike && node.isVisibleToUser() && node.isClickable() && node.isEnabled()) {
             out.add(node);
         }
         for (int i = 0; i < node.getChildCount(); i++) {
-            collectLauncherClickables(node.getChild(i), out, budget);
+            collectLauncherClickables(node.getChild(i), out, budget, searchBounds);
         }
     }
 
@@ -317,7 +354,10 @@ final class LauncherNavigator {
         int burstSteps = Math.min(MAX_LAUNCHER_BURST_STEPS, queuedLauncherSteps);
         queuedLauncherSteps -= burstSteps;
         launcherStepInFlight = true;
-        launcherStepReleaseAt = SystemClock.uptimeMillis() + stepDuration(burstSteps) + LAUNCHER_APP_STEP_QUEUE_GAP_MS;
+        launcherStepReleaseAt = SystemClock.uptimeMillis()
+                + stepDuration(burstSteps)
+                + LAUNCHER_APP_SETTLE_MS
+                + LAUNCHER_APP_STEP_QUEUE_GAP_MS;
         boolean submitted = dispatchLauncherAppSwipe(appRecycler, forward, burstSteps, new GestureResultCallback() {
             @Override
             public void onCompleted(GestureDescription gestureDescription) {
@@ -334,7 +374,8 @@ final class LauncherNavigator {
             launcherStepReleaseAt = 0L;
             queuedLauncherSteps = 0;
         } else {
-            mainHandler.postDelayed(this::finishLauncherQueuedStep, stepDuration(burstSteps) + 420L);
+            mainHandler.postDelayed(this::finishLauncherQueuedStep,
+                    stepDuration(burstSteps) + LAUNCHER_APP_SETTLE_MS + 420L);
         }
     }
 
@@ -368,7 +409,7 @@ final class LauncherNavigator {
         float right = bounds.isEmpty() ? metrics.widthPixels * 0.92f : bounds.right;
         float width = right - left;
         float centerX = (left + right) * 0.5f;
-        float singleStep = Math.max(metrics.widthPixels * 0.18f, width * LAUNCHER_APP_STEP_FRACTION);
+        float singleStep = launcherStepDistance(appRecycler, bounds, metrics);
         float distance = Math.min(width * 0.88f, singleStep * Math.max(1, steps));
         float startX = forward ? centerX + distance * 0.5f : centerX - distance * 0.5f;
         float endX = forward ? centerX - distance * 0.5f : centerX + distance * 0.5f;
@@ -390,6 +431,59 @@ final class LauncherNavigator {
                 + " distance=" + distance
                 + " y=" + y);
         return submitted;
+    }
+
+    private float launcherStepDistance(
+            AccessibilityNodeInfo appRecycler,
+            Rect recyclerBounds,
+            DisplayMetrics metrics
+    ) {
+        float fallbackWidth = recyclerBounds.isEmpty()
+                ? metrics.widthPixels * 0.84f
+                : recyclerBounds.width();
+        ArrayList<AccessibilityNodeInfo> nodes = new ArrayList<>();
+        collectLauncherClickables(appRecycler, nodes, new TraversalBudget(), recyclerBounds);
+        ArrayList<Integer> centers = new ArrayList<>();
+        for (AccessibilityNodeInfo node : nodes) {
+            Rect rect = new Rect();
+            node.getBoundsInScreen(rect);
+            if (!rect.isEmpty()) {
+                centers.add(rect.centerX());
+            }
+        }
+        Collections.sort(centers);
+        int bestGap = 0;
+        int previousCenter = -1;
+        for (int center : centers) {
+            if (previousCenter >= 0) {
+                int gap = center - previousCenter;
+                if (gap > metrics.widthPixels * 0.04f
+                        && (bestGap == 0 || gap < bestGap)) {
+                    bestGap = gap;
+                }
+            }
+            previousCenter = center;
+        }
+        if (bestGap > 0) {
+            float estimated = bestGap * 1.12f;
+            return Math.max(fallbackWidth * 0.16f, Math.min(fallbackWidth * 0.34f, estimated));
+        }
+        return Math.max(metrics.widthPixels * 0.18f, fallbackWidth * LAUNCHER_APP_STEP_FRACTION);
+    }
+
+    private boolean postAfterLauncherQueueSettles(Runnable action) {
+        if (!launcherStepInFlight && queuedLauncherSteps <= 0) {
+            return false;
+        }
+        long now = SystemClock.uptimeMillis();
+        long waitMs = Math.max(LAUNCHER_APP_SETTLE_MS, launcherStepReleaseAt - now);
+        waitMs += queuedLauncherSteps
+                * (LAUNCHER_APP_BOOST_DURATION_MS + LAUNCHER_APP_SETTLE_MS + LAUNCHER_APP_STEP_QUEUE_GAP_MS);
+        mainHandler.postDelayed(action, Math.min(waitMs, 1500L));
+        Log.d(TAG, "Delayed launcher center action waitMs=" + waitMs
+                + " inFlight=" + launcherStepInFlight
+                + " queuedSteps=" + queuedLauncherSteps);
+        return true;
     }
 
     private long stepDuration(int steps) {

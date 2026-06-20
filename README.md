@@ -203,18 +203,20 @@ Download the APKs from the GitHub Releases page:
 
 [R08 Access Bridge releases](https://github.com/Anezium/R08-Access-Bridge/releases)
 
-### Important: update the ring first
+### Important: update and disconnect the ring first
 
 Before pairing the ring with R08 Access Bridge, connect it to the official R08 Ring app and let the official app install any available ring firmware update.
 
 This matters for Stable mode / R08 `appType 1`: before the ring firmware update, `appType 1` may only emit swipe / previous / next input. Tap and double-tap Back may not work at all. After updating the ring in the official app, disconnect it there, then reconnect it in R08 Access Bridge so Stable mode exposes the expected swipe, tap, and Back behavior.
+
+After the firmware update, unbind or disconnect the ring from the official phone app before pairing it on the glasses. If the ring remains connected to the phone, the glasses may only see normal media-key behavior and R08 Access Bridge may not take over. If pairing still behaves oddly, forget the R08 ring from the phone's Bluetooth settings, or temporarily turn phone Bluetooth off while selecting `Pair / Reconnect` on the glasses.
 
 Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.4.5.apk
+adb install -r R08-Access-Bridge-v1.4.6.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
@@ -229,10 +231,11 @@ After installing the glasses APK:
 2. Grant Bluetooth permissions if Android asks.
 3. Open `System` -> `Accessibility`.
 4. Enable the `R08 Access Bridge` accessibility service.
-5. Return to the app and select `Pair / Reconnect`.
-6. Keep the R08 ring nearby and allow pairing if Android asks.
-7. Stay in `Stable mode` for the safest launcher behavior, or use `Ring modes` -> `Fast mode` if you want launcher acceleration.
-8. For the exact Hi Rokid shortcut on quadruple tap, arm the bridge from the phone companion or the PC helper.
+5. On the phone, unbind/disconnect the ring from the official R08 Ring app. If needed, forget it from phone Bluetooth.
+6. Return to the glasses app and select `Pair / Reconnect`.
+7. Keep the R08 ring nearby and allow pairing if Android asks.
+8. Stay in `Stable mode` for the safest launcher behavior, or use `Ring modes` -> `Fast mode` if you want launcher acceleration.
+9. For the exact Hi Rokid shortcut on quadruple tap, arm the bridge from the phone companion or the PC helper.
 
 After installing the companion APK:
 
