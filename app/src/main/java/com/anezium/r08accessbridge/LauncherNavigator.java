@@ -28,19 +28,25 @@ final class LauncherNavigator {
     private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 120L;
     private static final long LAUNCHER_APP_SETTLE_MS = 180L;
     private static final int MAX_LAUNCHER_BURST_STEPS = 3;
-    private static final int MAX_LAUNCHER_QUEUED_STEPS = 6;
+    private static final int MAX_LAUNCHER_QUEUED_STEPS = 3;
+    private static final int PENDING_CENTER_ACTION_NONE = 0;
+    private static final int PENDING_CENTER_ACTION_ACTIVATE = 1;
+    private static final int PENDING_CENTER_ACTION_LONG_PRESS = 2;
 
     private final RingControlAccessibilityService service;
     private final GestureDispatcher gestures;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable pendingCenterActionRunnable;
     private int queuedLauncherSteps;
     private boolean queuedLauncherForward;
     private boolean launcherStepInFlight;
     private long launcherStepReleaseAt;
+    private int pendingCenterAction = PENDING_CENTER_ACTION_NONE;
 
     LauncherNavigator(RingControlAccessibilityService service, GestureDispatcher gestures) {
         this.service = service;
         this.gestures = gestures;
+        pendingCenterActionRunnable = this::runPendingCenterAction;
     }
 
     boolean isActive() {
@@ -51,6 +57,7 @@ final class LauncherNavigator {
     }
 
     void move(boolean forward, int steps) {
+        cancelPendingCenterAction();
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
             enqueueLauncherAppSwipes(forward, steps);
@@ -60,48 +67,26 @@ final class LauncherNavigator {
     }
 
     boolean activateCenter() {
-        if (postAfterLauncherQueueSettles(this::activateCenter)) {
+        if (postCenterActionWhenSettled(PENDING_CENTER_ACTION_ACTIVATE)) {
             return true;
         }
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            if (clickOrTapCenterNode(appRecycler, false)) {
-                return true;
-            }
-        }
-
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        AccessibilityNodeInfo target = findClickableNearestScreenCenter(root);
-        if (target == null) {
-            target = findFocusedClickable(root);
-        }
-        if (target == null) {
-            DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            gestures.tap(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
-            return true;
-        }
-        if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            Rect rect = new Rect();
-            target.getBoundsInScreen(rect);
-            Log.d(TAG, "Clicked launcher center bounds=" + rect);
-            return true;
-        }
-        Rect rect = new Rect();
-        target.getBoundsInScreen(rect);
-        if (!rect.isEmpty()) {
-            gestures.tap(rect.centerX(), rect.centerY());
-            return true;
-        }
-        return false;
+        return performCenterAction(false);
     }
 
     boolean longPressCenter() {
-        if (postAfterLauncherQueueSettles(this::longPressCenter)) {
+        if (postCenterActionWhenSettled(PENDING_CENTER_ACTION_LONG_PRESS)) {
             return true;
+        }
+        return performCenterAction(true);
+    }
+
+    private boolean performCenterAction(boolean longPress) {
+        if (!isActive()) {
+            return false;
         }
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            if (clickOrTapCenterNode(appRecycler, true)) {
+            if (clickOrTapCenterNode(appRecycler, longPress)) {
                 return true;
             }
         }
@@ -113,19 +98,30 @@ final class LauncherNavigator {
         }
         if (target == null) {
             DisplayMetrics metrics = service.getResources().getDisplayMetrics();
-            gestures.longPress(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
+            if (longPress) {
+                gestures.longPress(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
+            } else {
+                gestures.tap(metrics.widthPixels / 2f, metrics.heightPixels * 0.32f);
+            }
             return true;
         }
-        if (target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+        int action = longPress
+                ? AccessibilityNodeInfo.ACTION_LONG_CLICK
+                : AccessibilityNodeInfo.ACTION_CLICK;
+        if (target.performAction(action)) {
             Rect rect = new Rect();
             target.getBoundsInScreen(rect);
-            Log.d(TAG, "Long-clicked launcher center bounds=" + rect);
+            Log.d(TAG, (longPress ? "Long-clicked" : "Clicked") + " launcher center bounds=" + rect);
             return true;
         }
         Rect rect = new Rect();
         target.getBoundsInScreen(rect);
         if (!rect.isEmpty()) {
-            gestures.longPress(rect.centerX(), rect.centerY());
+            if (longPress) {
+                gestures.longPress(rect.centerX(), rect.centerY());
+            } else {
+                gestures.tap(rect.centerX(), rect.centerY());
+            }
             return true;
         }
         return false;
@@ -337,7 +333,13 @@ final class LauncherNavigator {
             queuedLauncherSteps = 0;
         }
         queuedLauncherForward = forward;
-        queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
+        if (launcherStepInFlight) {
+            queuedLauncherSteps = Math.min(
+                    MAX_LAUNCHER_QUEUED_STEPS,
+                    Math.max(queuedLauncherSteps, safeSteps));
+        } else {
+            queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
+        }
         drainLauncherQueue();
     }
 
@@ -471,19 +473,64 @@ final class LauncherNavigator {
         return Math.max(metrics.widthPixels * 0.18f, fallbackWidth * LAUNCHER_APP_STEP_FRACTION);
     }
 
-    private boolean postAfterLauncherQueueSettles(Runnable action) {
-        if (!launcherStepInFlight && queuedLauncherSteps <= 0) {
+    private boolean postCenterActionWhenSettled(int action) {
+        long delayMs = launcherCenterActionDelayMs();
+        if (delayMs <= 0L) {
             return false;
         }
-        long now = SystemClock.uptimeMillis();
-        long waitMs = Math.max(LAUNCHER_APP_SETTLE_MS, launcherStepReleaseAt - now);
-        waitMs += queuedLauncherSteps
-                * (LAUNCHER_APP_BOOST_DURATION_MS + LAUNCHER_APP_SETTLE_MS + LAUNCHER_APP_STEP_QUEUE_GAP_MS);
-        mainHandler.postDelayed(action, Math.min(waitMs, 1500L));
-        Log.d(TAG, "Delayed launcher center action waitMs=" + waitMs
+        pendingCenterAction = action;
+        mainHandler.removeCallbacks(pendingCenterActionRunnable);
+        mainHandler.postDelayed(pendingCenterActionRunnable, Math.min(delayMs, 1500L));
+        Log.d(TAG, "Delayed launcher center action action=" + action
+                + " delayMs=" + delayMs
                 + " inFlight=" + launcherStepInFlight
                 + " queuedSteps=" + queuedLauncherSteps);
         return true;
+    }
+
+    private void runPendingCenterAction() {
+        int action = pendingCenterAction;
+        if (action == PENDING_CENTER_ACTION_NONE) {
+            return;
+        }
+        long delayMs = launcherCenterActionDelayMs();
+        if (delayMs > 0L) {
+            mainHandler.postDelayed(pendingCenterActionRunnable, Math.min(delayMs, 1500L));
+            return;
+        }
+        pendingCenterAction = PENDING_CENTER_ACTION_NONE;
+        performCenterAction(action == PENDING_CENTER_ACTION_LONG_PRESS);
+    }
+
+    private void cancelPendingCenterAction() {
+        if (pendingCenterAction == PENDING_CENTER_ACTION_NONE) {
+            return;
+        }
+        pendingCenterAction = PENDING_CENTER_ACTION_NONE;
+        mainHandler.removeCallbacks(pendingCenterActionRunnable);
+        Log.d(TAG, "Cancelled pending launcher center action because launcher moved again");
+    }
+
+    private long launcherCenterActionDelayMs() {
+        long delayMs = 0L;
+        if (launcherStepInFlight) {
+            delayMs += Math.max(0L, launcherStepReleaseAt - SystemClock.uptimeMillis());
+        }
+        delayMs += queuedStepsDurationMs(queuedLauncherSteps);
+        return delayMs;
+    }
+
+    private long queuedStepsDurationMs(int steps) {
+        long totalMs = 0L;
+        int remaining = steps;
+        while (remaining > 0) {
+            int burstSteps = Math.min(MAX_LAUNCHER_BURST_STEPS, remaining);
+            totalMs += LAUNCHER_APP_STEP_QUEUE_GAP_MS
+                    + stepDuration(burstSteps)
+                    + LAUNCHER_APP_SETTLE_MS;
+            remaining -= burstSteps;
+        }
+        return totalMs;
     }
 
     private long stepDuration(int steps) {

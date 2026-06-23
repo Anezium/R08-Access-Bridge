@@ -49,7 +49,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private static final String TAG = "R08Bridge";
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
-    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 190L;
+    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 260L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;
