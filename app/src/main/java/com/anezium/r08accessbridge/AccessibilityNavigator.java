@@ -35,6 +35,7 @@ final class AccessibilityNavigator {
     private final LauncherNavigator launcherNavigator;
     private final ReaderaCompatibility readeraCompatibility;
     private final ArbookCompatibility arbookCompatibility;
+    private final NewPipeCompatibility newPipeCompatibility;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
@@ -42,6 +43,7 @@ final class AccessibilityNavigator {
         launcherNavigator = new LauncherNavigator(service, gestures);
         readeraCompatibility = new ReaderaCompatibility(service, gestures);
         arbookCompatibility = new ArbookCompatibility(service, gestures);
+        newPipeCompatibility = new NewPipeCompatibility(service);
     }
 
     void moveForward() {
@@ -60,6 +62,9 @@ final class AccessibilityNavigator {
             return;
         }
         if (arbookCompatibility.move(true)) {
+            return;
+        }
+        if (newPipeCompatibility.move(true)) {
             return;
         }
         if (adjustFocusedRange(true)) {
@@ -92,6 +97,9 @@ final class AccessibilityNavigator {
         if (arbookCompatibility.move(false)) {
             return;
         }
+        if (newPipeCompatibility.move(false)) {
+            return;
+        }
         if (adjustFocusedRange(false)) {
             return;
         }
@@ -116,6 +124,9 @@ final class AccessibilityNavigator {
             return;
         }
         if (arbookCompatibility.activate()) {
+            return;
+        }
+        if (newPipeCompatibility.activate()) {
             return;
         }
         AccessibilityNodeInfo current = findCurrentFocus();

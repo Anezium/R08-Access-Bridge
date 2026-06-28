@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v1.4.7 - 2026-06-28
+
+### App compatibility
+
+- Added NewPipe Rokid build compatibility by forwarding ring navigation commands to NewPipe's own single-axis navigator when it is the active app.
+
+### Launcher focus
+
+- Promoted the v1.4.7 preview launcher focus tuning to stable, with tighter queued swipe limits and delayed center actions that keep tap and long-press activation aligned after carousel movement.
+
 ## v1.4.6 - 2026-06-16
 
 ### Launcher focus
