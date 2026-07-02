@@ -8,6 +8,10 @@ import static android.content.Context.MODE_PRIVATE;
 final class RingActionMappings {
     private static final String PREF_TRIPLE_TAP_ACTION = "triple_tap_action";
     private static final String PREF_QUADRUPLE_TAP_ACTION = "quadruple_tap_action";
+    private static final String PREF_ONE_TAP_SWIPE_UP_ACTION = "one_tap_swipe_up_action";
+    private static final String PREF_ONE_TAP_SWIPE_DOWN_ACTION = "one_tap_swipe_down_action";
+    private static final String PREF_TWO_TAP_SWIPE_UP_ACTION = "two_tap_swipe_up_action";
+    private static final String PREF_TWO_TAP_SWIPE_DOWN_ACTION = "two_tap_swipe_down_action";
     private static final String PREF_VIDEO_RECORDING_REQUESTED = "video_recording_requested";
     private static final String PREF_VIDEO_RECORDING_REQUESTED_AT = "video_recording_requested_at";
     private static final String PREF_AR_RECORDING_REQUESTED = "ar_recording_requested";
@@ -27,12 +31,38 @@ final class RingActionMappings {
         return get(context, PREF_QUADRUPLE_TAP_ACTION, RingTapAction.HI_ROKID_SHORTCUT);
     }
 
+    static RingTapAction oneTapSwipeUp(Context context) {
+        return get(context, PREF_ONE_TAP_SWIPE_UP_ACTION, RingTapAction.NONE);
+    }
+
+    static RingTapAction oneTapSwipeDown(Context context) {
+        return get(context, PREF_ONE_TAP_SWIPE_DOWN_ACTION, RingTapAction.NONE);
+    }
+
+    static RingTapAction twoTapSwipeUp(Context context) {
+        return get(context, PREF_TWO_TAP_SWIPE_UP_ACTION, RingTapAction.NONE);
+    }
+
+    static RingTapAction twoTapSwipeDown(Context context) {
+        return get(context, PREF_TWO_TAP_SWIPE_DOWN_ACTION, RingTapAction.NONE);
+    }
+
     static RingTapAction forTapCount(Context context, int tapCount) {
         if (tapCount >= 4) {
             return quadrupleTap(context);
         }
         if (tapCount == 3) {
             return tripleTap(context);
+        }
+        return RingTapAction.NONE;
+    }
+
+    static RingTapAction forTapSwipe(Context context, int tapCount, boolean swipeUp) {
+        if (tapCount == 1) {
+            return swipeUp ? oneTapSwipeUp(context) : oneTapSwipeDown(context);
+        }
+        if (tapCount == 2) {
+            return swipeUp ? twoTapSwipeUp(context) : twoTapSwipeDown(context);
         }
         return RingTapAction.NONE;
     }
@@ -58,6 +88,22 @@ final class RingActionMappings {
 
     static void setQuadrupleTap(Context context, RingTapAction action) {
         set(context, PREF_QUADRUPLE_TAP_ACTION, action);
+    }
+
+    static void setOneTapSwipeUp(Context context, RingTapAction action) {
+        set(context, PREF_ONE_TAP_SWIPE_UP_ACTION, action);
+    }
+
+    static void setOneTapSwipeDown(Context context, RingTapAction action) {
+        set(context, PREF_ONE_TAP_SWIPE_DOWN_ACTION, action);
+    }
+
+    static void setTwoTapSwipeUp(Context context, RingTapAction action) {
+        set(context, PREF_TWO_TAP_SWIPE_UP_ACTION, action);
+    }
+
+    static void setTwoTapSwipeDown(Context context, RingTapAction action) {
+        set(context, PREF_TWO_TAP_SWIPE_DOWN_ACTION, action);
     }
 
     static boolean isVideoRecordingRequested(Context context) {

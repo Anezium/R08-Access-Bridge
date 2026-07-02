@@ -185,6 +185,22 @@ public final class MainActivity extends Activity {
         navigateTo(Screen.QUADRUPLE_TAP_MAPPING);
     }
 
+    private void showOneTapSwipeUpMapping() {
+        navigateTo(Screen.ONE_TAP_SWIPE_UP_MAPPING);
+    }
+
+    private void showOneTapSwipeDownMapping() {
+        navigateTo(Screen.ONE_TAP_SWIPE_DOWN_MAPPING);
+    }
+
+    private void showTwoTapSwipeUpMapping() {
+        navigateTo(Screen.TWO_TAP_SWIPE_UP_MAPPING);
+    }
+
+    private void showTwoTapSwipeDownMapping() {
+        navigateTo(Screen.TWO_TAP_SWIPE_DOWN_MAPPING);
+    }
+
     private void showSystem() {
         navigateTo(Screen.SYSTEM);
     }
@@ -246,12 +262,32 @@ public final class MainActivity extends Activity {
                         v -> showTripleTapMapping());
                 action(getString(R.string.action_quadruple_tap), mappingSummary(RingActionMappings.quadrupleTap(this)),
                         v -> showQuadrupleTapMapping());
+                action(getString(R.string.action_one_tap_swipe_up), mappingSummary(RingActionMappings.oneTapSwipeUp(this)),
+                        v -> showOneTapSwipeUpMapping());
+                action(getString(R.string.action_one_tap_swipe_down), mappingSummary(RingActionMappings.oneTapSwipeDown(this)),
+                        v -> showOneTapSwipeDownMapping());
+                action(getString(R.string.action_two_tap_swipe_up), mappingSummary(RingActionMappings.twoTapSwipeUp(this)),
+                        v -> showTwoTapSwipeUpMapping());
+                action(getString(R.string.action_two_tap_swipe_down), mappingSummary(RingActionMappings.twoTapSwipeDown(this)),
+                        v -> showTwoTapSwipeDownMapping());
                 break;
             case TRIPLE_TAP_MAPPING:
-                addMappingActions(true);
+                addMappingActions(MappingTarget.TRIPLE_TAP);
                 break;
             case QUADRUPLE_TAP_MAPPING:
-                addMappingActions(false);
+                addMappingActions(MappingTarget.QUADRUPLE_TAP);
+                break;
+            case ONE_TAP_SWIPE_UP_MAPPING:
+                addMappingActions(MappingTarget.ONE_TAP_SWIPE_UP);
+                break;
+            case ONE_TAP_SWIPE_DOWN_MAPPING:
+                addMappingActions(MappingTarget.ONE_TAP_SWIPE_DOWN);
+                break;
+            case TWO_TAP_SWIPE_UP_MAPPING:
+                addMappingActions(MappingTarget.TWO_TAP_SWIPE_UP);
+                break;
+            case TWO_TAP_SWIPE_DOWN_MAPPING:
+                addMappingActions(MappingTarget.TWO_TAP_SWIPE_DOWN);
                 break;
             case SYSTEM:
                 action(R.string.action_accessibility, R.string.detail_accessibility,
@@ -328,6 +364,14 @@ public final class MainActivity extends Activity {
                 return getString(R.string.title_triple_tap);
             case QUADRUPLE_TAP_MAPPING:
                 return getString(R.string.title_quadruple_tap);
+            case ONE_TAP_SWIPE_UP_MAPPING:
+                return getString(R.string.title_one_tap_swipe_up);
+            case ONE_TAP_SWIPE_DOWN_MAPPING:
+                return getString(R.string.title_one_tap_swipe_down);
+            case TWO_TAP_SWIPE_UP_MAPPING:
+                return getString(R.string.title_two_tap_swipe_up);
+            case TWO_TAP_SWIPE_DOWN_MAPPING:
+                return getString(R.string.title_two_tap_swipe_down);
             case SYSTEM:
                 return getString(R.string.title_system);
             case FORGET_CONFIRM:
@@ -352,6 +396,10 @@ public final class MainActivity extends Activity {
                 return getString(R.string.status_mapping, service);
             case TRIPLE_TAP_MAPPING:
             case QUADRUPLE_TAP_MAPPING:
+            case ONE_TAP_SWIPE_UP_MAPPING:
+            case ONE_TAP_SWIPE_DOWN_MAPPING:
+            case TWO_TAP_SWIPE_UP_MAPPING:
+            case TWO_TAP_SWIPE_DOWN_MAPPING:
                 return getString(R.string.status_mapping_select, service);
             case SYSTEM:
                 return getString(R.string.status_system, service);
@@ -398,15 +446,32 @@ public final class MainActivity extends Activity {
         render();
     }
 
-    private void addMappingActions(boolean tripleTap) {
-        RingTapAction selected = tripleTap
-                ? RingActionMappings.tripleTap(this)
-                : RingActionMappings.quadrupleTap(this);
+    private void addMappingActions(MappingTarget target) {
+        RingTapAction selected = actionForMapping(target);
         for (RingTapAction action : RingTapAction.values()) {
             String detail = action == selected
                     ? getString(R.string.detail_mapping_selected, action.detail())
                     : action.detail();
-            action(action.title(), detail, v -> saveMapping(tripleTap, action));
+            action(action.title(), detail, v -> saveMapping(target, action));
+        }
+    }
+
+    private RingTapAction actionForMapping(MappingTarget target) {
+        switch (target) {
+            case TRIPLE_TAP:
+                return RingActionMappings.tripleTap(this);
+            case QUADRUPLE_TAP:
+                return RingActionMappings.quadrupleTap(this);
+            case ONE_TAP_SWIPE_UP:
+                return RingActionMappings.oneTapSwipeUp(this);
+            case ONE_TAP_SWIPE_DOWN:
+                return RingActionMappings.oneTapSwipeDown(this);
+            case TWO_TAP_SWIPE_UP:
+                return RingActionMappings.twoTapSwipeUp(this);
+            case TWO_TAP_SWIPE_DOWN:
+                return RingActionMappings.twoTapSwipeDown(this);
+            default:
+                return RingTapAction.NONE;
         }
     }
 
@@ -418,11 +483,28 @@ public final class MainActivity extends Activity {
         return getString(R.string.detail_mapping_current, action.title());
     }
 
-    private void saveMapping(boolean tripleTap, RingTapAction action) {
-        if (tripleTap) {
-            RingActionMappings.setTripleTap(this, action);
-        } else {
-            RingActionMappings.setQuadrupleTap(this, action);
+    private void saveMapping(MappingTarget target, RingTapAction action) {
+        switch (target) {
+            case TRIPLE_TAP:
+                RingActionMappings.setTripleTap(this, action);
+                break;
+            case QUADRUPLE_TAP:
+                RingActionMappings.setQuadrupleTap(this, action);
+                break;
+            case ONE_TAP_SWIPE_UP:
+                RingActionMappings.setOneTapSwipeUp(this, action);
+                break;
+            case ONE_TAP_SWIPE_DOWN:
+                RingActionMappings.setOneTapSwipeDown(this, action);
+                break;
+            case TWO_TAP_SWIPE_UP:
+                RingActionMappings.setTwoTapSwipeUp(this, action);
+                break;
+            case TWO_TAP_SWIPE_DOWN:
+                RingActionMappings.setTwoTapSwipeDown(this, action);
+                break;
+            default:
+                break;
         }
         Toast.makeText(this, getString(R.string.toast_mapping_saved, action.title()), Toast.LENGTH_SHORT).show();
         navigateBack();
@@ -794,12 +876,25 @@ public final class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private enum MappingTarget {
+        TRIPLE_TAP,
+        QUADRUPLE_TAP,
+        ONE_TAP_SWIPE_UP,
+        ONE_TAP_SWIPE_DOWN,
+        TWO_TAP_SWIPE_UP,
+        TWO_TAP_SWIPE_DOWN
+    }
+
     private enum Screen {
         HOME,
         MODES,
         MAPPING,
         TRIPLE_TAP_MAPPING,
         QUADRUPLE_TAP_MAPPING,
+        ONE_TAP_SWIPE_UP_MAPPING,
+        ONE_TAP_SWIPE_DOWN_MAPPING,
+        TWO_TAP_SWIPE_UP_MAPPING,
+        TWO_TAP_SWIPE_DOWN_MAPPING,
         SYSTEM,
         FORGET_CONFIRM,
         PROBE

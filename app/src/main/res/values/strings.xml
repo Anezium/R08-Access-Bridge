@@ -8,6 +8,10 @@
     <string name="title_mapping">Action Mapping</string>
     <string name="title_triple_tap">Triple Tap</string>
     <string name="title_quadruple_tap">Quadruple Tap</string>
+    <string name="title_one_tap_swipe_up">1 Tap + Swipe Up</string>
+    <string name="title_one_tap_swipe_down">1 Tap + Swipe Down</string>
+    <string name="title_two_tap_swipe_up">2 Taps + Swipe Up</string>
+    <string name="title_two_tap_swipe_down">2 Taps + Swipe Down</string>
     <string name="title_system">System</string>
     <string name="title_forget_confirm">Forget R08?</string>
     <string name="title_probe_app_type">AppType Probe</string>
@@ -27,7 +31,7 @@
     <string name="action_modes">Ring modes</string>
     <string name="detail_modes">Choose stable, fast, or touch input</string>
     <string name="action_mapping">Action mapping</string>
-    <string name="detail_mapping">Choose triple and quadruple tap actions</string>
+    <string name="detail_mapping">Choose tap and tap+swipe actions</string>
     <string name="action_system">System</string>
     <string name="detail_system">Accessibility, settings, forget</string>
 
@@ -52,6 +56,10 @@
     <string name="detail_mode_active">Active</string>
     <string name="action_triple_tap">Triple Tap</string>
     <string name="action_quadruple_tap">Quadruple Tap</string>
+    <string name="action_one_tap_swipe_up">1 Tap + Swipe Up</string>
+    <string name="action_one_tap_swipe_down">1 Tap + Swipe Down</string>
+    <string name="action_two_tap_swipe_up">2 Taps + Swipe Up</string>
+    <string name="action_two_tap_swipe_down">2 Taps + Swipe Down</string>
     <string name="detail_mapping_current">Current: %1$s</string>
     <string name="detail_mapping_current_bridge">Current: %1$s - %2$s</string>
     <string name="detail_mapping_selected">Selected - %1$s</string>

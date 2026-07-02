@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -41,11 +42,13 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_ACTIVATE = "activate";
     public static final String COMMAND_BACK = "back";
     public static final String COMMAND_LONG_PRESS = "long_press";
+    public static final String COMMAND_DEBUG_KEY = "debug_key";
     public static final String COMMAND_START_WIRELESS_DEBUG_SETUP = "start_wireless_debug_setup";
     public static final String COMMAND_ENABLE_WIFI_FLOW = "enable_wifi_flow";
     public static final String EXTRA_REARM_REPLY_ID = "rearm_reply_id";
     public static final String EXTRA_APP_TYPE = "app_type";
     public static final String EXTRA_ENABLED = "enabled";
+    public static final String EXTRA_KEY_CODE = "key_code";
 
     private static final String TAG = "R08Bridge";
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
@@ -134,6 +137,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 executeDebounced(RingCommand.BACK, "adb", 0L, 0L);
             } else if (COMMAND_LONG_PRESS.equals(command)) {
                 executeDebounced(RingCommand.LONG_PRESS, "adb", 0L, 0L);
+            } else if (isDebuggable() && COMMAND_DEBUG_KEY.equals(command)) {
+                handleDebugKey(intent.getIntExtra(EXTRA_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN));
             } else if (COMMAND_START_WIRELESS_DEBUG_SETUP.equals(command)) {
                 requestWirelessDebugSetup(context);
             } else if (COMMAND_ENABLE_WIFI_FLOW.equals(command)) {
@@ -243,6 +248,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        AccessibilityWindowRoots.noteEvent(event, getPackageName());
         if (wirelessDebuggingSetupAutomator != null) {
             wirelessDebuggingSetupAutomator.onAccessibilityEvent(event);
         }
@@ -358,8 +364,28 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 + " eventTime=" + event.getEventTime()
                 + " scan=" + event.getScanCode()
                 + " flags=" + event.getFlags());
-        executeDebounced(command, "key:" + event.getKeyCode(), event.getDownTime(), event.getEventTime());
+        String source = "key:" + event.getKeyCode();
+        if (handlePendingTapSwipeCombo(event.getKeyCode(), source)) {
+            return true;
+        }
+        executeDebounced(command, source, event.getDownTime(), event.getEventTime());
         return true;
+    }
+
+    private void handleDebugKey(int keyCode) {
+        int command = commandForKey(keyCode);
+        if (command == RingCommand.NONE) {
+            Log.d(TAG, "Consumed unmapped debug key=" + keyCode);
+            return;
+        }
+        String source = "adb-key:" + keyCode;
+        Log.d(TAG, "R08 key detail code=" + keyCode
+                + " downTime=0 eventTime=" + SystemClock.uptimeMillis()
+                + " scan=0 flags=0 synthetic=adb");
+        if (handlePendingTapSwipeCombo(keyCode, source)) {
+            return;
+        }
+        executeDebounced(command, source, 0L, 0L);
     }
 
     @Override
@@ -644,13 +670,18 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     }
 
     private int maxTapCountForCurrentMapping() {
-        if (RingActionMappings.quadrupleTap(this) != RingTapAction.NONE) {
-            return 4;
+        int maxTapCount = 2;
+        if (RingActionMappings.twoTapSwipeUp(this) != RingTapAction.NONE
+                || RingActionMappings.twoTapSwipeDown(this) != RingTapAction.NONE) {
+            maxTapCount = 3;
         }
         if (RingActionMappings.tripleTap(this) != RingTapAction.NONE) {
-            return 3;
+            maxTapCount = Math.max(maxTapCount, 3);
         }
-        return 2;
+        if (RingActionMappings.quadrupleTap(this) != RingTapAction.NONE) {
+            maxTapCount = 4;
+        }
+        return maxTapCount;
     }
 
     private void resolveTapGesture(String source, int tapCount) {
@@ -671,15 +702,64 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         executeTapAction(action, source + ":" + tapName + "Tap", safeTapCount);
     }
 
-    private void executeTapAction(RingTapAction action, String source, int tapCount) {
+    private boolean handlePendingTapSwipeCombo(int keyCode, String source) {
+        if (keyCode != KeyEvent.KEYCODE_MEDIA_PREVIOUS && keyCode != KeyEvent.KEYCODE_MEDIA_NEXT) {
+            return false;
+        }
+        long now = SystemClock.uptimeMillis();
+        int tapCount = tapRecognizer.pendingTapCount(now);
+        if (tapCount != 1 && tapCount != 2) {
+            return false;
+        }
+        boolean swipeUp = keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS;
+        RingTapAction action = RingActionMappings.forTapSwipe(this, tapCount, swipeUp);
         if (action == RingTapAction.NONE) {
-            showFeedback((tapCount >= 4 ? "Quadruple tap" : "Triple tap") + ": no action");
+            return false;
+        }
+        String tapSource = tapRecognizer.pendingSource();
+        tapRecognizer.cancel();
+        resetLauncherDirectionStreak();
+        requestBatteryAfterRingActivity(source);
+
+        String comboName = comboName(tapCount, swipeUp);
+        Log.d(TAG, "R08 " + comboName + " from " + source
+                + " tapSource=" + (tapSource == null ? "tap" : tapSource)
+                + " action=" + action.id());
+        executeMappedAction(action, source + ":" + comboSourceSuffix(tapCount, swipeUp),
+                comboFeedbackLabel(tapCount, swipeUp));
+        return true;
+    }
+
+    private void executeTapAction(RingTapAction action, String source, int tapCount) {
+        executeMappedAction(action, source, tapCount >= 4 ? "Quadruple tap" : "Triple tap");
+    }
+
+    private void executeMappedAction(RingTapAction action, String source, String noActionLabel) {
+        if (action == RingTapAction.NONE) {
+            showFeedback(noActionLabel + ": no action");
             return;
         }
         showFeedback(action.feedback(this));
         if (!action.execute(this, navigator)) {
-            Log.w(TAG, "Tap action failed action=" + action.id() + " source=" + source);
+            Log.w(TAG, "Mapped action failed action=" + action.id() + " source=" + source);
         }
+    }
+
+    private String comboName(int tapCount, boolean swipeUp) {
+        return (tapCount == 1 ? "one tap + swipe " : "two taps + swipe ")
+                + (swipeUp ? "up" : "down");
+    }
+
+    private String comboFeedbackLabel(int tapCount, boolean swipeUp) {
+        return (tapCount == 1 ? "1 tap + swipe " : "2 taps + swipe ")
+                + (swipeUp ? "up" : "down");
+    }
+
+    private String comboSourceSuffix(int tapCount, boolean swipeUp) {
+        if (tapCount == 1) {
+            return swipeUp ? "oneTapSwipeUp" : "oneTapSwipeDown";
+        }
+        return swipeUp ? "twoTapSwipeUp" : "twoTapSwipeDown";
     }
 
     private void execute(int command, String source) {
@@ -725,6 +805,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             return false;
         }
         return navigator.isPackageActive(getPackageName());
+    }
+
+    private boolean isDebuggable() {
+        return (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
     }
 
     private boolean isRingDevice(InputDevice device) {

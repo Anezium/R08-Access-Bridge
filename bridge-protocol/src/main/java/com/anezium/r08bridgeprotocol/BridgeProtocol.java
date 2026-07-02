@@ -54,6 +54,10 @@ public final class BridgeProtocol {
 
     public static final String EXTRA_SET_TRIPLE_TAP_ACTION = "set_triple_tap_action";
     public static final String EXTRA_SET_QUADRUPLE_TAP_ACTION = "set_quadruple_tap_action";
+    public static final String EXTRA_SET_ONE_TAP_SWIPE_UP_ACTION = "set_one_tap_swipe_up_action";
+    public static final String EXTRA_SET_ONE_TAP_SWIPE_DOWN_ACTION = "set_one_tap_swipe_down_action";
+    public static final String EXTRA_SET_TWO_TAP_SWIPE_UP_ACTION = "set_two_tap_swipe_up_action";
+    public static final String EXTRA_SET_TWO_TAP_SWIPE_DOWN_ACTION = "set_two_tap_swipe_down_action";
     public static final String EXTRA_INIT_SHORTCUT_BRIDGE = "init_shortcut_bridge";
     public static final String EXTRA_OPEN_WIFI_SETTINGS = "open_wifi_settings";
     public static final String EXTRA_OPEN_WIRELESS_DEBUG_SETUP = "open_wireless_debug_setup";

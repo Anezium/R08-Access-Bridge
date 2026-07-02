@@ -34,11 +34,13 @@ public final class BridgeCommandActivity extends Activity {
         }
 
         boolean handled = false;
+        boolean mappingHandled = false;
         RingTapAction triple = RingTapAction.fromId(
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_TRIPLE_TAP_ACTION), null);
         if (triple != null) {
             RingActionMappings.setTripleTap(this, triple);
             handled = true;
+            mappingHandled = true;
         }
 
         RingTapAction quadruple = RingTapAction.fromId(
@@ -46,6 +48,39 @@ public final class BridgeCommandActivity extends Activity {
         if (quadruple != null) {
             RingActionMappings.setQuadrupleTap(this, quadruple);
             handled = true;
+            mappingHandled = true;
+        }
+
+        RingTapAction oneTapSwipeUp = RingTapAction.fromId(
+                intent.getStringExtra(BridgeProtocol.EXTRA_SET_ONE_TAP_SWIPE_UP_ACTION), null);
+        if (oneTapSwipeUp != null) {
+            RingActionMappings.setOneTapSwipeUp(this, oneTapSwipeUp);
+            handled = true;
+            mappingHandled = true;
+        }
+
+        RingTapAction oneTapSwipeDown = RingTapAction.fromId(
+                intent.getStringExtra(BridgeProtocol.EXTRA_SET_ONE_TAP_SWIPE_DOWN_ACTION), null);
+        if (oneTapSwipeDown != null) {
+            RingActionMappings.setOneTapSwipeDown(this, oneTapSwipeDown);
+            handled = true;
+            mappingHandled = true;
+        }
+
+        RingTapAction twoTapSwipeUp = RingTapAction.fromId(
+                intent.getStringExtra(BridgeProtocol.EXTRA_SET_TWO_TAP_SWIPE_UP_ACTION), null);
+        if (twoTapSwipeUp != null) {
+            RingActionMappings.setTwoTapSwipeUp(this, twoTapSwipeUp);
+            handled = true;
+            mappingHandled = true;
+        }
+
+        RingTapAction twoTapSwipeDown = RingTapAction.fromId(
+                intent.getStringExtra(BridgeProtocol.EXTRA_SET_TWO_TAP_SWIPE_DOWN_ACTION), null);
+        if (twoTapSwipeDown != null) {
+            RingActionMappings.setTwoTapSwipeDown(this, twoTapSwipeDown);
+            handled = true;
+            mappingHandled = true;
         }
 
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_INIT_SHORTCUT_BRIDGE, false)) {
@@ -78,7 +113,7 @@ public final class BridgeCommandActivity extends Activity {
             handled = true;
         }
 
-        if (handled && (triple != null || quadruple != null)) {
+        if (handled && mappingHandled) {
             Toast.makeText(this, R.string.toast_mapping_saved, Toast.LENGTH_SHORT).show();
         }
 

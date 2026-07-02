@@ -190,10 +190,7 @@ final class AccessibilityNavigator {
     }
 
     boolean isRokidManagerActive() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        return root != null
-                && root.getPackageName() != null
-                && ROKID_MANAGER_PACKAGE.contentEquals(root.getPackageName());
+        return AccessibilityWindowRoots.isPackageActive(service, ROKID_MANAGER_PACKAGE);
     }
 
     boolean isRokidLauncherActive() {
@@ -201,14 +198,11 @@ final class AccessibilityNavigator {
     }
 
     boolean isPackageActive(String packageName) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        return root != null
-                && root.getPackageName() != null
-                && packageName.contentEquals(root.getPackageName());
+        return AccessibilityWindowRoots.isPackageActive(service, packageName);
     }
 
     private boolean adjustRokidVolume(boolean forward) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, ROKID_LAUNCHER_PACKAGE);
         if (!hasNodeWithViewId(root, ROKID_VOLUME_LAYOUT_ID)) {
             return false;
         }
@@ -229,10 +223,8 @@ final class AccessibilityNavigator {
     }
 
     private boolean isRokidCameraPageActive() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, ROKID_ASSIST_PACKAGE);
         return root != null
-                && root.getPackageName() != null
-                && ROKID_ASSIST_PACKAGE.contentEquals(root.getPackageName())
                 && hasNodeWithViewId(root, ROKID_CAMERA_PREVIEW_ID);
     }
 
@@ -312,7 +304,7 @@ final class AccessibilityNavigator {
     private List<AccessibilityNodeInfo> collectCandidates() {
         ArrayList<AccessibilityNodeInfo> nodes = new ArrayList<>();
         TraversalBudget budget = new TraversalBudget();
-        collectCandidates(service.getRootInActiveWindow(), nodes, budget);
+        collectCandidates(AccessibilityWindowRoots.getNavigationRoot(service), nodes, budget);
         Collections.sort(nodes, new NodeComparator());
         return nodes;
     }
@@ -357,7 +349,7 @@ final class AccessibilityNavigator {
     }
 
     private AccessibilityNodeInfo findCurrentFocus() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
         AccessibilityNodeInfo focused = null;
         if (root != null) {
             focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
@@ -372,7 +364,7 @@ final class AccessibilityNavigator {
     }
 
     private void clearAccessibilityFocus() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
         if (root == null) {
             return;
         }
@@ -405,13 +397,14 @@ final class AccessibilityNavigator {
 
     private boolean tryScroll(boolean forward) {
         AccessibilityNodeInfo current = findCurrentFocus();
-        return tryScrollFrom(current, forward) || tryScrollTree(service.getRootInActiveWindow(), forward, new TraversalBudget());
+        return tryScrollFrom(current, forward)
+                || tryScrollTree(AccessibilityWindowRoots.getNavigationRoot(service), forward, new TraversalBudget());
     }
 
     private boolean adjustFocusedRange(boolean forward) {
         AccessibilityNodeInfo adjustable = findAdjustable(findCurrentFocus());
         if (adjustable == null && isRokidManagerActive()) {
-            adjustable = findFirstAdjustable(service.getRootInActiveWindow(), new TraversalBudget());
+            adjustable = findFirstAdjustable(AccessibilityWindowRoots.getNavigationRoot(service), new TraversalBudget());
         }
         if (adjustable == null) {
             return false;

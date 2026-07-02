@@ -2,7 +2,6 @@ package com.anezium.r08accessbridge;
 
 import android.content.Intent;
 import android.util.Log;
-import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
  * NewPipe (Rokid build) ships its own single-axis focus engine that already handles list
@@ -35,10 +34,7 @@ final class NewPipeCompatibility {
     }
 
     private boolean isActive() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        return root != null
-                && root.getPackageName() != null
-                && PACKAGE.contentEquals(root.getPackageName());
+        return AccessibilityWindowRoots.isPackageActive(service, PACKAGE);
     }
 
     private boolean send(int nav) {

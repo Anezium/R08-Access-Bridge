@@ -27,7 +27,7 @@ final class ArbookCompatibility {
     }
 
     boolean move(boolean forward) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, PACKAGE);
         if (!isArbook(root)) {
             return false;
         }
@@ -43,7 +43,7 @@ final class ArbookCompatibility {
     }
 
     boolean activate() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, PACKAGE);
         if (!isArbook(root) || isReader(root)) {
             return false;
         }

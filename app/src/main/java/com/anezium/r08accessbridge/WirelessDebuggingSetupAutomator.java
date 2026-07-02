@@ -155,7 +155,7 @@ final class WirelessDebuggingSetupAutomator {
             return;
         }
 
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
         if (pairingReadyReported) {
             // The pairing dialog can briefly disappear from the active accessibility root even
             // while it remains visible. Once a code has been seen, keep the setup state pinned

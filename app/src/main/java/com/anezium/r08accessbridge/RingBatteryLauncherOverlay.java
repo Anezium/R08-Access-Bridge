@@ -24,6 +24,10 @@ import java.util.List;
 final class RingBatteryLauncherOverlay {
     private static final String TAG = "R08BatteryOverlay";
     private static final String ROKID_LAUNCHER_PACKAGE = "com.rokid.os.sprite.launcher";
+    private static final int OVERLAY_WIDTH_DP = 66;
+    private static final int OVERLAY_HEIGHT_DP = 20;
+    private static final int LAUNCHER_STATUS_ROW_END_RESERVED_DP = 70;
+    private static final int LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP = 173;
 
     private final AccessibilityService service;
     private final WindowManager windowManager;
@@ -134,7 +138,7 @@ final class RingBatteryLauncherOverlay {
                 return active;
             }
         }
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
         return root == null ? null : root.getPackageName();
     }
 
@@ -180,16 +184,16 @@ final class RingBatteryLauncherOverlay {
             view = buildView();
         }
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                dp(66),
-                dp(20),
+                dp(OVERLAY_WIDTH_DP),
+                dp(OVERLAY_HEIGHT_DP),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.BOTTOM | Gravity.END;
-        params.x = dp(31);
-        params.y = dp(173);
+        params.x = dp(LAUNCHER_STATUS_ROW_END_RESERVED_DP);
+        params.y = dp(LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP);
         try {
             windowManager.addView(view, params);
             attached = true;

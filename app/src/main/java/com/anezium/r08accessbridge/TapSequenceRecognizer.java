@@ -75,6 +75,17 @@ final class TapSequenceRecognizer {
         tapCount = 0;
     }
 
+    int pendingTapCount(long now) {
+        if (pendingResolution == null || now - lastTapAt > interTapTimeoutMs) {
+            return 0;
+        }
+        return tapCount;
+    }
+
+    String pendingSource() {
+        return pendingSource;
+    }
+
     private void schedule() {
         pendingResolution = this::resolve;
         handler.postDelayed(pendingResolution, interTapTimeoutMs);

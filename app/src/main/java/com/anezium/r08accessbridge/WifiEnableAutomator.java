@@ -139,7 +139,7 @@ final class WifiEnableAutomator {
             clickIssued = false;
         }
 
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
         if (root == null) {
             schedule(STEP_DELAY_MS);
             return;

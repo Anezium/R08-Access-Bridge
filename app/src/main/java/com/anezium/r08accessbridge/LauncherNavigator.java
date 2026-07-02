@@ -50,16 +50,16 @@ final class LauncherNavigator {
     }
 
     boolean isActive() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        return root != null
-                && root.getPackageName() != null
-                && ROKID_LAUNCHER_PACKAGE.contentEquals(root.getPackageName());
+        return AccessibilityWindowRoots.isPackageActive(service, ROKID_LAUNCHER_PACKAGE);
     }
 
     void move(boolean forward, int steps) {
         cancelPendingCenterAction();
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
+        AccessibilityNodeInfo root = launcherRoot();
+        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
+            enqueueLauncherAppSwipes(forward, steps);
+        } else if (root == null && isActive()) {
             enqueueLauncherAppSwipes(forward, steps);
         } else if (!performLauncherPageScroll(forward)) {
             Log.d(TAG, "Launcher pager did not accept accessibility scroll forward=" + forward);
@@ -84,14 +84,14 @@ final class LauncherNavigator {
         if (!isActive()) {
             return false;
         }
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
+        AccessibilityNodeInfo root = launcherRoot();
+        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
         if (appRecycler != null && appRecycler.isVisibleToUser()) {
             if (clickOrTapCenterNode(appRecycler, longPress)) {
                 return true;
             }
         }
 
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
         AccessibilityNodeInfo target = findClickableNearestScreenCenter(root);
         if (target == null) {
             target = findFocusedClickable(root);
@@ -166,11 +166,15 @@ final class LauncherNavigator {
         return true;
     }
 
-    private AccessibilityNodeInfo findLauncherAppCarousel() {
+    private AccessibilityNodeInfo findLauncherAppCarousel(AccessibilityNodeInfo root) {
         return findNodeByViewId(
-                service.getRootInActiveWindow(),
+                root,
                 LAUNCHER_APP_RECYCLER_ID,
                 new TraversalBudget());
+    }
+
+    private AccessibilityNodeInfo launcherRoot() {
+        return AccessibilityWindowRoots.getPackageRoot(service, ROKID_LAUNCHER_PACKAGE);
     }
 
     private AccessibilityNodeInfo findNodeByViewId(AccessibilityNodeInfo node, String viewId, TraversalBudget budget) {
@@ -274,7 +278,7 @@ final class LauncherNavigator {
     }
 
     private boolean performLauncherPageScroll(boolean forward) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = launcherRoot();
         AccessibilityNodeInfo viewPager = findNodeByViewId(root, LAUNCHER_VIEWPAGER_ID, new TraversalBudget());
         if (performScroll(viewPager, forward)) {
             Log.d(TAG, "Performed launcher pager scroll forward=" + forward);
@@ -347,8 +351,10 @@ final class LauncherNavigator {
         if (launcherStepInFlight || queuedLauncherSteps <= 0) {
             return;
         }
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel();
-        if (appRecycler == null || !appRecycler.isVisibleToUser()) {
+        AccessibilityNodeInfo root = launcherRoot();
+        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
+        boolean coordinateFallback = root == null && isActive();
+        if ((appRecycler == null || !appRecycler.isVisibleToUser()) && !coordinateFallback) {
             queuedLauncherSteps = 0;
             return;
         }
@@ -405,13 +411,17 @@ final class LauncherNavigator {
     ) {
         DisplayMetrics metrics = service.getResources().getDisplayMetrics();
         Rect bounds = new Rect();
-        appRecycler.getBoundsInScreen(bounds);
+        if (appRecycler != null) {
+            appRecycler.getBoundsInScreen(bounds);
+        }
         float y = bounds.isEmpty() ? metrics.heightPixels * 0.31f : bounds.centerY();
         float left = bounds.isEmpty() ? metrics.widthPixels * 0.08f : bounds.left;
         float right = bounds.isEmpty() ? metrics.widthPixels * 0.92f : bounds.right;
         float width = right - left;
         float centerX = (left + right) * 0.5f;
-        float singleStep = launcherStepDistance(appRecycler, bounds, metrics);
+        float singleStep = appRecycler == null
+                ? Math.max(metrics.widthPixels * 0.18f, width * LAUNCHER_APP_STEP_FRACTION)
+                : launcherStepDistance(appRecycler, bounds, metrics);
         float distance = Math.min(width * 0.88f, singleStep * Math.max(1, steps));
         float startX = forward ? centerX + distance * 0.5f : centerX - distance * 0.5f;
         float endX = forward ? centerX - distance * 0.5f : centerX + distance * 0.5f;

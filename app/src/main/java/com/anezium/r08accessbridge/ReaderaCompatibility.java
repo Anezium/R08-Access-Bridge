@@ -29,7 +29,7 @@ final class ReaderaCompatibility {
     }
 
     boolean move(boolean forward) {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, PACKAGE);
         if (!isReadera(root)) {
             return false;
         }
@@ -52,7 +52,7 @@ final class ReaderaCompatibility {
     }
 
     boolean activate() {
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, PACKAGE);
         if (!isReadera(root)) {
             return false;
         }
