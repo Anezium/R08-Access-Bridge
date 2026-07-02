@@ -53,6 +53,10 @@ public final class BridgeCommandActivity extends Activity {
             setBridgeArmed(true);
             handled = true;
         }
+        if (intent.hasExtra(BridgeProtocol.EXTRA_SET_BRIDGE_ARMED)) {
+            setBridgeArmed(intent.getBooleanExtra(BridgeProtocol.EXTRA_SET_BRIDGE_ARMED, false));
+            handled = true;
+        }
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_OPEN_WIFI_SETTINGS, false)) {
             GlassesWifiSettings.enableThenOpen(this);
             handled = true;

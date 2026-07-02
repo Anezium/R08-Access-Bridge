@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.Inet4Address;
 import java.net.NetworkInterface;
+import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -246,6 +247,7 @@ final class AdbBridgeClient {
 
         // Grant (not revoke) WRITE_SECURE_SETTINGS so the glasses app can self-heal at next boot.
         String grantStatus = ensureSecureSettingsGrant(adb);
+        String selfArmStatus = provisionSelfArm(adb);
         installScript(adb);
         runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop >/dev/null 2>&1 || true");
         runChecked(adb, "rm -rf " + BridgeProtocol.bridgeDir());
@@ -256,6 +258,7 @@ final class AdbBridgeClient {
         waitForBridgeRequestFile(adb);
 
         String bridgeStatus = runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " start").trim();
+        String watchdogStatus = ensureAccessibilityWatchdog(adb);
         String homeStatus = returnGlassesHome(adb);
         String wifiOffStatus = "";
         if (wifiOffAfterArm) {
@@ -265,13 +268,17 @@ final class AdbBridgeClient {
                 wifiOffStatus = "\nArmed, but Wi-Fi off request failed: " + exception.getMessage();
             }
         }
+        String loopbackStatus = ensureLoopbackAdb(adb);
 
         String ipLabel = glassesIp.isEmpty() ? "IP unknown" : "IP " + glassesIp;
         return BridgeOperationResult.armed("Armed (" + ipLabel + ")\n"
                         + bridgeStatus
+                        + watchdogStatus
                         + grantStatus
+                        + selfArmStatus
                         + homeStatus
-                        + wifiOffStatus,
+                        + wifiOffStatus
+                        + loopbackStatus,
                 wifiOffAfterArm);
     }
 
@@ -286,6 +293,8 @@ final class AdbBridgeClient {
             progress.onGlassesIp(glassesIp);
         }
 
+        String grantStatus = ensureSecureSettingsGrant(adb);
+        String selfArmStatus = provisionSelfArm(adb);
         installScript(adb);
         runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop >/dev/null 2>&1 || true");
         runChecked(adb, commandActivityStart()
@@ -294,6 +303,7 @@ final class AdbBridgeClient {
         waitForBridgeRequestFile(adb);
 
         String bridgeStatus = runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " start").trim();
+        String watchdogStatus = ensureAccessibilityWatchdog(adb);
         String homeStatus = returnGlassesHome(adb);
         String wifiOffStatus = "";
         if (wifiOffAfterArm) {
@@ -303,12 +313,17 @@ final class AdbBridgeClient {
                 wifiOffStatus = "\nRe-armed, but Wi-Fi off request failed: " + exception.getMessage();
             }
         }
+        String loopbackStatus = ensureLoopbackAdb(adb);
 
         String ipLabel = glassesIp.isEmpty() ? "IP unknown" : "IP " + glassesIp;
         return BridgeOperationResult.armed("Re-armed (" + ipLabel + ")\n"
                         + bridgeStatus
+                        + watchdogStatus
+                        + grantStatus
+                        + selfArmStatus
                         + homeStatus
-                        + wifiOffStatus,
+                        + wifiOffStatus
+                        + loopbackStatus,
                 wifiOffAfterArm);
     }
 
@@ -326,7 +341,16 @@ final class AdbBridgeClient {
     }
 
     BridgeOperationResult disable(AdbSession adb) throws IOException {
-        return BridgeOperationResult.disabled(runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop"));
+        try {
+            runChecked(adb, commandActivityStart()
+                    + " --ez " + BridgeProtocol.EXTRA_SET_BRIDGE_ARMED + " false"
+                    + " --ez " + BridgeProtocol.EXTRA_EXIT_AFTER_COMMAND + " true");
+        } catch (IOException ignored) {
+            // Still stop the shell-side pieces even if the app command activity is unavailable.
+        }
+        String bridgeStatus = runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " stop").trim();
+        String watchdogStatus = stopAccessibilityWatchdog(adb);
+        return BridgeOperationResult.disabled(bridgeStatus + watchdogStatus);
     }
 
     BridgeOperationResult triggerShortcut(AdbSession adb) throws IOException {
@@ -334,7 +358,10 @@ final class AdbBridgeClient {
     }
 
     BridgeOperationResult readStatus(AdbSession adb) throws IOException {
-        return BridgeOperationResult.output(runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " status"));
+        String bridgeStatus = runChecked(adb, "sh " + BridgeProtocol.REMOTE_SCRIPT + " status").trim();
+        String watchdogStatus = readAccessibilityWatchdogStatus(adb);
+        String selfArmStatus = readSelfArmStatus(adb);
+        return BridgeOperationResult.output(bridgeStatus + watchdogStatus + selfArmStatus);
     }
 
     private String returnGlassesHome(AdbSession adb) {
@@ -374,10 +401,107 @@ final class AdbBridgeClient {
     }
 
     private void installScript(AdbSession adb) throws Exception {
-        String script = readRawScript();
+        String script = readRawResource(R.raw.r08_shortcut_bridge);
         String encoded = Base64.encodeToString(script.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
         runChecked(adb, "printf '%s' '" + encoded + "' | base64 -d > " + BridgeProtocol.REMOTE_SCRIPT);
         runChecked(adb, "chmod 755 " + BridgeProtocol.REMOTE_SCRIPT);
+    }
+
+    private String ensureAccessibilityWatchdog(AdbSession adb) {
+        try {
+            installRawResourceScript(adb, R.raw.r08_a11y_watchdog, BridgeProtocol.REMOTE_WATCHDOG_SCRIPT);
+            String status = runChecked(adb, "sh " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " start").trim();
+            return "\nAccessibility watchdog: " + status;
+        } catch (Throwable throwable) {
+            return "\nAccessibility watchdog failed: " + shortMessage(throwable);
+        }
+    }
+
+    private String stopAccessibilityWatchdog(AdbSession adb) {
+        try {
+            String status = adb.runChecked("[ -f " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " ] && sh "
+                    + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " stop || echo not installed").trim();
+            return "\nAccessibility watchdog: " + status;
+        } catch (IOException exception) {
+            return "\nAccessibility watchdog stop failed: " + exception.getMessage();
+        }
+    }
+
+    private String readAccessibilityWatchdogStatus(AdbSession adb) {
+        try {
+            String status = adb.runChecked("[ -f " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " ] && sh "
+                    + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " status || echo not installed").trim();
+            return "\nAccessibility watchdog: " + status;
+        } catch (IOException exception) {
+            return "\nAccessibility watchdog: not running";
+        }
+    }
+
+    private String provisionSelfArm(AdbSession adb) {
+        try {
+            configureKadbCert();
+            File privateKey = kadbPrivateKeyFile();
+            if (!privateKey.isFile()) {
+                return "\nSelf-arm: skipped; pair Wireless Debugging once so the phone has a trusted ADB key.";
+            }
+            runChecked(adb, "mkdir -p " + BridgeProtocol.selfArmDir());
+            writeRemoteBytes(adb, Files.readAllBytes(privateKey.toPath()),
+                    BridgeProtocol.selfArmAdbKeyPath(), "600");
+            installRawResourceScript(adb, R.raw.r08_a11y_watchdog, BridgeProtocol.selfArmWatchdogScriptPath());
+            return "\nSelf-arm: app-open re-arm provisioned.";
+        } catch (Throwable throwable) {
+            return "\nSelf-arm provision failed: " + shortMessage(throwable);
+        }
+    }
+
+    private String ensureLoopbackAdb(AdbSession adb) {
+        try {
+            runChecked(adb, "setprop persist.adb.tcp.port "
+                    + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
+            runChecked(adb, "setprop service.adb.tcp.port "
+                    + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
+            String listening = runChecked(adb,
+                    "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -i ':15B3 ' | grep -i ' 0A ' || true")
+                    .trim();
+            if (!listening.isEmpty()) {
+                return "\nADB loopback: active on 127.0.0.1:" + BridgeProtocol.DEFAULT_ADB_PORT + ".";
+            }
+            try {
+                adb.shell("(setprop ctl.restart adbd >/dev/null 2>&1 || true) &");
+            } catch (IOException ignored) {
+                // Restarting adbd can close the current transport before it returns.
+            }
+            return "\nADB loopback: configured on 127.0.0.1:"
+                    + BridgeProtocol.DEFAULT_ADB_PORT
+                    + " (adbd restart requested).";
+        } catch (Throwable throwable) {
+            return "\nADB loopback setup failed: " + shortMessage(throwable);
+        }
+    }
+
+    private String readSelfArmStatus(AdbSession adb) {
+        try {
+            String keyStatus = adb.runChecked("[ -f " + BridgeProtocol.selfArmAdbKeyPath()
+                    + " ] && echo key=present || echo key=missing").trim();
+            String loopback = adb.runChecked(
+                    "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -i ':15B3 ' | grep -i ' 0A ' >/dev/null "
+                            + "&& echo loopback=active || echo loopback=inactive")
+                    .trim();
+            return "\nSelf-arm: " + keyStatus + " " + loopback;
+        } catch (IOException exception) {
+            return "\nSelf-arm: status unavailable";
+        }
+    }
+
+    private void installRawResourceScript(AdbSession adb, int resourceId, String remotePath) throws IOException {
+        String script = readRawResource(resourceId);
+        writeRemoteBytes(adb, script.getBytes(StandardCharsets.UTF_8), remotePath, "755");
+    }
+
+    private void writeRemoteBytes(AdbSession adb, byte[] bytes, String remotePath, String mode) throws IOException {
+        String encoded = Base64.encodeToString(bytes, Base64.NO_WRAP);
+        runChecked(adb, "printf '%s' '" + encoded + "' | base64 -d > " + remotePath);
+        runChecked(adb, "chmod " + mode + " " + remotePath);
     }
 
     private void waitForBridgeRequestFile(AdbSession adb) throws Exception {
@@ -421,8 +545,8 @@ final class AdbBridgeClient {
         return matcher.find() ? matcher.group(1) : "";
     }
 
-    private String readRawScript() throws IOException {
-        try (InputStream input = context.getResources().openRawResource(R.raw.r08_shortcut_bridge);
+    private String readRawResource(int resourceId) throws IOException {
+        try (InputStream input = context.getResources().openRawResource(resourceId);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[4096];
             int read;
@@ -441,8 +565,11 @@ final class AdbBridgeClient {
         if (kadbCertConfigured) {
             return;
         }
-        File dir = new File(context.getFilesDir(), "kadb");
-        File privateKey = new File(dir, "adbkey.pem");
+        File privateKey = kadbPrivateKeyFile();
+        File dir = privateKey.getParentFile();
+        if (dir != null && !dir.isDirectory()) {
+            dir.mkdirs();
+        }
         com.flyfishxu.kadb.cert.KadbCert.INSTANCE.configure(
                 new com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore(
                         okio.Path.Companion.get(privateKey.getAbsolutePath()),
@@ -450,6 +577,10 @@ final class AdbBridgeClient {
                 new com.flyfishxu.kadb.cert.KadbCertPolicy(),
                 Collections.emptyList());
         kadbCertConfigured = true;
+    }
+
+    private File kadbPrivateKeyFile() {
+        return new File(new File(context.getFilesDir(), "kadb"), "adbkey.pem");
     }
 
     private String shortMessage(Throwable throwable) {

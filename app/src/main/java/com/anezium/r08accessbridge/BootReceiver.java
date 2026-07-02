@@ -10,15 +10,10 @@ import com.anezium.r08bridgeprotocol.BridgeProtocol;
 /**
  * Fires at boot if the bridge was previously armed.
  *
- * Wi-Fi CANNOT be powered on programmatically by a non-privileged app on this firmware:
- * WifiManager.setWifiEnabled() is blocked, and writing the wifi_on global setting does not
- * turn the radio on. The only way to enable Wi-Fi is via the accessibility service simulating
- * the Wi-Fi toggle in Settings — which requires the screen and user interaction to be in a
- * state where the accessibility service is running.
- *
- * Therefore, the boot receiver intentionally does nothing beyond logging. The phone companion
- * sends a re-arm command over CXR/Bluetooth (TYPE_REARM_REQ) when the user taps "Re-arm bridge".
- * That command causes the glasses accessibility service to open Wi-Fi Settings and tap the toggle.
+ * The phone companion can provision local ADB loopback once. After that, the glasses app can
+ * restart the accessibility watchdog without Wi-Fi by connecting to 127.0.0.1:5555 with its
+ * trusted key. If Android keeps the package stopped after Rokid's force-stop regression, opening
+ * the app manually still runs the same self-arm path from MainActivity.
  */
 public final class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "R08BootReceiver";
@@ -36,8 +31,7 @@ public final class BootReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Wi-Fi cannot be turned on programmatically on this firmware. Re-arm is phone-initiated
-        // via CXR/Bluetooth (TYPE_REARM_REQ). No action needed here.
-        Log.d(TAG, "Boot: bridge was armed — waiting for phone re-arm command via CXR");
+        Log.d(TAG, "Boot: bridge was armed, attempting local self-arm");
+        SelfArmController.armOnBoot(context);
     }
 }

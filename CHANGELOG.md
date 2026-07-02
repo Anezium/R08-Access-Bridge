@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v1.4.8 - 2026-07-02
+
+### Phone companion watchdog
+
+- Added a phone-packaged Accessibility watchdog for Rokid RG firmware 1.21.009, launched over ADB shell during arm/re-arm so the glasses app can recover after AssistServer force-stops it on leg fold.
+- Added glasses-side app-open self-arm: after the phone provisions a trusted ADB key and `persist.adb.tcp.port=5555`, opening R08 Access Bridge on the glasses connects to `127.0.0.1:5555`, repairs Accessibility, and restarts the watchdog.
+- The phone companion now auto-attempts re-arm on launch when a previous arm endpoint or Hi Rokid authorization exists, restoring the shortcut bridge and watchdog without an extra tap.
+- Added a direct ADB fallback when Hi Rokid/CXR Bluetooth is unavailable, with mDNS settling to avoid stale Wireless Debugging ports.
+- `Disable bridge` now stops the Accessibility watchdog too, so the persistent recovery loop is user-controlled.
 
 ## v1.4.7 - 2026-06-28
 

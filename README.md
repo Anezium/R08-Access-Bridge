@@ -110,7 +110,7 @@ R08 Access Bridge cannot emit that raw input as a normal APK. The repo includes 
 
 The bridge runs as the ADB `shell` user on the glasses. R08 writes shortcut requests into its app bridge folder, and the shell bridge converts each request into the real `sendevent` sequence.
 
-The phone companion is intentionally phone-first: a dark monochrome green, phosphor-style control panel. After first-time setup, the primary button becomes `Re-arm bridge` for one-tap recovery after any glasses reboot.
+The phone companion is intentionally phone-first: a dark monochrome green, phosphor-style control panel. After first-time setup, opening the companion auto-attempts re-arm, and the primary button remains available as `Re-arm bridge`.
 
 PC/dev arm:
 
@@ -124,20 +124,22 @@ PC/dev arm:
 2. In `R08 Companion`, tap `Authorize` once and approve the Hi Rokid authorization screen.
 3. Tap `Set up bridge`. The phone starts R08 Access Bridge through CXR-L, sends `r08.bootstrap.req`, and the glasses app opens Wi-Fi settings if it still needs a network.
 4. Once the glasses have a Wi-Fi IP, the phone tries the latest Wireless Debugging port reported by the glasses. If Developer Options are still disabled, the glasses Accessibility Service opens Device Info and taps Build number first. If the phone is not paired yet, the flow opens Developer Options, enters Wireless Debugging, opens the pairing-code dialog, reads the code plus IP/port, and sends them back on `r08.bootstrap.res`.
-5. The phone consumes that pairing code with KADB, using mDNS `_adb-tls-pairing._tcp` to recover the temporary pairing port when the Settings accessibility text is incomplete or ambiguous. It then connects to the dynamic Wireless Debugging port, installs/starts the shell bridge, maps quadruple tap to `Hi Rokid Shortcut`, and grants `WRITE_SECURE_SETTINGS` to the glasses app so it can self-heal at next boot.
+5. The phone consumes that pairing code with KADB, using mDNS `_adb-tls-pairing._tcp` to recover the temporary pairing port when the Settings accessibility text is incomplete or ambiguous. It then connects to the dynamic Wireless Debugging port, installs/starts the shell bridge and Accessibility watchdog, maps quadruple tap to `Hi Rokid Shortcut`, grants `WRITE_SECURE_SETTINGS`, and provisions local ADB loopback self-arm for the glasses app.
 6. `Wi-Fi off after arm` is enabled by default. Once the bridge is armed, the phone asks the glasses app/shell bridge to turn glasses Wi-Fi back off for battery life. The shell bridge also disables always-on Wi-Fi scanning. When the app shows `Bridge: Armed`, the user can close the phone app.
 7. The phone and glasses must be on the same Wi-Fi/LAN for the ADB arm step. If the phone is on mobile data, VPN, guest Wi-Fi, or a different subnet, CXR-L may still report the glasses IP but ADB cannot connect.
 8. If CXR-L is not available, expand `Advanced` → tap `LAN scan / arm` or enter the glasses IP manually and tap `Arm known IP`.
 9. After the bridge is armed, quadruple tap on the R08 ring triggers the exact Hi Rokid shortcut.
 
-### After a glasses reboot — one-tap re-arm
+### After a glasses reboot or force-stop
 
-After first-time setup, a glasses reboot requires only one user action:
+After first-time setup, the phone can recover the bridge automatically on launch:
 
 1. Open `R08 Companion` on the phone.
-2. Tap `Re-arm bridge`.
+2. Leave it open; it auto-attempts re-arm when a saved endpoint or Hi Rokid authorization is available. Tap `Re-arm bridge` only if you want to retry manually.
 
-The phone connects to the saved endpoint using the already-authorized key pair. No re-pairing, no Settings navigation. The glasses self-heal on boot: the glasses app (which holds `WRITE_SECURE_SETTINGS` granted during arm) re-enables Wi-Fi and wireless debugging in a `BootReceiver` so the phone can reach them. After the phone re-arms, Wi-Fi and always-on scanning are turned off again.
+The phone connects to the saved endpoint using the already-authorized key pair, or asks the glasses over Hi Rokid/CXR to bring Wi-Fi/Wireless Debugging back first. No re-pairing is needed unless Android forgets the ADB authorization. After the phone re-arms, Wi-Fi and always-on scanning are turned off again.
+
+The phone also provisions a hacha-style local loopback recovery path on the glasses: `persist.adb.tcp.port=5555`, a trusted ADB key, and the Accessibility watchdog script. After that provisioning, opening `R08 Access Bridge` directly on the glasses connects to `127.0.0.1:5555`, repairs `enabled_accessibility_services`, and restarts the watchdog even without the phone. This is the fallback for Rokid RG firmware 1.21.009, where folding a temple leg can force-stop the foreground third-party app and remove its AccessibilityService.
 
 **Battery note:** glasses Wi-Fi is enabled only for the duration of the re-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation.
 
@@ -222,7 +224,7 @@ adb install -r R08-Access-Bridge-v1.4.7.apk
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
 
 ```powershell
-adb install -r R08-Companion-v0.2.5.apk
+adb install -r R08-Companion-v0.2.6.apk
 ```
 
 After installing the glasses APK:

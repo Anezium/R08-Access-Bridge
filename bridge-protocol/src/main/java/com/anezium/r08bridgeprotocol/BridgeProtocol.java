@@ -11,6 +11,7 @@ public final class BridgeProtocol {
     public static final String CXR_RESPONSE_KEY = "r08.bootstrap.res";
     public static final int CXR_PROTOCOL_VERSION = 1;
     public static final int DEFAULT_ADB_PORT = 5555;
+    public static final String ADB_LOOPBACK_HOST = "127.0.0.1";
 
     public static final String TYPE_BOOTSTRAP = "bootstrap";
     public static final String TYPE_REFRESH_IP = "refresh_ip";
@@ -58,11 +59,15 @@ public final class BridgeProtocol {
     public static final String EXTRA_OPEN_WIRELESS_DEBUG_SETUP = "open_wireless_debug_setup";
     public static final String EXTRA_BRIDGE_WIFI_OFF = "bridge_wifi_off";
     public static final String EXTRA_EXIT_AFTER_COMMAND = "exit_after_command";
+    public static final String EXTRA_SET_BRIDGE_ARMED = "set_bridge_armed";
     /** Debug extra: --ez run_enable_wifi_flow true → runs the re-arm enable-Wi-Fi+adb flow standalone. */
     public static final String EXTRA_RUN_ENABLE_WIFI_FLOW = "run_enable_wifi_flow";
 
     public static final String ACTION_HI_ROKID_SHORTCUT = "hi_rokid_shortcut";
     public static final String BRIDGE_DIR_NAME = "shortcut_bridge";
+    public static final String SELF_ARM_DIR_NAME = "self_arm";
+    public static final String SELF_ARM_ADB_KEY_FILE = "adbkey.pem";
+    public static final String SELF_ARM_WATCHDOG_SCRIPT_FILE = "r08-a11y-watchdog.sh";
     public static final String REQUEST_FILE = "request";
     public static final String RESPONSE_FILE = "response";
     public static final String HEARTBEAT_FILE = "heartbeat";
@@ -72,6 +77,7 @@ public final class BridgeProtocol {
     public static final String COMMAND_WIFI_DISABLE = "wifi_disable";
 
     public static final String REMOTE_SCRIPT = "/data/local/tmp/r08-shortcut-bridge.sh";
+    public static final String REMOTE_WATCHDOG_SCRIPT = "/data/local/tmp/r08-a11y-watchdog.sh";
     public static final String REMOTE_PIDFILE = "/data/local/tmp/r08-shortcut-bridge.pid";
     public static final String REMOTE_LOGFILE = "/data/local/tmp/r08-shortcut-bridge.log";
     public static final String DEFAULT_INPUT_DEVICE = "/dev/input/event1";
@@ -93,5 +99,17 @@ public final class BridgeProtocol {
 
     public static String bridgeDir() {
         return "/sdcard/Android/data/" + R08_PACKAGE + "/files/" + BRIDGE_DIR_NAME;
+    }
+
+    public static String selfArmDir() {
+        return "/sdcard/Android/data/" + R08_PACKAGE + "/files/" + SELF_ARM_DIR_NAME;
+    }
+
+    public static String selfArmAdbKeyPath() {
+        return selfArmDir() + "/" + SELF_ARM_ADB_KEY_FILE;
+    }
+
+    public static String selfArmWatchdogScriptPath() {
+        return selfArmDir() + "/" + SELF_ARM_WATCHDOG_SCRIPT_FILE;
     }
 }

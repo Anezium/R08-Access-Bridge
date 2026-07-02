@@ -18,7 +18,9 @@ import java.util.concurrent.TimeUnit;
 final class AdbMdnsPairingResolver {
     private static final String TAG = "R08AdbMdns";
     private static final String ADB_TLS_PAIRING_TYPE = "_adb-tls-pairing._tcp.";
+    private static final String ADB_TLS_CONNECT_TYPE = "_adb-tls-connect._tcp.";
     private static final long DEFAULT_TIMEOUT_MS = 8000L;
+    private static final long CONNECT_SETTLE_MS = 900L;
 
     private final Context context;
 
@@ -31,11 +33,35 @@ final class AdbMdnsPairingResolver {
     }
 
     PairingEndpoint resolvePairingEndpoint(String expectedHost, long timeoutMs) throws IOException {
+        return resolveEndpoint(expectedHost, timeoutMs, ADB_TLS_PAIRING_TYPE, "_adb-tls-pairing", "pairing", false);
+    }
+
+    PairingEndpoint resolveConnectEndpoint(String expectedHost) throws IOException {
+        return resolveConnectEndpoint(expectedHost, DEFAULT_TIMEOUT_MS);
+    }
+
+    PairingEndpoint resolveConnectEndpoint(String expectedHost, long timeoutMs) throws IOException {
+        return resolveEndpoint(expectedHost, timeoutMs, ADB_TLS_CONNECT_TYPE, "_adb-tls-connect", "connect", true);
+    }
+
+    private PairingEndpoint resolveEndpoint(
+            String expectedHost,
+            long timeoutMs,
+            String serviceType,
+            String serviceNeedle,
+            String label,
+            boolean preferLastEndpoint) throws IOException {
         NsdManager nsdManager = (NsdManager) context.getSystemService(Context.NSD_SERVICE);
         if (nsdManager == null) {
             throw new IOException("Android NSD service is unavailable");
         }
-        DiscoveryRun run = new DiscoveryRun(nsdManager, cleanHost(expectedHost), timeoutMs);
+        DiscoveryRun run = new DiscoveryRun(nsdManager,
+                cleanHost(expectedHost),
+                timeoutMs,
+                serviceType,
+                serviceNeedle,
+                label,
+                preferLastEndpoint);
         return run.execute();
     }
 
@@ -53,6 +79,10 @@ final class AdbMdnsPairingResolver {
         private final NsdManager nsdManager;
         private final String expectedHost;
         private final long timeoutMs;
+        private final String serviceType;
+        private final String serviceNeedle;
+        private final String label;
+        private final boolean preferLastEndpoint;
         private final CountDownLatch finished = new CountDownLatch(1);
         private final Queue<NsdServiceInfo> pending = new ArrayDeque<>();
         private final Object lock = new Object();
@@ -62,16 +92,17 @@ final class AdbMdnsPairingResolver {
         private boolean discoveryStarted;
         private boolean resolving;
         private boolean stopped;
+        private boolean settleStarted;
 
         private final NsdManager.DiscoveryListener discoveryListener = new NsdManager.DiscoveryListener() {
             @Override
             public void onDiscoveryStarted(String serviceType) {
-                Log.d(TAG, "pairing discovery started");
+                Log.d(TAG, label + " discovery started");
             }
 
             @Override
             public void onServiceFound(NsdServiceInfo serviceInfo) {
-                if (!isPairingService(serviceInfo)) {
+                if (!isTargetService(serviceInfo)) {
                     return;
                 }
                 synchronized (lock) {
@@ -82,29 +113,40 @@ final class AdbMdnsPairingResolver {
 
             @Override
             public void onServiceLost(NsdServiceInfo serviceInfo) {
-                Log.d(TAG, "pairing service lost: " + safeServiceName(serviceInfo));
+                Log.d(TAG, label + " service lost: " + safeServiceName(serviceInfo));
             }
 
             @Override
             public void onDiscoveryStopped(String serviceType) {
-                Log.d(TAG, "pairing discovery stopped");
+                Log.d(TAG, label + " discovery stopped");
             }
 
             @Override
             public void onStartDiscoveryFailed(String serviceType, int errorCode) {
-                completeFailure("mDNS pairing discovery failed to start: " + errorCode);
+                completeFailure("mDNS " + label + " discovery failed to start: " + errorCode);
             }
 
             @Override
             public void onStopDiscoveryFailed(String serviceType, int errorCode) {
-                Log.d(TAG, "pairing discovery stop failed: " + errorCode);
+                Log.d(TAG, label + " discovery stop failed: " + errorCode);
             }
         };
 
-        DiscoveryRun(NsdManager nsdManager, String expectedHost, long timeoutMs) {
+        DiscoveryRun(
+                NsdManager nsdManager,
+                String expectedHost,
+                long timeoutMs,
+                String serviceType,
+                String serviceNeedle,
+                String label,
+                boolean preferLastEndpoint) {
             this.nsdManager = nsdManager;
             this.expectedHost = expectedHost;
             this.timeoutMs = timeoutMs;
+            this.serviceType = serviceType;
+            this.serviceNeedle = serviceNeedle;
+            this.label = label;
+            this.preferLastEndpoint = preferLastEndpoint;
         }
 
         PairingEndpoint execute() throws IOException {
@@ -112,7 +154,7 @@ final class AdbMdnsPairingResolver {
             try {
                 try {
                     nsdManager.discoverServices(
-                            ADB_TLS_PAIRING_TYPE,
+                            serviceType,
                             NsdManager.PROTOCOL_DNS_SD,
                             discoveryListener);
                     discoveryStarted = true;
@@ -136,7 +178,7 @@ final class AdbMdnsPairingResolver {
                     }
                 }
                 String suffix = expectedHost.isEmpty() ? "" : " for " + expectedHost;
-                throw new IOException("No Wireless Debugging pairing mDNS service found" + suffix);
+                throw new IOException("No Wireless Debugging " + label + " mDNS service found" + suffix);
             } finally {
                 stopDiscovery();
                 if (multicastLock != null && multicastLock.isHeld()) {
@@ -156,7 +198,7 @@ final class AdbMdnsPairingResolver {
                 return null;
             }
             try {
-                WifiManager.MulticastLock lock = wifiManager.createMulticastLock("r08-adb-mdns-pairing");
+                WifiManager.MulticastLock lock = wifiManager.createMulticastLock("r08-adb-mdns-" + label);
                 lock.setReferenceCounted(false);
                 lock.acquire();
                 return lock;
@@ -166,16 +208,16 @@ final class AdbMdnsPairingResolver {
             }
         }
 
-        private boolean isPairingService(NsdServiceInfo serviceInfo) {
+        private boolean isTargetService(NsdServiceInfo serviceInfo) {
             String serviceType = serviceInfo == null ? "" : serviceInfo.getServiceType();
             return serviceType != null
-                    && serviceType.toLowerCase(Locale.US).contains("_adb-tls-pairing");
+                    && serviceType.toLowerCase(Locale.US).contains(serviceNeedle);
         }
 
         private void pumpResolve() {
             NsdServiceInfo next;
             synchronized (lock) {
-                if (stopped || resolving || result != null) {
+                if (stopped || resolving || (result != null && !preferLastEndpoint)) {
                     return;
                 }
                 next = pending.poll();
@@ -196,20 +238,25 @@ final class AdbMdnsPairingResolver {
                     public void onServiceResolved(NsdServiceInfo serviceInfo) {
                         PairingEndpoint endpoint = endpointFrom(serviceInfo);
                         if (endpoint != null && hostMatches(endpoint.host)) {
-                            Log.d(TAG, "pairing service resolved host=" + redactedHost(endpoint.host)
+                            Log.d(TAG, label + " service resolved host=" + redactedHost(endpoint.host)
                                     + " port=" + endpoint.port);
+                            if (preferLastEndpoint) {
+                                rememberEndpoint(endpoint);
+                                finishResolveAndContinue();
+                                return;
+                            }
                             complete(endpoint);
                             return;
                         }
                         if (endpoint != null) {
-                            Log.d(TAG, "ignored pairing service host=" + redactedHost(endpoint.host)
+                            Log.d(TAG, "ignored " + label + " service host=" + redactedHost(endpoint.host)
                                     + " port=" + endpoint.port);
                         }
                         finishResolveAndContinue();
                     }
                 });
             } catch (RuntimeException exception) {
-                Log.d(TAG, "pairing service resolve threw", exception);
+                Log.d(TAG, label + " service resolve threw", exception);
                 finishResolveAndContinue();
             }
         }
@@ -246,6 +293,35 @@ final class AdbMdnsPairingResolver {
                 stopped = true;
             }
             finished.countDown();
+        }
+
+        private void rememberEndpoint(PairingEndpoint endpoint) {
+            synchronized (lock) {
+                if (stopped) {
+                    return;
+                }
+                result = endpoint;
+                if (settleStarted) {
+                    return;
+                }
+                settleStarted = true;
+            }
+            Thread settleThread = new Thread(() -> {
+                try {
+                    Thread.sleep(CONNECT_SETTLE_MS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                synchronized (lock) {
+                    if (stopped || result == null) {
+                        return;
+                    }
+                    stopped = true;
+                }
+                finished.countDown();
+            }, "r08-mdns-connect-settle");
+            settleThread.setDaemon(true);
+            settleThread.start();
         }
 
         private void completeFailure(String message) {

@@ -37,9 +37,6 @@ public final class PhoneCompanionActivity extends Activity {
     private static final String DEFAULT_HOST = "";
     private static final String EXTRA_HOST = "host";
     private static final String EXTRA_PORT = "port";
-    private static final String EXTRA_AUTO_ARM = "auto_arm";
-    private static final String EXTRA_AUTO_FIND_AND_ARM = "auto_find_and_arm";
-    private static final String EXTRA_AUTO_CXR_BOOTSTRAP = "auto_cxr_bootstrap";
 
     // Phosphor-green dark palette — unchanged from original.
     private static final int SURFACE = Color.rgb(2, 10, 5);
@@ -75,6 +72,7 @@ public final class PhoneCompanionActivity extends Activity {
     private BridgeSetupCoordinator setupCoordinator;
     private boolean continueBootstrapAfterAuthorization;
     private boolean continueWirelessSetupAfterAuthorization;
+    private boolean autoReArmAttempted;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -90,8 +88,7 @@ public final class PhoneCompanionActivity extends Activity {
         cxrClient = new CxrBootstrapClient(this, prefs().getString(PREF_CXR_TOKEN, ""), cxrListener);
         setContentView(buildView());
         handleLaunchIntent();
-        // Re-arm runs only when the user taps the primary "Re-arm bridge" button.
-        // Do NOT auto-start any re-arm/connect flow here on launch.
+        maybeAutoReArmOnLaunch();
     }
 
     @Override
@@ -401,16 +398,43 @@ public final class PhoneCompanionActivity extends Activity {
         if (hostField == null || portField == null) {
             return;
         }
+        boolean endpointFromIntent = false;
         if (intent.hasExtra(EXTRA_HOST)) {
             hostField.setText(intent.getStringExtra(EXTRA_HOST));
+            endpointFromIntent = true;
         }
         if (intent.hasExtra(EXTRA_PORT)) {
             int port = intent.getIntExtra(EXTRA_PORT, BridgeProtocol.DEFAULT_ADB_PORT);
             setupCoordinator.setIntentPort(port);
             portField.setText(Integer.toString(port));
+            endpointFromIntent = true;
         }
-        // EXTRA_AUTO_* intents pre-fill endpoint fields but do NOT auto-start any task.
-        // All re-arm/connect flows require an explicit tap on the primary button.
+        if (endpointFromIntent) {
+            String host = hostField.getText().toString().trim();
+            int port = parsePort();
+            saveEndpoint(host, port);
+            if (isArmedBefore() && !host.isEmpty()) {
+                saveArmedEndpoint(host, port);
+            }
+        }
+        maybeAutoReArmOnLaunch();
+    }
+
+    private void maybeAutoReArmOnLaunch() {
+        if (autoReArmAttempted || !isArmedBefore() || primaryButton == null) {
+            return;
+        }
+        String host = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
+        boolean hasEndpoint = host != null && !host.trim().isEmpty();
+        if (!cxrClient.hasAuthToken() && !hasEndpoint) {
+            return;
+        }
+        autoReArmAttempted = true;
+        primaryButton.postDelayed(() -> {
+            summary("Auto re-arm", MUTED);
+            setDetail("Checking the saved bridge and accessibility watchdog on the glasses.");
+            runReArmTask();
+        }, 350L);
     }
 
     // -------------------------------------------------------------------------
@@ -438,6 +462,17 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
         setDetail("Sending re-arm command over Hi Rokid/Bluetooth. The glasses accessibility service will enable Wi-Fi and report the live ADB port.");
         cxrClient.requestReArm();
+        String fallbackHost = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
+        if (fallbackHost != null && !fallbackHost.trim().isEmpty()) {
+            primaryButton.postDelayed(() -> {
+                if (setupCoordinator.isBridgeArmed()) {
+                    return;
+                }
+                setStatusLine(cxrStatusText, "Hi Rokid", "No response; trying saved ADB", WARN);
+                setDetail("Hi Rokid did not answer yet. Trying the saved ADB endpoint as a fallback.");
+                runDirectReArmTask();
+            }, 12000L);
+        }
     }
 
     /** Direct fast re-arm using the saved endpoint — used when CXR is not authorized. */
@@ -454,10 +489,10 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
         setDetail("Connecting to saved endpoint " + host + ":" + port + "…");
         executor.execute(() -> {
-            try (AdbSession adb = adbBridgeClient.connect(host, port)) {
-                runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Connected to " + host, ACCENT));
-                BridgeOperationResult result = adbBridgeClient.reArm(adb, wifiOffAfterArm(), this::updateEndpointFromWorker);
-                runOnUiThread(() -> applyBridgeResult(host, result));
+            try (ConnectedAdb connected = connectForReArm(host, port)) {
+                runOnUiThread(() -> setStatusLine(adbStatusText, "ADB", "Connected to " + connected.host, ACCENT));
+                BridgeOperationResult result = adbBridgeClient.reArm(connected.session, wifiOffAfterArm(), this::updateEndpointFromWorker);
+                runOnUiThread(() -> applyBridgeResult(connected.host, result));
             } catch (Throwable throwable) {
                 // Direct path failed — fall back to full CXR bootstrap.
                 runOnUiThread(() -> {
@@ -470,6 +505,35 @@ public final class PhoneCompanionActivity extends Activity {
                 });
             }
         });
+    }
+
+    private ConnectedAdb connectForReArm(String host, int port) throws Exception {
+        try {
+            return new ConnectedAdb(adbBridgeClient.connect(host, port), host, port);
+        } catch (Throwable firstFailure) {
+            runOnUiThread(() -> {
+                setStatusLine(adbStatusText, "ADB", "Finding live port", MUTED);
+                setDetail("Saved ADB port " + port + " did not answer. Searching Wireless Debugging mDNS on the LAN.");
+            });
+            try {
+                AdbMdnsPairingResolver.PairingEndpoint endpoint =
+                        mdnsPairingResolver.resolveConnectEndpoint(host);
+                runOnUiThread(() -> updateEndpoint(endpoint.host, endpoint.port));
+                return new ConnectedAdb(
+                        adbBridgeClient.connect(endpoint.host, endpoint.port),
+                        endpoint.host,
+                        endpoint.port);
+            } catch (Throwable mdnsFailure) {
+                firstFailure.addSuppressed(mdnsFailure);
+                if (firstFailure instanceof Exception) {
+                    throw (Exception) firstFailure;
+                }
+                if (firstFailure instanceof Error) {
+                    throw (Error) firstFailure;
+                }
+                throw new IllegalStateException("ADB re-arm failed", firstFailure);
+            }
+        }
     }
 
     private void runCxrBootstrapTask() {
@@ -1101,7 +1165,7 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private String armedDetail(String output) {
-        String base = "Done. You can close this app now; the shortcut bridge keeps running on the glasses.";
+        String base = "Done. You can close this app now; the shortcut bridge and accessibility watchdog keep running on the glasses.";
         return output == null || output.trim().isEmpty() ? base : base + "\n\n" + output.trim();
     }
 
@@ -1245,6 +1309,23 @@ public final class PhoneCompanionActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private static final class ConnectedAdb implements AutoCloseable {
+        final AdbSession session;
+        final String host;
+        final int port;
+
+        ConnectedAdb(AdbSession session, String host, int port) {
+            this.session = session;
+            this.host = host;
+            this.port = port;
+        }
+
+        @Override
+        public void close() {
+            session.close();
+        }
     }
 
     private interface AdbWork {

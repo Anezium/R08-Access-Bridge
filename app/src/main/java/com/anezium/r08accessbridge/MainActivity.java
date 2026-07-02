@@ -58,6 +58,7 @@ public final class MainActivity extends Activity {
         boolean fastDefaultApplied = RingControlAccessibilityService.ensureFastModeDefault(this);
         PrivilegedShortcutBridge.ensureReady(this);
         CxrBootstrapBridge.start(this);
+        SelfArmController.armOnLaunch(this);
         requestRuntimePermissions();
         setContentView(buildView());
         showHome();
