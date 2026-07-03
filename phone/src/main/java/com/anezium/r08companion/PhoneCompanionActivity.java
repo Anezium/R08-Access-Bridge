@@ -24,6 +24,9 @@ import android.widget.TextView;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
+import java.text.DateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -34,6 +37,8 @@ public final class PhoneCompanionActivity extends Activity {
     private static final String PREF_PORT = "port";
     private static final String PREF_CXR_TOKEN = "cxr_token";
     private static final String PREF_WIFI_OFF_AFTER_ARM = "wifi_off_after_arm";
+    private static final String PREF_WATCHDOG_STATUS = "watchdog_status";
+    private static final String PREF_WATCHDOG_CHECKED_AT = "watchdog_checked_at";
     private static final String DEFAULT_HOST = "";
     private static final String EXTRA_HOST = "host";
     private static final String EXTRA_PORT = "port";
@@ -62,6 +67,7 @@ public final class PhoneCompanionActivity extends Activity {
     private TextView ipStatusText;
     private TextView adbStatusText;
     private TextView bridgeStatusText;
+    private TextView watchdogStatusText;
     private TextView detailText;
     private Button primaryButton;
     private CheckBox wifiOffAfterArmCheck;
@@ -178,7 +184,10 @@ public final class PhoneCompanionActivity extends Activity {
         statusPanel.addView(sectionTitle("Bridge"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         bridgeStatusText = prominentStatusRow(statusPanel, "Bridge", "Not armed");
         bridgeStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
-        TextView armedCopy = label("When this says Armed, the shortcut is ready. You can close this app.", 13, MUTED, Typeface.NORMAL);
+        watchdogStatusText = prominentStatusRow(statusPanel, "Watchdog", "Unknown");
+        watchdogStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
+        renderStoredWatchdogStatus();
+        TextView armedCopy = label("When Bridge says Armed, the shortcut is ready. Watchdog auto-repairs R08 Accessibility after firmware force-stops. Run this companion once to enable it.", 13, MUTED, Typeface.NORMAL);
         armedCopy.setLineSpacing(dp(2), 1f);
         statusPanel.addView(armedCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         addGap(statusPanel, 8);
@@ -460,6 +469,7 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for glasses Wi-Fi", MUTED);
         setStatusLine(adbStatusText, "ADB", "Waiting for live port", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
+        setStatusLine(watchdogStatusText, "Watchdog", "Checking during re-arm", MUTED);
         setDetail("Sending re-arm command over Hi Rokid/Bluetooth. The glasses accessibility service will enable Wi-Fi and report the live ADB port.");
         cxrClient.requestReArm();
         String fallbackHost = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
@@ -486,6 +496,7 @@ public final class PhoneCompanionActivity extends Activity {
         }
         summary("Re-arming bridge", MUTED);
         setStatusLine(adbStatusText, "ADB", "Connecting to " + host + ":" + port, MUTED);
+        setStatusLine(watchdogStatusText, "Watchdog", "Checking during re-arm", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
         setDetail("Connecting to saved endpoint " + host + ":" + port + "…");
         executor.execute(() -> {
@@ -498,6 +509,7 @@ public final class PhoneCompanionActivity extends Activity {
                 runOnUiThread(() -> {
                     setupCoordinator.markNotArmed();
                     setStatusLine(adbStatusText, "ADB", "Re-arm failed, trying full setup", WARN);
+                    renderWatchdogUnknown();
                     setDetail("Could not reconnect to " + host + ":" + port + " — "
                             + shortMessage(throwable) + "\n\nFalling back to full bridge setup via Hi Rokid.");
                     summary("Full setup fallback", WARN);
@@ -543,6 +555,7 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for helper", MUTED);
         setStatusLine(adbStatusText, "ADB", "Checking pairing", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Starting", MUTED);
+        setStatusLine(watchdogStatusText, "Watchdog", "Provisioning during arm", MUTED);
         setDetail("Starting through Hi Rokid. If Wireless Debugging is not paired yet, the glasses will open the setup screen and the phone will pair automatically from the code.");
         if (!cxrClient.hasAuthToken()) {
             continueBootstrapAfterAuthorization = true;
@@ -559,6 +572,7 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(cxrStatusText, "Hi Rokid", cxrClient.hasAuthToken() ? "Opening setup" : "Needs authorization", cxrClient.hasAuthToken() ? MUTED : WARN);
         setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+        renderStoredWatchdogStatus();
         setDetail("Opening Wireless Debugging on the glasses. Keep the phone and glasses on the same Wi-Fi; the pairing code will be consumed automatically.");
         if (!cxrClient.hasAuthToken()) {
             continueBootstrapAfterAuthorization = false;
@@ -584,6 +598,7 @@ public final class PhoneCompanionActivity extends Activity {
                     if (error) {
                         summary("Hi Rokid not ready", ERROR);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        renderWatchdogUnknown();
                     }
                 }
             });
@@ -691,6 +706,7 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
         setStatusLine(adbStatusText, "ADB",
                 state.wifiConnected ? "Bridge already armed" : "Armed, glasses Wi-Fi off", ACCENT);
+        renderStoredWatchdogStatus();
         summary("Setup complete", ACCENT);
         setDetail(state.wifiConnected
                 ? "Bridge is already armed on the glasses. You can close this app."
@@ -726,6 +742,7 @@ public final class PhoneCompanionActivity extends Activity {
     private void pairAndArm(BridgeSetupCoordinator.Decision decision) {
         summary("Pairing ADB", MUTED);
         setStatusLine(adbStatusText, "ADB", "Pairing phone", MUTED);
+        setStatusLine(watchdogStatusText, "Watchdog", "Provisioning during arm", MUTED);
         setDetail("Pairing this phone with the glasses over Wireless Debugging, then arming the bridge.");
         executor.execute(() -> {
             try {
@@ -778,6 +795,7 @@ public final class PhoneCompanionActivity extends Activity {
                         setupCoordinator.markNotArmed();
                         setStatusLine(adbStatusText, "ADB", "Pairing failed", ERROR);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        renderWatchdogUnknown();
                         summary("Pairing failed", ERROR);
                         setDetail(errorMessage(pairingThrowable));
                     });
@@ -806,6 +824,7 @@ public final class PhoneCompanionActivity extends Activity {
                     runOnUiThread(() -> {
                         setStatusLine(adbStatusText, "ADB", "Paired, waiting for port", WARN);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+                        renderWatchdogUnknown();
                         summary("Wireless setup", MUTED);
                         setDetail("Pairing was accepted, but port " + decision.connectPort
                                 + " did not accept the key yet. Refreshing the Wireless Debugging port. "
@@ -823,6 +842,7 @@ public final class PhoneCompanionActivity extends Activity {
                         setupCoordinator.markNotArmed();
                         setStatusLine(adbStatusText, "ADB", "Arm failed", ERROR);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        renderWatchdogUnknown();
                         summary("Arm failed", ERROR);
                         setDetail(errorMessage(armThrowable));
                     });
@@ -897,11 +917,13 @@ public final class PhoneCompanionActivity extends Activity {
                     if (continueWirelessSetupOnFailure && setupCoordinator.isWirelessSetupRequested()) {
                         setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
+                        renderWatchdogUnknown();
                         summary("Wireless setup", MUTED);
                         setDetail("Wireless Debugging port " + port + " is visible, but this phone is not paired yet. Waiting for the pairing code on the glasses.");
                     } else {
                         setStatusLine(adbStatusText, "ADB", "Recovery needed", ERROR);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
+                        renderWatchdogUnknown();
                         summary("Wi-Fi is up, ADB is not", ERROR);
                         setDetail(errorMessage(throwable));
                     }
@@ -928,6 +950,7 @@ public final class PhoneCompanionActivity extends Activity {
                 runOnUiThread(() -> {
                     setupCoordinator.markNotArmed();
                     setStatusLine(adbStatusText, "ADB", "Failed", ERROR);
+                    renderWatchdogUnknown();
                     setDetail(errorMessage(throwable));
                 });
             }
@@ -957,6 +980,7 @@ public final class PhoneCompanionActivity extends Activity {
                 runOnUiThread(() -> {
                     setupCoordinator.markNotArmed();
                     setStatusLine(adbStatusText, "ADB", "Scan failed", ERROR);
+                    renderWatchdogUnknown();
                     summary("Could not arm over LAN", ERROR);
                     setDetail(errorMessage(throwable));
                 });
@@ -969,6 +993,7 @@ public final class PhoneCompanionActivity extends Activity {
     // -------------------------------------------------------------------------
 
     private void applyBridgeResult(String host, BridgeOperationResult result) {
+        updateWatchdogStatusFromOutput(result.output());
         switch (result.type()) {
             case ARMED:
                 setupCoordinator.markArmed();
@@ -1165,8 +1190,127 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private String armedDetail(String output) {
-        String base = "Done. You can close this app now; the shortcut bridge and accessibility watchdog keep running on the glasses.";
+        String watchdogStatus = extractWatchdogStatus(output);
+        String watchdogCopy = "running".equals(watchdogStateLabel(watchdogStatus))
+                ? "The accessibility watchdog is installed and running on the glasses."
+                : "Check Watchdog above; it was not confirmed running.";
+        String base = "Done. You can close this app now; the shortcut bridge is armed. "
+                + watchdogCopy + "\n\n"
+                + "The watchdog auto-repairs R08 Accessibility after firmware force-stops. Running this companion once is required to enable it.";
         return output == null || output.trim().isEmpty() ? base : base + "\n\n" + output.trim();
+    }
+
+    private void updateWatchdogStatusFromOutput(String output) {
+        String status = extractWatchdogStatus(output);
+        if (status.isEmpty()) {
+            return;
+        }
+        long checkedAt = System.currentTimeMillis();
+        prefs().edit()
+                .putString(PREF_WATCHDOG_STATUS, status)
+                .putLong(PREF_WATCHDOG_CHECKED_AT, checkedAt)
+                .apply();
+        renderWatchdogStatus(status, checkedAt, true);
+    }
+
+    private void renderStoredWatchdogStatus() {
+        if (watchdogStatusText == null) {
+            return;
+        }
+        String status = prefs().getString(PREF_WATCHDOG_STATUS, "");
+        long checkedAt = prefs().getLong(PREF_WATCHDOG_CHECKED_AT, 0L);
+        if (status == null || status.trim().isEmpty()) {
+            setStatusLine(watchdogStatusText, "Watchdog", "unknown", MUTED);
+            return;
+        }
+        setStatusLine(watchdogStatusText, "Watchdog",
+                watchdogStateLabel(status) + " (last checked " + formatTimestamp(checkedAt) + ")",
+                watchdogStatusColor(status, false));
+    }
+
+    private void renderWatchdogUnknown() {
+        if (watchdogStatusText == null) {
+            return;
+        }
+        String status = prefs().getString(PREF_WATCHDOG_STATUS, "");
+        long checkedAt = prefs().getLong(PREF_WATCHDOG_CHECKED_AT, 0L);
+        if (status == null || status.trim().isEmpty() || checkedAt <= 0L) {
+            setStatusLine(watchdogStatusText, "Watchdog", "unknown (glasses unreachable)", WARN);
+            return;
+        }
+        setStatusLine(watchdogStatusText, "Watchdog",
+                "unknown (last " + watchdogStateLabel(status) + " " + formatTimestamp(checkedAt) + ")",
+                WARN);
+    }
+
+    private void renderWatchdogStatus(String status, long checkedAt, boolean live) {
+        if (watchdogStatusText == null) {
+            return;
+        }
+        String suffix = live ? "checked " : "last checked ";
+        setStatusLine(watchdogStatusText, "Watchdog",
+                watchdogStateLabel(status) + " (" + suffix + formatTimestamp(checkedAt) + ")",
+                watchdogStatusColor(status, live));
+    }
+
+    private String extractWatchdogStatus(String output) {
+        if (output == null || output.trim().isEmpty()) {
+            return "";
+        }
+        String[] lines = output.split("\\r?\\n");
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("Accessibility watchdog:")) {
+                return trimmed.substring("Accessibility watchdog:".length()).trim();
+            }
+            if (trimmed.startsWith("Accessibility watchdog failed:")) {
+                return "failed: " + trimmed.substring("Accessibility watchdog failed:".length()).trim();
+            }
+            if (trimmed.startsWith("Accessibility watchdog stop failed:")) {
+                return "failed: " + trimmed.substring("Accessibility watchdog stop failed:".length()).trim();
+            }
+        }
+        return "";
+    }
+
+    private String watchdogStateLabel(String status) {
+        String value = status == null ? "" : status.trim();
+        String lower = value.toLowerCase(Locale.US);
+        if (lower.contains("already running") || lower.contains("started") || lower.startsWith("running")) {
+            return "running";
+        }
+        if (lower.contains("not installed")) {
+            return "not installed";
+        }
+        if (lower.contains("not running") || lower.contains("stopped")) {
+            return "not running";
+        }
+        if (lower.contains("failed")) {
+            return "failed";
+        }
+        return value.isEmpty() ? "unknown" : value;
+    }
+
+    private int watchdogStatusColor(String status, boolean live) {
+        String lower = status == null ? "" : status.toLowerCase(Locale.US);
+        if (lower.contains("already running") || lower.contains("started") || lower.startsWith("running")) {
+            return live ? ACCENT : MUTED;
+        }
+        if (lower.contains("failed")) {
+            return ERROR;
+        }
+        if (lower.contains("not installed") || lower.contains("not running") || lower.contains("stopped")) {
+            return WARN;
+        }
+        return MUTED;
+    }
+
+    private String formatTimestamp(long timestamp) {
+        if (timestamp <= 0L) {
+            return "unknown time";
+        }
+        return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                .format(new Date(timestamp));
     }
 
     // -------------------------------------------------------------------------

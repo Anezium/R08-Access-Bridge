@@ -12,6 +12,7 @@
     <string name="title_one_tap_swipe_down">1 Tap + Swipe Down</string>
     <string name="title_two_tap_swipe_up">2 Taps + Swipe Up</string>
     <string name="title_two_tap_swipe_down">2 Taps + Swipe Down</string>
+    <string name="title_launch_app_picker">Launch App</string>
     <string name="title_system">System</string>
     <string name="title_forget_confirm">Forget R08?</string>
     <string name="title_probe_app_type">AppType Probe</string>
@@ -22,6 +23,7 @@
     <string name="status_modes">%1$s - Input behavior</string>
     <string name="status_mapping">%1$s - Tap actions</string>
     <string name="status_mapping_select">%1$s - Choose action</string>
+    <string name="status_launch_app_picker">%1$s - Choose app</string>
     <string name="status_system">%1$s - Permissions and reset</string>
     <string name="status_forget_confirm">This only removes the saved bond</string>
     <string name="status_probe_app_type">%1$s - Test R08 key output</string>
@@ -62,7 +64,11 @@
     <string name="action_two_tap_swipe_down">2 Taps + Swipe Down</string>
     <string name="detail_mapping_current">Current: %1$s</string>
     <string name="detail_mapping_current_bridge">Current: %1$s - %2$s</string>
+    <string name="detail_mapping_launch">Launch: %1$s</string>
+    <string name="detail_launch_app_missing">No app selected</string>
     <string name="detail_mapping_selected">Selected - %1$s</string>
+    <string name="action_no_launch_apps">No apps found</string>
+    <string name="detail_no_launch_apps">No launcher apps available</string>
 
     <string name="action_cancel">Cancel</string>
     <string name="detail_cancel_forget">Keep the saved R08 bond</string>

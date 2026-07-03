@@ -50,7 +50,8 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 - Uses Android Accessibility to move focus, scroll, click, inject launcher swipes, and perform Back.
 - Keeps the in-app HUD compact and readable on a 480x640 glasses display.
 - Lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
-- Lets you remap triple and quadruple tap actions directly from the glasses UI.
+- Lets you remap triple tap, quadruple tap, and four tap+swipe combo gestures directly from the glasses UI, including launching any installed app.
+- Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
 - Adds a phone companion that can arm the exact Hi Rokid shortcut bridge through Hi Rokid/CXR-L plus ADB Wi-Fi.
 - Turns glasses Wi-Fi back off after arming by default to protect battery life.
 - Provides an AppType probe screen for testing R08 output modes.
@@ -61,7 +62,12 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 <p align="center">
   <img src="docs/screenshots/home.png" alt="R08 Access Bridge home screen" width="190">
   <img src="docs/screenshots/ring-modes.png" alt="Ring Modes screen with Stable mode active" width="190">
-  <img src="docs/screenshots/action-mapping.png" alt="Action Mapping screen for triple and quadruple tap" width="190">
+  <img src="docs/screenshots/action-mapping.png" alt="Action Mapping screen with tap and tap+swipe gestures" width="190">
+  <img src="docs/screenshots/tap-swipe-options.png" alt="Action options for a tap+swipe combo, including Launch app" width="190">
+  <img src="docs/screenshots/launch-app-picker.png" alt="Launch App picker listing installed apps" width="190">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/quadruple-tap-bridge.png" alt="Quadruple Tap mapped to the Hi Rokid Shortcut bridge" width="190">
   <img src="docs/screenshots/quadruple-tap-options.png" alt="Quadruple Tap action options" width="190">
 </p>
@@ -80,16 +86,18 @@ By default, the R08 ring is configured to emit media keys in Stable mode:
 | Backward / previous | Move backward through the launcher or current app focus |
 | Single tap | Activate the current app, button, or focused item |
 | Double tap | Android Back |
-| Triple tap | Configurable action, defaults to Rokid AI assistant |
-| Quadruple tap | Configurable action, defaults to the Hi Rokid two-finger AI shortcut bridge |
+| Triple tap | Configurable action, no action by default |
+| Quadruple tap | Configurable action, no action by default |
+| 1 tap + swipe up / down | Configurable shortcut, no action by default |
+| 2 taps + swipe up / down | Configurable shortcut, no action by default |
 
 Inside R08 Access Bridge itself, double tap goes back to the previous screen. On the root screen, Back exits the app and returns to the launcher.
 
-Triple tap defaults to the same Rokid AI assistant scene used by the glasses long-press path.
+Triple tap, quadruple tap, and the combos ship unmapped so that single tap and double tap Back respond as fast as possible: the recognizer only waits for a longer gesture when one is actually mapped. Mapping a higher tap count or a combo adds a short (~350-500 ms) confirmation delay to the tap counts below it.
 
-Quadruple tap defaults to `Hi Rokid Shortcut`, which requests the exact two-finger long-press path when the privileged bridge is armed. A normal APK still cannot write `/dev/input` by itself, so the exact shortcut requires either the included phone/ADB bridge, a shell/root helper, or hardware that emits the matching Rokid input event.
+The `Hi Rokid Shortcut` action requests the exact two-finger long-press path when the privileged bridge is armed. A normal APK still cannot write `/dev/input` by itself, so the exact shortcut requires either the included phone/ADB bridge, a shell/root helper, or hardware that emits the matching Rokid input event.
 
-Triple and quadruple tap can be remapped in the app to:
+Each mappable gesture can be set in the app to:
 
 - No action
 - Rokid AI
@@ -98,6 +106,7 @@ Triple and quadruple tap can be remapped in the app to:
 - Video toggle
 - AR screenshot
 - AR video toggle
+- Launch app (opens a picker listing the apps installed on the glasses)
 
 ## Hi Rokid Shortcut Bridge
 
@@ -168,9 +177,10 @@ The launcher movement is tuned to keep the visible Rokid launcher selection and 
 - Each ring swipe moves one normal launcher step.
 - Fast mode accelerates repeated launcher slides with boosted swipes instead of issuing a second tiny swipe that the Rokid launcher may ignore.
 - Activation taps the visible center app in the launcher carousel.
-- Triple tap opens the Rokid AI assistant, matching the glasses system long-press shortcut.
 
 This avoids relying on stale launcher accessibility focus. Fast mode can re-enable repeated-swipe acceleration from the `Ring modes` screen when a device handles it correctly.
+
+Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts — while working fine for others. The app now detects that state and resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen. Ring navigation should now behave the same for everyone, regardless of the screen timeout.
 
 ## App Screens
 
@@ -185,6 +195,8 @@ This avoids relying on stale launcher accessibility focus. Fast mode can re-enab
 
 - `Triple Tap` chooses what three taps trigger.
 - `Quadruple Tap` chooses what four taps trigger.
+- `1 Tap + Swipe Up/Down` and `2 Taps + Swipe Up/Down` choose the tap+swipe combo shortcuts.
+- Picking `Launch app` for any gesture opens a picker listing the installed apps; the chosen app is then launched directly by that gesture.
 
 ### Ring Modes
 
@@ -218,13 +230,13 @@ Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.4.7.apk
+adb install -r R08-Access-Bridge-v1.4.8.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
 
 ```powershell
-adb install -r R08-Companion-v0.2.6.apk
+adb install -r R08-Companion-v0.2.7.apk
 ```
 
 After installing the glasses APK:
@@ -245,6 +257,19 @@ After installing the companion APK:
 2. Tap `Authorize` once and approve the Hi Rokid authorization screen.
 3. Tap `Start Bridge`.
 4. When the status reads `Bridge: Armed`, close the companion app. The shell bridge keeps running on the glasses until it is disabled or the glasses reboot.
+
+### Run the phone companion at least once (accessibility watchdog)
+
+This step is not optional anymore, even if you never use the Hi Rokid shortcut.
+
+Rokid RG firmware 1.21.009 force-stops third-party apps and strips their Accessibility service when a temple leg is folded. Without recovery, ring control silently dies the first time you fold the glasses, and the accessibility service has to be re-enabled by hand.
+
+R08 Access Bridge recovers through an accessibility watchdog that runs on the glasses as the ADB `shell` user, but a normal APK cannot install that watchdog by itself: it has to be provisioned from outside. Arming the bridge from `R08 Companion` (or the PC helper script) once does exactly that — it installs and starts the watchdog and provisions the local loopback self-arm path. After that one-time arm:
+
+- The watchdog restores the accessibility service automatically after a firmware force-stop.
+- Opening R08 Access Bridge on the glasses can self-repair through `127.0.0.1:5555` even without the phone.
+
+The companion shows the watchdog state on its main screen so you can confirm the glasses are protected.
 
 ## Build From Source
 

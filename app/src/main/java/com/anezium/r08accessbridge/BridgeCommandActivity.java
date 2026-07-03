@@ -11,6 +11,8 @@ import android.widget.Toast;
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
 public final class BridgeCommandActivity extends Activity {
+    private static final String EXTRA_LAUNCH_APP_PACKAGE = "launch_app_package";
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
@@ -35,10 +37,15 @@ public final class BridgeCommandActivity extends Activity {
 
         boolean handled = false;
         boolean mappingHandled = false;
+        boolean hasLaunchPackage = intent.hasExtra(EXTRA_LAUNCH_APP_PACKAGE);
+        String launchPackage = intent.getStringExtra(EXTRA_LAUNCH_APP_PACKAGE);
         RingTapAction triple = RingTapAction.fromId(
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_TRIPLE_TAP_ACTION), null);
         if (triple != null) {
             RingActionMappings.setTripleTap(this, triple);
+            if (triple == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setTripleTapLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }
@@ -47,6 +54,9 @@ public final class BridgeCommandActivity extends Activity {
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_QUADRUPLE_TAP_ACTION), null);
         if (quadruple != null) {
             RingActionMappings.setQuadrupleTap(this, quadruple);
+            if (quadruple == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setQuadrupleTapLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }
@@ -55,6 +65,9 @@ public final class BridgeCommandActivity extends Activity {
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_ONE_TAP_SWIPE_UP_ACTION), null);
         if (oneTapSwipeUp != null) {
             RingActionMappings.setOneTapSwipeUp(this, oneTapSwipeUp);
+            if (oneTapSwipeUp == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setOneTapSwipeUpLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }
@@ -63,6 +76,9 @@ public final class BridgeCommandActivity extends Activity {
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_ONE_TAP_SWIPE_DOWN_ACTION), null);
         if (oneTapSwipeDown != null) {
             RingActionMappings.setOneTapSwipeDown(this, oneTapSwipeDown);
+            if (oneTapSwipeDown == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setOneTapSwipeDownLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }
@@ -71,6 +87,9 @@ public final class BridgeCommandActivity extends Activity {
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_TWO_TAP_SWIPE_UP_ACTION), null);
         if (twoTapSwipeUp != null) {
             RingActionMappings.setTwoTapSwipeUp(this, twoTapSwipeUp);
+            if (twoTapSwipeUp == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setTwoTapSwipeUpLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }
@@ -79,6 +98,9 @@ public final class BridgeCommandActivity extends Activity {
                 intent.getStringExtra(BridgeProtocol.EXTRA_SET_TWO_TAP_SWIPE_DOWN_ACTION), null);
         if (twoTapSwipeDown != null) {
             RingActionMappings.setTwoTapSwipeDown(this, twoTapSwipeDown);
+            if (twoTapSwipeDown == RingTapAction.LAUNCH_APP && hasLaunchPackage) {
+                RingActionMappings.setTwoTapSwipeDownLaunchPackage(this, launchPackage);
+            }
             handled = true;
             mappingHandled = true;
         }

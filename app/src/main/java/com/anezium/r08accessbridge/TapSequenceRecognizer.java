@@ -13,43 +13,36 @@ final class TapSequenceRecognizer {
     private final Handler handler;
     private final Listener listener;
     private final long duplicateIgnoreMs;
-    private final long interTapTimeoutMs;
 
     private Runnable pendingResolution;
     private String pendingSource;
     private long lastTapAt;
+    private long scheduledWaitMs;
     private int tapCount;
 
     TapSequenceRecognizer(
             Handler handler,
             Listener listener,
-            long duplicateIgnoreMs,
-            long interTapTimeoutMs
+            long duplicateIgnoreMs
     ) {
         this.handler = handler;
         this.listener = listener;
         this.duplicateIgnoreMs = duplicateIgnoreMs;
-        this.interTapTimeoutMs = interTapTimeoutMs;
     }
 
-    void onTap(String source, long now, int maxTapCount) {
-        int safeMaxTapCount = Math.max(1, maxTapCount);
+    void onTap(String source, long now, long waitMs) {
         if (pendingResolution != null) {
             long delta = now - lastTapAt;
             if (delta < duplicateIgnoreMs) {
                 Log.d(TAG, "Ignored tap bounce delta=" + delta);
                 return;
             }
-            if (delta <= interTapTimeoutMs) {
+            if (delta <= scheduledWaitMs) {
                 handler.removeCallbacks(pendingResolution);
                 tapCount++;
                 lastTapAt = now;
                 pendingSource = source;
-                if (tapCount >= safeMaxTapCount) {
-                    resolve();
-                } else {
-                    schedule();
-                }
+                scheduleOrResolve(waitMs);
                 return;
             }
             cancel();
@@ -58,11 +51,7 @@ final class TapSequenceRecognizer {
         tapCount = 1;
         lastTapAt = now;
         pendingSource = source;
-        if (tapCount >= safeMaxTapCount) {
-            resolve();
-        } else {
-            schedule();
-        }
+        scheduleOrResolve(waitMs);
     }
 
     void cancel() {
@@ -72,11 +61,20 @@ final class TapSequenceRecognizer {
         pendingResolution = null;
         pendingSource = null;
         lastTapAt = 0L;
+        scheduledWaitMs = 0L;
         tapCount = 0;
     }
 
+    void flush() {
+        if (pendingResolution == null) {
+            return;
+        }
+        handler.removeCallbacks(pendingResolution);
+        resolve();
+    }
+
     int pendingTapCount(long now) {
-        if (pendingResolution == null || now - lastTapAt > interTapTimeoutMs) {
+        if (pendingResolution == null || now - lastTapAt > scheduledWaitMs) {
             return 0;
         }
         return tapCount;
@@ -86,9 +84,14 @@ final class TapSequenceRecognizer {
         return pendingSource;
     }
 
-    private void schedule() {
+    private void scheduleOrResolve(long waitMs) {
+        if (waitMs <= 0L) {
+            resolve();
+            return;
+        }
+        scheduledWaitMs = waitMs;
         pendingResolution = this::resolve;
-        handler.postDelayed(pendingResolution, interTapTimeoutMs);
+        handler.postDelayed(pendingResolution, waitMs);
     }
 
     private void resolve() {
@@ -97,6 +100,7 @@ final class TapSequenceRecognizer {
         pendingResolution = null;
         pendingSource = null;
         lastTapAt = 0L;
+        scheduledWaitMs = 0L;
         tapCount = 0;
         listener.onTapSequence(source == null ? "tap" : source, count);
     }

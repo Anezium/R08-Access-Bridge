@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.Typeface;
@@ -28,7 +29,10 @@ import android.widget.Toast;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final String TAG = "R08Activity";
@@ -46,6 +50,7 @@ public final class MainActivity extends Activity {
     private LinearLayout content;
     private ScrollView scrollView;
     private Screen screen = Screen.HOME;
+    private MappingTarget pendingLaunchAppTarget;
     private long lastNavAt;
     private int lastNavDirection;
     private long pendingSelectAt;
@@ -201,6 +206,11 @@ public final class MainActivity extends Activity {
         navigateTo(Screen.TWO_TAP_SWIPE_DOWN_MAPPING);
     }
 
+    private void showLaunchAppPicker(MappingTarget target) {
+        pendingLaunchAppTarget = target;
+        navigateTo(Screen.LAUNCH_APP_PICKER);
+    }
+
     private void showSystem() {
         navigateTo(Screen.SYSTEM);
     }
@@ -258,17 +268,17 @@ public final class MainActivity extends Activity {
                 action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
                 break;
             case MAPPING:
-                action(getString(R.string.action_triple_tap), mappingSummary(RingActionMappings.tripleTap(this)),
+                action(getString(R.string.action_triple_tap), mappingSummary(MappingTarget.TRIPLE_TAP),
                         v -> showTripleTapMapping());
-                action(getString(R.string.action_quadruple_tap), mappingSummary(RingActionMappings.quadrupleTap(this)),
+                action(getString(R.string.action_quadruple_tap), mappingSummary(MappingTarget.QUADRUPLE_TAP),
                         v -> showQuadrupleTapMapping());
-                action(getString(R.string.action_one_tap_swipe_up), mappingSummary(RingActionMappings.oneTapSwipeUp(this)),
+                action(getString(R.string.action_one_tap_swipe_up), mappingSummary(MappingTarget.ONE_TAP_SWIPE_UP),
                         v -> showOneTapSwipeUpMapping());
-                action(getString(R.string.action_one_tap_swipe_down), mappingSummary(RingActionMappings.oneTapSwipeDown(this)),
+                action(getString(R.string.action_one_tap_swipe_down), mappingSummary(MappingTarget.ONE_TAP_SWIPE_DOWN),
                         v -> showOneTapSwipeDownMapping());
-                action(getString(R.string.action_two_tap_swipe_up), mappingSummary(RingActionMappings.twoTapSwipeUp(this)),
+                action(getString(R.string.action_two_tap_swipe_up), mappingSummary(MappingTarget.TWO_TAP_SWIPE_UP),
                         v -> showTwoTapSwipeUpMapping());
-                action(getString(R.string.action_two_tap_swipe_down), mappingSummary(RingActionMappings.twoTapSwipeDown(this)),
+                action(getString(R.string.action_two_tap_swipe_down), mappingSummary(MappingTarget.TWO_TAP_SWIPE_DOWN),
                         v -> showTwoTapSwipeDownMapping());
                 break;
             case TRIPLE_TAP_MAPPING:
@@ -288,6 +298,9 @@ public final class MainActivity extends Activity {
                 break;
             case TWO_TAP_SWIPE_DOWN_MAPPING:
                 addMappingActions(MappingTarget.TWO_TAP_SWIPE_DOWN);
+                break;
+            case LAUNCH_APP_PICKER:
+                addLaunchAppPickerActions();
                 break;
             case SYSTEM:
                 action(R.string.action_accessibility, R.string.detail_accessibility,
@@ -372,6 +385,8 @@ public final class MainActivity extends Activity {
                 return getString(R.string.title_two_tap_swipe_up);
             case TWO_TAP_SWIPE_DOWN_MAPPING:
                 return getString(R.string.title_two_tap_swipe_down);
+            case LAUNCH_APP_PICKER:
+                return getString(R.string.title_launch_app_picker);
             case SYSTEM:
                 return getString(R.string.title_system);
             case FORGET_CONFIRM:
@@ -401,6 +416,8 @@ public final class MainActivity extends Activity {
             case TWO_TAP_SWIPE_UP_MAPPING:
             case TWO_TAP_SWIPE_DOWN_MAPPING:
                 return getString(R.string.status_mapping_select, service);
+            case LAUNCH_APP_PICKER:
+                return getString(R.string.status_launch_app_picker, service);
             case SYSTEM:
                 return getString(R.string.status_system, service);
             case PROBE:
@@ -452,8 +469,56 @@ public final class MainActivity extends Activity {
             String detail = action == selected
                     ? getString(R.string.detail_mapping_selected, action.detail())
                     : action.detail();
-            action(action.title(), detail, v -> saveMapping(target, action));
+            if (action == RingTapAction.LAUNCH_APP) {
+                action(action.title(), detail, v -> showLaunchAppPicker(target));
+            } else {
+                action(action.title(), detail, v -> saveMapping(target, action));
+            }
         }
+    }
+
+    private void addLaunchAppPickerActions() {
+        MappingTarget target = pendingLaunchAppTarget;
+        List<LaunchAppInfo> apps = launcherApps();
+        if (target == null || apps.isEmpty()) {
+            action(R.string.action_no_launch_apps, R.string.detail_no_launch_apps, v -> navigateBack());
+            return;
+        }
+        for (LaunchAppInfo app : apps) {
+            action(app.label, app.packageName, v -> saveLaunchAppMapping(target, app));
+        }
+    }
+
+    private List<LaunchAppInfo> launcherApps() {
+        PackageManager packageManager = getPackageManager();
+        Intent intent = new Intent(Intent.ACTION_MAIN);
+        intent.addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> resolved = packageManager.queryIntentActivities(intent, 0);
+        List<LaunchAppInfo> apps = new ArrayList<>();
+        Set<String> seenPackages = new HashSet<>();
+        for (ResolveInfo resolveInfo : resolved) {
+            if (resolveInfo.activityInfo == null) {
+                continue;
+            }
+            String packageName = resolveInfo.activityInfo.packageName;
+            if (TextUtils.isEmpty(packageName) || getPackageName().equals(packageName)) {
+                continue;
+            }
+            if (!seenPackages.add(packageName)) {
+                continue;
+            }
+            CharSequence label = resolveInfo.loadLabel(packageManager);
+            String title = label == null || label.length() == 0 ? packageName : label.toString();
+            apps.add(new LaunchAppInfo(title, packageName));
+        }
+        Collections.sort(apps, (left, right) -> {
+            int labelCompare = left.label.compareToIgnoreCase(right.label);
+            if (labelCompare != 0) {
+                return labelCompare;
+            }
+            return left.packageName.compareToIgnoreCase(right.packageName);
+        });
+        return apps;
     }
 
     private RingTapAction actionForMapping(MappingTarget target) {
@@ -475,7 +540,11 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private String mappingSummary(RingTapAction action) {
+    private String mappingSummary(MappingTarget target) {
+        RingTapAction action = actionForMapping(target);
+        if (action == RingTapAction.LAUNCH_APP) {
+            return getString(R.string.detail_mapping_launch, appLabelForPackage(launchPackageForMapping(target)));
+        }
         if (action == RingTapAction.HI_ROKID_SHORTCUT) {
             return getString(R.string.detail_mapping_current_bridge, action.title(),
                     PrivilegedShortcutBridge.statusLabel(this));
@@ -484,6 +553,20 @@ public final class MainActivity extends Activity {
     }
 
     private void saveMapping(MappingTarget target, RingTapAction action) {
+        setMappingAction(target, action);
+        Toast.makeText(this, getString(R.string.toast_mapping_saved, action.title()), Toast.LENGTH_SHORT).show();
+        navigateBack();
+    }
+
+    private void saveLaunchAppMapping(MappingTarget target, LaunchAppInfo app) {
+        setMappingAction(target, RingTapAction.LAUNCH_APP);
+        setLaunchPackageForMapping(target, app.packageName);
+        Toast.makeText(this, getString(R.string.toast_mapping_saved, app.label), Toast.LENGTH_SHORT).show();
+        pendingLaunchAppTarget = null;
+        navigateBackToMapping();
+    }
+
+    private void setMappingAction(MappingTarget target, RingTapAction action) {
         switch (target) {
             case TRIPLE_TAP:
                 RingActionMappings.setTripleTap(this, action);
@@ -506,8 +589,67 @@ public final class MainActivity extends Activity {
             default:
                 break;
         }
-        Toast.makeText(this, getString(R.string.toast_mapping_saved, action.title()), Toast.LENGTH_SHORT).show();
-        navigateBack();
+    }
+
+    private String launchPackageForMapping(MappingTarget target) {
+        switch (target) {
+            case TRIPLE_TAP:
+                return RingActionMappings.tripleTapLaunchPackage(this);
+            case QUADRUPLE_TAP:
+                return RingActionMappings.quadrupleTapLaunchPackage(this);
+            case ONE_TAP_SWIPE_UP:
+                return RingActionMappings.oneTapSwipeUpLaunchPackage(this);
+            case ONE_TAP_SWIPE_DOWN:
+                return RingActionMappings.oneTapSwipeDownLaunchPackage(this);
+            case TWO_TAP_SWIPE_UP:
+                return RingActionMappings.twoTapSwipeUpLaunchPackage(this);
+            case TWO_TAP_SWIPE_DOWN:
+                return RingActionMappings.twoTapSwipeDownLaunchPackage(this);
+            default:
+                return null;
+        }
+    }
+
+    private void setLaunchPackageForMapping(MappingTarget target, String launchPackage) {
+        switch (target) {
+            case TRIPLE_TAP:
+                RingActionMappings.setTripleTapLaunchPackage(this, launchPackage);
+                break;
+            case QUADRUPLE_TAP:
+                RingActionMappings.setQuadrupleTapLaunchPackage(this, launchPackage);
+                break;
+            case ONE_TAP_SWIPE_UP:
+                RingActionMappings.setOneTapSwipeUpLaunchPackage(this, launchPackage);
+                break;
+            case ONE_TAP_SWIPE_DOWN:
+                RingActionMappings.setOneTapSwipeDownLaunchPackage(this, launchPackage);
+                break;
+            case TWO_TAP_SWIPE_UP:
+                RingActionMappings.setTwoTapSwipeUpLaunchPackage(this, launchPackage);
+                break;
+            case TWO_TAP_SWIPE_DOWN:
+                RingActionMappings.setTwoTapSwipeDownLaunchPackage(this, launchPackage);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private String appLabelForPackage(String launchPackage) {
+        if (TextUtils.isEmpty(launchPackage) || launchPackage.trim().isEmpty()) {
+            return getString(R.string.detail_launch_app_missing);
+        }
+        String packageName = launchPackage.trim();
+        try {
+            CharSequence label = getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(packageName, 0));
+            if (label != null && label.length() > 0) {
+                return label.toString();
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            return packageName;
+        }
+        return packageName;
     }
 
     private void action(String titleText, String detailText, View.OnClickListener listener) {
@@ -666,6 +808,18 @@ public final class MainActivity extends Activity {
         } else {
             setScreen(backStack.pop());
         }
+    }
+
+    private void navigateBackToMapping() {
+        clearPendingSelect();
+        while (!backStack.isEmpty()) {
+            Screen previous = backStack.pop();
+            if (previous == Screen.MAPPING) {
+                setScreen(previous);
+                return;
+            }
+        }
+        setScreen(Screen.MAPPING);
     }
 
     private void focusRelative(int delta) {
@@ -876,6 +1030,16 @@ public final class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private static final class LaunchAppInfo {
+        final String label;
+        final String packageName;
+
+        LaunchAppInfo(String label, String packageName) {
+            this.label = label;
+            this.packageName = packageName;
+        }
+    }
+
     private enum MappingTarget {
         TRIPLE_TAP,
         QUADRUPLE_TAP,
@@ -895,6 +1059,7 @@ public final class MainActivity extends Activity {
         ONE_TAP_SWIPE_DOWN_MAPPING,
         TWO_TAP_SWIPE_UP_MAPPING,
         TWO_TAP_SWIPE_DOWN_MAPPING,
+        LAUNCH_APP_PICKER,
         SYSTEM,
         FORGET_CONFIRM,
         PROBE

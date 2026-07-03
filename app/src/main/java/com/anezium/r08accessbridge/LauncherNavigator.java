@@ -23,10 +23,10 @@ final class LauncherNavigator {
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
     private static final float LAUNCHER_APP_STEP_FRACTION = 0.27f;
-    private static final long LAUNCHER_APP_STEP_DURATION_MS = 220L;
-    private static final long LAUNCHER_APP_BOOST_DURATION_MS = 260L;
-    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 120L;
-    private static final long LAUNCHER_APP_SETTLE_MS = 180L;
+    private static final long LAUNCHER_APP_STEP_DURATION_MS = 150L;
+    private static final long LAUNCHER_APP_BOOST_DURATION_MS = 200L;
+    private static final long LAUNCHER_APP_STEP_QUEUE_GAP_MS = 40L;
+    private static final long LAUNCHER_APP_SETTLE_MS = 80L;
     private static final int MAX_LAUNCHER_BURST_STEPS = 3;
     private static final int MAX_LAUNCHER_QUEUED_STEPS = 3;
     private static final int PENDING_CENTER_ACTION_NONE = 0;
@@ -337,13 +337,7 @@ final class LauncherNavigator {
             queuedLauncherSteps = 0;
         }
         queuedLauncherForward = forward;
-        if (launcherStepInFlight) {
-            queuedLauncherSteps = Math.min(
-                    MAX_LAUNCHER_QUEUED_STEPS,
-                    Math.max(queuedLauncherSteps, safeSteps));
-        } else {
-            queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
-        }
+        queuedLauncherSteps = Math.min(MAX_LAUNCHER_QUEUED_STEPS, queuedLauncherSteps + safeSteps);
         drainLauncherQueue();
     }
 

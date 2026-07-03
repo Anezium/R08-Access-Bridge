@@ -1,10 +1,49 @@
 # Changelog
 
-## v1.4.8 - 2026-07-02
+## v1.4.8 - 2026-07-03
+
+### Ring input responsiveness
+
+- Reworked multi-tap recognition around an adaptive per-stage window: after each tap the app now waits only if a longer gesture is still possible, instead of always holding the full 700 ms timeout.
+- Single tap now activates in ~350 ms instead of ~700 ms.
+- Double tap Back fires instantly on the second tap when no triple/quadruple tap or two-tap combo is mapped, instead of up to 1.4 s later.
+- Changed the factory defaults for triple and quadruple tap to `No action` so double tap Back is instant out of the box; both remain fully mappable, and devices that received the old auto-assigned quadruple default are migrated.
+- Added a global duplicate-key guard so occasional duplicated BLE HID events can no longer cause double moves outside the launcher.
+- Double tap Back now respects the same debounce as other Back inputs, so accidental repeated double taps cannot blast through multiple screens.
+- When a swipe follows a still-pending tap with no combo mapped, the tap action now resolves before the swipe navigates, so activation can no longer land on the wrong item after the focus moved.
+
+### Launcher swipe latency
+
+- Cut the launcher swipe queue cycle from ~520 ms to ~270 ms per step (shorter injected drag, tighter settle and queue gaps), roughly halving the app-side delay between a ring swipe and the carousel move.
+- Rapid ring swipes now accumulate into boosted multi-step drags instead of collapsing while a swipe is in flight, so fast scrolling no longer silently drops inputs.
+- Relaxed the launcher direction debounce (260 ms to 150 ms) now that duplicated HID events are filtered at the source.
+
+### Tap + swipe shortcuts
+
+- Added four new mappable ring gestures: 1 tap + swipe up, 1 tap + swipe down, 2 taps + swipe up, and 2 taps + swipe down, recognized when a swipe arrives within the combo window after pending taps.
+- Unmapped combos pass through cleanly: the tap and the swipe both keep their normal behavior.
+
+### Launch app action
+
+- Added a `Launch app` action that can be bound to any mappable gesture (triple/quadruple tap and the four tap+swipe combos). Selecting it opens a picker listing the installed apps on the glasses; the chosen app then opens directly from the ring gesture, without navigating the launcher.
+
+### Screen wake
+
+- Ring input now wakes the glasses display when it is asleep, and the gesture that caused the wake (plus a short grace window while the panel lights up) is swallowed instead of navigating or activating blindly. This protects users on short screen-off timeouts, where navigation used to act on a stale, invisible UI.
+
+### Launcher focus under sysconfig MockWindow
+
+- Fixed launcher navigation and the bottom app-name label freezing when the Rokid `sysconfig` firmware window (an invisible 1x1 focused system window created around screen on/off) steals the active-window slot: accessibility root resolution now detects the bogus tiny root and falls back to the real application window.
+- Fixed launcher center activation launching the wrong app (typically the media player) after the display had slept, for the same root cause.
+
+### Ring battery chip
+
+- Moved the launcher ring battery chip so it no longer overlaps the launcher status icons (signal, Wi-Fi, Bluetooth) when they appear.
 
 ### Phone companion watchdog
 
 - Added a phone-packaged Accessibility watchdog for Rokid RG firmware 1.21.009, launched over ADB shell during arm/re-arm so the glasses app can recover after AssistServer force-stops it on leg fold.
+- The companion main screen now shows a persistent `Watchdog` status line (running / not installed / failed / unknown, with the last-checked time), sourced live from the arm/re-arm output, and the setup copy explains that running the companion once is required to enable the watchdog.
 - Added glasses-side app-open self-arm: after the phone provisions a trusted ADB key and `persist.adb.tcp.port=5555`, opening R08 Access Bridge on the glasses connects to `127.0.0.1:5555`, repairs Accessibility, and restarts the watchdog.
 - The phone companion now auto-attempts re-arm on launch when a previous arm endpoint or Hi Rokid authorization exists, restoring the shortcut bridge and watchdog without an extra tap.
 - Added a direct ADB fallback when Hi Rokid/CXR Bluetooth is unavailable, with mDNS settling to avoid stale Wireless Debugging ports.

@@ -1,11 +1,13 @@
 package com.anezium.r08accessbridge;
 
 import android.content.Context;
+import android.content.Intent;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
 enum RingTapAction {
     NONE("none", "No action", "Ignore this tap count", "No action"),
+    LAUNCH_APP("launch_app", "Launch app", "Open a chosen installed app", "Launch app"),
     AI_ASSIST("ai_assist", "Rokid AI", "Open the AI assistant scene", "Rokid AI"),
     HI_ROKID_SHORTCUT(BridgeProtocol.ACTION_HI_ROKID_SHORTCUT, "Hi Rokid Shortcut", "Trigger the real two-finger AI shortcut via the phone bridge", "Hi shortcut"),
     TAKE_PHOTO("take_photo", "Take photo", "Capture a normal camera photo", "Take photo"),
@@ -56,6 +58,8 @@ enum RingTapAction {
 
     boolean execute(Context context, AccessibilityNavigator navigator) {
         switch (this) {
+            case LAUNCH_APP:
+                return false;
             case AI_ASSIST:
                 if (RokidSystemActions.openAiAssist(context)) {
                     return true;
@@ -81,6 +85,34 @@ enum RingTapAction {
             case NONE:
             default:
                 return true;
+        }
+    }
+
+    boolean execute(Context context, AccessibilityNavigator navigator, String launchPackage) {
+        if (this == LAUNCH_APP) {
+            return launchApp(context, launchPackage);
+        }
+        return execute(context, navigator);
+    }
+
+    private boolean launchApp(Context context, String launchPackage) {
+        if (launchPackage == null) {
+            return false;
+        }
+        String packageName = launchPackage.trim();
+        if (packageName.isEmpty()) {
+            return false;
+        }
+        Intent intent = context.getPackageManager().getLaunchIntentForPackage(packageName);
+        if (intent == null) {
+            return false;
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 

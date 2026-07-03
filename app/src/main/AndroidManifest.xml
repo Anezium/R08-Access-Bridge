@@ -35,6 +35,13 @@
 
     <uses-permission android:name="com.anezium.r08accessbridge.permission.INTERNAL_COMMAND" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/r08_access_bridge_logo_icon"

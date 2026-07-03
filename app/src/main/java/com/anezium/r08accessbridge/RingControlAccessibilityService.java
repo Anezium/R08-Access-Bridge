@@ -9,12 +9,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -52,16 +56,17 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private static final String TAG = "R08Bridge";
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
-    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 260L;
+    private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 150L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
     private static final long TOUCH_LAUNCHER_DIRECTION_DEBOUNCE_MS = 420L;
     private static final long BACK_DEBOUNCE_MS = 350L;
     private static final long TAP_DUPLICATE_IGNORE_MS = 75L;
-    private static final long TAP_SEQUENCE_TIMEOUT_MS = 700L;
+    private static final long MULTI_TAP_TIMEOUT_MS = 350L;
+    private static final long TAP_SWIPE_COMBO_TIMEOUT_MS = 500L;
     private static final long MOTION_TAP_MAX_MS = 280L;
     private static final float MOTION_TAP_SLOP = 32f;
     private static final float MOTION_SWIPE_THRESHOLD = 70f;
-    private static final long INJECTED_GESTURE_SUPPRESS_MS = 550L;
+    private static final long SCREEN_WAKE_GRACE_MS = 600L;
     private static final long LAUNCHER_ACCELERATION_WINDOW_MS = 900L;
     private static final int LAUNCHER_ACCELERATION_START_STREAK = 3;
     private static final int LAUNCHER_ACCELERATED_STEPS = 2;
@@ -73,12 +78,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private WifiEnableAutomator wifiEnableAutomator;
     private RingBatteryLauncherOverlay batteryLauncherOverlay;
     private RingBleController bleController;
+    private PowerManager powerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
             mainHandler,
             this::resolveTapGesture,
-            TAP_DUPLICATE_IGNORE_MS,
-            TAP_SEQUENCE_TIMEOUT_MS);
+            TAP_DUPLICATE_IGNORE_MS);
     private boolean touchMode;
     private boolean fastNavigationMode;
     private long lastDirectionalAt;
@@ -88,12 +93,31 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private int launcherDirectionStreakCommand;
     private long launcherDirectionStreakAt;
     private long lastBackAt;
+    private int lastAcceptedRingKeyCode = KeyEvent.KEYCODE_UNKNOWN;
+    private long lastAcceptedRingKeyDownTime;
     private long suppressGesturesUntil;
     private float downX;
     private float downY;
     private long downAt;
     private boolean trackingMotion;
     private boolean batteryReceiverRegistered;
+    private boolean screenStateReceiverRegistered;
+    private boolean screenWakeGraceActive;
+    private final Runnable screenWakeGraceClear = this::clearScreenWakeGrace;
+
+    private final BroadcastReceiver screenStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                mainHandler.removeCallbacks(screenWakeGraceClear);
+                screenWakeGraceActive = true;
+            } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
+                mainHandler.removeCallbacks(screenWakeGraceClear);
+                mainHandler.postDelayed(screenWakeGraceClear, SCREEN_WAKE_GRACE_MS);
+            }
+        }
+    };
 
     private final BroadcastReceiver commandReceiver = new BroadcastReceiver() {
         @Override
@@ -213,6 +237,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         configureServiceInfo();
         registerCommandReceiver();
         registerBatteryReceiver();
+        registerScreenStateReceiver();
         batteryLauncherOverlay.start();
         bleController = new RingBleController(this);
         bleController.setTouchMode(touchMode);
@@ -236,6 +261,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             // Receiver was not registered.
         }
         unregisterBatteryReceiver();
+        unregisterScreenStateReceiver();
         if (batteryLauncherOverlay != null) {
             batteryLauncherOverlay.stop();
             batteryLauncherOverlay = null;
@@ -343,6 +369,46 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
     }
 
+    @SuppressWarnings("deprecation")
+    private boolean wakeScreenForRingInput(String source) {
+        if (powerManager == null) {
+            powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        }
+        if (powerManager == null) {
+            Log.w(TAG, "Could not wake screen for ring input from " + source);
+            return true;
+        }
+        boolean interactive = powerManager.isInteractive();
+        if (interactive && isDefaultDisplayOn()) {
+            return false;
+        }
+        if (interactive) {
+            Log.d(TAG, "Ignored ring input while display waking from " + source);
+            return true;
+        }
+        try {
+            PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                    PowerManager.FULL_WAKE_LOCK
+                            | PowerManager.ACQUIRE_CAUSES_WAKEUP
+                            | PowerManager.ON_AFTER_RELEASE,
+                    "R08Bridge:ringWake");
+            wakeLock.acquire(1000L);
+            Log.d(TAG, "Woke screen for ring input from " + source);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Could not wake screen for ring input from " + source, exception);
+        }
+        return true;
+    }
+
+    private boolean isDefaultDisplayOn() {
+        DisplayManager displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+        if (displayManager == null) {
+            return true;
+        }
+        Display display = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        return display == null || display.getState() == Display.STATE_ON;
+    }
+
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         if (isOwnAppActive()) {
@@ -354,20 +420,40 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() > 0) {
             return true;
         }
-        int command = commandForKey(event.getKeyCode());
-        if (command == RingCommand.NONE) {
-            Log.d(TAG, "Consumed unmapped R08 key=" + event.getKeyCode());
+        int keyCode = event.getKeyCode();
+        if (wakeScreenForRingInput("key:" + keyCode)) {
             return true;
         }
-        Log.d(TAG, "R08 key detail code=" + event.getKeyCode()
+        if (screenWakeGraceActive) {
+            Log.d(TAG, "Ignored ring key during screen wake grace code=" + keyCode);
+            return true;
+        }
+        long downTime = event.getDownTime();
+        if (downTime != 0L) {
+            if (keyCode == lastAcceptedRingKeyCode && downTime == lastAcceptedRingKeyDownTime) {
+                Log.d(TAG, "Ignored same-downTime R08 key repeat code=" + keyCode
+                        + " downTime=" + downTime
+                        + " eventTime=" + event.getEventTime());
+                return true;
+            }
+            lastAcceptedRingKeyCode = keyCode;
+            lastAcceptedRingKeyDownTime = downTime;
+        }
+        int command = commandForKey(keyCode);
+        if (command == RingCommand.NONE) {
+            Log.d(TAG, "Consumed unmapped R08 key=" + keyCode);
+            return true;
+        }
+        Log.d(TAG, "R08 key detail code=" + keyCode
                 + " downTime=" + event.getDownTime()
                 + " eventTime=" + event.getEventTime()
                 + " scan=" + event.getScanCode()
                 + " flags=" + event.getFlags());
-        String source = "key:" + event.getKeyCode();
-        if (handlePendingTapSwipeCombo(event.getKeyCode(), source)) {
+        String source = "key:" + keyCode;
+        if (handlePendingTapSwipeCombo(keyCode, source)) {
             return true;
         }
+        flushPendingTapBeforeDirectional(keyCode);
         executeDebounced(command, source, event.getDownTime(), event.getEventTime());
         return true;
     }
@@ -385,12 +471,21 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (handlePendingTapSwipeCombo(keyCode, source)) {
             return;
         }
+        flushPendingTapBeforeDirectional(keyCode);
         executeDebounced(command, source, 0L, 0L);
     }
 
     @Override
     public void onMotionEvent(MotionEvent event) {
         if (!isRingDevice(event.getDevice())) {
+            return;
+        }
+        if (wakeScreenForRingInput("motion")) {
+            trackingMotion = false;
+            return;
+        }
+        if (screenWakeGraceActive) {
+            trackingMotion = false;
             return;
         }
         int action = event.getActionMasked();
@@ -478,6 +573,34 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             registerReceiver(batteryReceiver, filter, COMMAND_PERMISSION, null);
         }
         batteryReceiverRegistered = true;
+    }
+
+    private void registerScreenStateReceiver() {
+        if (screenStateReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(screenStateReceiver, filter);
+        screenStateReceiverRegistered = true;
+    }
+
+    private void unregisterScreenStateReceiver() {
+        if (!screenStateReceiverRegistered) {
+            return;
+        }
+        screenStateReceiverRegistered = false;
+        mainHandler.removeCallbacks(screenWakeGraceClear);
+        screenWakeGraceActive = false;
+        try {
+            unregisterReceiver(screenStateReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
+        }
+    }
+
+    private void clearScreenWakeGrace() {
+        screenWakeGraceActive = false;
     }
 
     private void unregisterBatteryReceiver() {
@@ -666,22 +789,38 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     }
 
     private void handleActivateTap(String source, long now) {
-        tapRecognizer.onTap(source, now, maxTapCountForCurrentMapping());
+        int pendingTapCount = tapRecognizer.pendingTapCount(now);
+        int nextTapCount = pendingTapCount > 0 ? pendingTapCount + 1 : 1;
+        tapRecognizer.onTap(source, now, tapResolutionWaitMs(nextTapCount));
     }
 
-    private int maxTapCountForCurrentMapping() {
-        int maxTapCount = 2;
-        if (RingActionMappings.twoTapSwipeUp(this) != RingTapAction.NONE
-                || RingActionMappings.twoTapSwipeDown(this) != RingTapAction.NONE) {
-            maxTapCount = 3;
+    private long tapResolutionWaitMs(int tapCount) {
+        if (tapCount == 1) {
+            long waitMs = MULTI_TAP_TIMEOUT_MS;
+            if (RingActionMappings.oneTapSwipeUp(this) != RingTapAction.NONE
+                    || RingActionMappings.oneTapSwipeDown(this) != RingTapAction.NONE) {
+                waitMs = Math.max(waitMs, TAP_SWIPE_COMBO_TIMEOUT_MS);
+            }
+            return waitMs;
         }
-        if (RingActionMappings.tripleTap(this) != RingTapAction.NONE) {
-            maxTapCount = Math.max(maxTapCount, 3);
+        if (tapCount == 2) {
+            long waitMs = 0L;
+            if (RingActionMappings.tripleTap(this) != RingTapAction.NONE
+                    || RingActionMappings.quadrupleTap(this) != RingTapAction.NONE) {
+                waitMs = Math.max(waitMs, MULTI_TAP_TIMEOUT_MS);
+            }
+            if (RingActionMappings.twoTapSwipeUp(this) != RingTapAction.NONE
+                    || RingActionMappings.twoTapSwipeDown(this) != RingTapAction.NONE) {
+                waitMs = Math.max(waitMs, TAP_SWIPE_COMBO_TIMEOUT_MS);
+            }
+            return waitMs;
         }
-        if (RingActionMappings.quadrupleTap(this) != RingTapAction.NONE) {
-            maxTapCount = 4;
+        if (tapCount == 3) {
+            return RingActionMappings.quadrupleTap(this) != RingTapAction.NONE
+                    ? MULTI_TAP_TIMEOUT_MS
+                    : 0L;
         }
-        return maxTapCount;
+        return 0L;
     }
 
     private void resolveTapGesture(String source, int tapCount) {
@@ -690,20 +829,20 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             return;
         }
         if (tapCount == 2) {
-            showFeedback("Back");
             Log.d(TAG, "R08 double tap from " + source);
-            execute(RingCommand.BACK, source + ":doubleTap");
+            executeDebounced(RingCommand.BACK, source + ":doubleTap", 0L, 0L);
             return;
         }
         int safeTapCount = tapCount >= 4 ? 4 : 3;
         RingTapAction action = RingActionMappings.forTapCount(this, safeTapCount);
+        String launchPackage = RingActionMappings.launchPackageForTapCount(this, safeTapCount);
         String tapName = safeTapCount == 4 ? "quadruple" : "triple";
         Log.d(TAG, "R08 " + tapName + " tap from " + source + " action=" + action.id());
-        executeTapAction(action, source + ":" + tapName + "Tap", safeTapCount);
+        executeTapAction(action, source + ":" + tapName + "Tap", safeTapCount, launchPackage);
     }
 
     private boolean handlePendingTapSwipeCombo(int keyCode, String source) {
-        if (keyCode != KeyEvent.KEYCODE_MEDIA_PREVIOUS && keyCode != KeyEvent.KEYCODE_MEDIA_NEXT) {
+        if (!isTapSwipeDirectionalKey(keyCode)) {
             return false;
         }
         long now = SystemClock.uptimeMillis();
@@ -716,6 +855,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (action == RingTapAction.NONE) {
             return false;
         }
+        String launchPackage = RingActionMappings.launchPackageForTapSwipe(this, tapCount, swipeUp);
         String tapSource = tapRecognizer.pendingSource();
         tapRecognizer.cancel();
         resetLauncherDirectionStreak();
@@ -726,23 +866,70 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 + " tapSource=" + (tapSource == null ? "tap" : tapSource)
                 + " action=" + action.id());
         executeMappedAction(action, source + ":" + comboSourceSuffix(tapCount, swipeUp),
-                comboFeedbackLabel(tapCount, swipeUp));
+                comboFeedbackLabel(tapCount, swipeUp), launchPackage);
         return true;
     }
 
-    private void executeTapAction(RingTapAction action, String source, int tapCount) {
-        executeMappedAction(action, source, tapCount >= 4 ? "Quadruple tap" : "Triple tap");
+    private void flushPendingTapBeforeDirectional(int keyCode) {
+        if (!isTapSwipeDirectionalKey(keyCode)) {
+            return;
+        }
+        if (tapRecognizer.pendingTapCount(SystemClock.uptimeMillis()) > 0) {
+            tapRecognizer.flush();
+        }
+    }
+
+    private boolean isTapSwipeDirectionalKey(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_MEDIA_PREVIOUS || keyCode == KeyEvent.KEYCODE_MEDIA_NEXT;
+    }
+
+    private void executeTapAction(RingTapAction action, String source, int tapCount, String launchPackage) {
+        executeMappedAction(action, source, tapCount >= 4 ? "Quadruple tap" : "Triple tap", launchPackage);
     }
 
     private void executeMappedAction(RingTapAction action, String source, String noActionLabel) {
+        executeMappedAction(action, source, noActionLabel, null);
+    }
+
+    private void executeMappedAction(RingTapAction action, String source, String noActionLabel, String launchPackage) {
         if (action == RingTapAction.NONE) {
             showFeedback(noActionLabel + ": no action");
             return;
         }
-        showFeedback(action.feedback(this));
-        if (!action.execute(this, navigator)) {
+        String feedback = action == RingTapAction.LAUNCH_APP
+                ? launchAppFeedback(launchPackage)
+                : action.feedback(this);
+        if (feedback == null) {
+            showFeedback(noActionLabel + ": no action");
+            return;
+        }
+        showFeedback(feedback);
+        if (!action.execute(this, navigator, launchPackage)) {
             Log.w(TAG, "Mapped action failed action=" + action.id() + " source=" + source);
         }
+    }
+
+    private String launchAppFeedback(String launchPackage) {
+        if (launchPackage == null) {
+            return null;
+        }
+        String packageName = launchPackage.trim();
+        if (packageName.isEmpty()) {
+            return null;
+        }
+        if (getPackageManager().getLaunchIntentForPackage(packageName) == null) {
+            return null;
+        }
+        try {
+            ApplicationInfo appInfo = getPackageManager().getApplicationInfo(packageName, 0);
+            CharSequence label = getPackageManager().getApplicationLabel(appInfo);
+            if (label != null && label.length() > 0) {
+                return label.toString();
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            return packageName;
+        }
+        return packageName;
     }
 
     private String comboName(int tapCount, boolean swipeUp) {
