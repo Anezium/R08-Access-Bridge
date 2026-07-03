@@ -230,13 +230,13 @@ Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 For the normal ring controller, install the glasses APK:
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.4.8.apk
+adb install -r R08-Access-Bridge-v1.5.0.apk
 ```
 
 For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
 
 ```powershell
-adb install -r R08-Companion-v0.2.7.apk
+adb install -r R08-Companion-v0.2.8.apk
 ```
 
 After installing the glasses APK:

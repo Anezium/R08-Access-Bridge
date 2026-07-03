@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.8 - 2026-07-03
+## v1.5.0 - 2026-07-03
 
 ### Ring input responsiveness
 
@@ -40,10 +40,16 @@
 
 - Moved the launcher ring battery chip so it no longer overlaps the launcher status icons (signal, Wi-Fi, Bluetooth) when they appear.
 
+### Phone companion
+
+- The companion main screen now shows a persistent `Watchdog` status line (running / not installed / failed / unknown, with the last-checked time), sourced live from the arm/re-arm output, and the setup copy explains that running the companion once is required to enable the watchdog.
+- Fixed self-arm provisioning aborting on `chmod 600`: emulated storage on the glasses rejects POSIX mode changes, which stopped the loopback ADB key/watchdog script install halfway. The mode change is now best-effort (scripts are executed via `sh`, so the executable bit was never required).
+
+## v1.4.8 - 2026-07-02
+
 ### Phone companion watchdog
 
 - Added a phone-packaged Accessibility watchdog for Rokid RG firmware 1.21.009, launched over ADB shell during arm/re-arm so the glasses app can recover after AssistServer force-stops it on leg fold.
-- The companion main screen now shows a persistent `Watchdog` status line (running / not installed / failed / unknown, with the last-checked time), sourced live from the arm/re-arm output, and the setup copy explains that running the companion once is required to enable the watchdog.
 - Added glasses-side app-open self-arm: after the phone provisions a trusted ADB key and `persist.adb.tcp.port=5555`, opening R08 Access Bridge on the glasses connects to `127.0.0.1:5555`, repairs Accessibility, and restarts the watchdog.
 - The phone companion now auto-attempts re-arm on launch when a previous arm endpoint or Hi Rokid authorization exists, restoring the shortcut bridge and watchdog without an extra tap.
 - Added a direct ADB fallback when Hi Rokid/CXR Bluetooth is unavailable, with mDNS settling to avoid stale Wireless Debugging ports.

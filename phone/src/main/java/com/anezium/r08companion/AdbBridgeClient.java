@@ -501,7 +501,8 @@ final class AdbBridgeClient {
     private void writeRemoteBytes(AdbSession adb, byte[] bytes, String remotePath, String mode) throws IOException {
         String encoded = Base64.encodeToString(bytes, Base64.NO_WRAP);
         runChecked(adb, "printf '%s' '" + encoded + "' | base64 -d > " + remotePath);
-        runChecked(adb, "chmod " + mode + " " + remotePath);
+        // Emulated storage rejects some POSIX modes; scripts run via "sh <path>" so the bit is best-effort.
+        runChecked(adb, "chmod " + mode + " " + remotePath + " 2>/dev/null || true");
     }
 
     private void waitForBridgeRequestFile(AdbSession adb) throws Exception {
