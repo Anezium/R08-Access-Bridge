@@ -148,7 +148,7 @@ After first-time setup, the phone can recover the bridge automatically on launch
 
 The phone connects to the saved endpoint using the already-authorized key pair, or asks the glasses over Hi Rokid/CXR to bring Wi-Fi/Wireless Debugging back first. No re-pairing is needed unless Android forgets the ADB authorization. After the phone re-arms, Wi-Fi and always-on scanning are turned off again.
 
-The phone also provisions a hacha-style local loopback recovery path on the glasses: `persist.adb.tcp.port=5555`, a trusted ADB key, and the Accessibility watchdog script. After that provisioning, opening `R08 Access Bridge` directly on the glasses connects to `127.0.0.1:5555`, repairs `enabled_accessibility_services`, and restarts the watchdog even without the phone. This is the fallback for Rokid RG firmware 1.21.009, where folding a temple leg can force-stop the foreground third-party app and remove its AccessibilityService.
+The phone also provisions a local loopback recovery path on the glasses, based on [hacha](https://x.com/hacha)'s [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake): `persist.adb.tcp.port=5555`, a trusted ADB key, and the Accessibility watchdog script. After that provisioning, opening `R08 Access Bridge` directly on the glasses connects to `127.0.0.1:5555`, repairs `enabled_accessibility_services`, and restarts the watchdog even without the phone. This is the fallback for Rokid RG firmware 1.21.009, where folding a temple leg can force-stop the foreground third-party app and remove its AccessibilityService.
 
 **Battery note:** glasses Wi-Fi is enabled only for the duration of the re-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation.
 
@@ -333,6 +333,11 @@ R08 Access Bridge requests:
 R08 Companion requests:
 
 - Internet/network access so it can connect directly to the glasses ADB TCP port on the local Wi-Fi network.
+
+## Credits
+
+- [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work.
+- Reddit user `u/Rare_Wheel1907` found and confirmed the "update the ring firmware, then disconnect it from the official app before pairing" fix.
 
 ## Notes
 

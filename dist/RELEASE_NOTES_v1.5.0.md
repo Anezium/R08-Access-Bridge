@@ -34,6 +34,10 @@ Big responsiveness and input release: the ring finally reacts like a native cont
 
 Rokid RG firmware 1.21.009 force-stops third-party apps and strips their Accessibility service when a temple leg is folded. Arming the bridge from `R08 Companion` once installs the accessibility watchdog that recovers ring control automatically. See the README section "Run the phone companion at least once".
 
+## Thanks
+
+- Thanks again to [hacha](https://x.com/hacha) for sharing the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the firmware force-stops exists because of his work.
+
 APKs are debug-signed, as with previous releases.
 
 **Full changelog**: [CHANGELOG.md](https://github.com/Anezium/R08-Access-Bridge/blob/main/CHANGELOG.md)
