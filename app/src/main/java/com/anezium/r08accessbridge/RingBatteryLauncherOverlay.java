@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +29,9 @@ final class RingBatteryLauncherOverlay {
     private static final int OVERLAY_HEIGHT_DP = 20;
     private static final int LAUNCHER_STATUS_ROW_END_RESERVED_DP = 70;
     private static final int LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP = 173;
+    private static final long REFRESH_INTERVAL_MS = 30_000L;
+    private static final long REFRESH_DEBOUNCE_MS = 150L;
+    private static final int COVERAGE_THRESHOLD_PERCENT = 50;
 
     private final AccessibilityService service;
     private final WindowManager windowManager;
@@ -38,7 +42,15 @@ final class RingBatteryLauncherOverlay {
     private boolean attached;
     private boolean launcherActive;
     private boolean started;
-    private String lastWindowPackage = "";
+
+    private final Runnable refreshCurrentWindow = new Runnable() {
+        @Override
+        public void run() {
+            if (started) {
+                refreshForCurrentWindow();
+            }
+        }
+    };
 
     private final Runnable refreshLoop = new Runnable() {
         @Override
@@ -47,7 +59,7 @@ final class RingBatteryLauncherOverlay {
                 return;
             }
             refreshForCurrentWindow();
-            handler.postDelayed(this, 2_000L);
+            handler.postDelayed(this, REFRESH_INTERVAL_MS);
         }
     };
 
@@ -63,39 +75,34 @@ final class RingBatteryLauncherOverlay {
         started = true;
         Log.d(TAG, "Launcher ring battery overlay monitor started");
         refreshForCurrentWindow();
-        handler.postDelayed(refreshLoop, 2_000L);
+        handler.postDelayed(refreshLoop, REFRESH_INTERVAL_MS);
     }
 
     void stop() {
         started = false;
+        handler.removeCallbacks(refreshCurrentWindow);
         handler.removeCallbacks(refreshLoop);
         remove();
     }
 
     void onAccessibilityEvent(AccessibilityEvent event) {
         if (event == null) {
-            refreshForCurrentWindow();
+            scheduleRefresh();
             return;
         }
-        if (event.getPackageName() != null) {
-            if (service.getPackageName().contentEquals(event.getPackageName())) {
-                refreshForCurrentWindow();
-                return;
-            }
-            updateActivePackage(event.getPackageName());
-        } else if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            refreshForCurrentWindow();
+            scheduleRefresh();
         }
     }
 
     void refreshForCurrentWindow() {
-        updateActivePackage(activeWindowPackage());
+        updateLauncherTopmost(isLauncherTopmost());
     }
 
     void onBatteryChanged() {
         updateContent();
-        refreshForCurrentWindow();
+        scheduleRefresh();
     }
 
     void remove() {
@@ -110,60 +117,82 @@ final class RingBatteryLauncherOverlay {
         attached = false;
     }
 
-    private void updateActivePackage(CharSequence packageName) {
-        String packageString = packageName == null ? "" : packageName.toString();
-        if (!lastWindowPackage.equals(packageString)) {
-            lastWindowPackage = packageString;
-            Log.d(TAG, "activePackage=" + (packageString.isEmpty() ? "?" : packageString));
+    private void scheduleRefresh() {
+        if (!started) {
+            return;
         }
-        boolean active = packageName != null && ROKID_LAUNCHER_PACKAGE.contentEquals(packageName);
+        handler.removeCallbacks(refreshCurrentWindow);
+        handler.postDelayed(refreshCurrentWindow, REFRESH_DEBOUNCE_MS);
+    }
+
+    private void updateLauncherTopmost(boolean active) {
         if (launcherActive == active) {
             updateVisibility();
             return;
         }
         launcherActive = active;
-        Log.d(TAG, "launcherActive=" + launcherActive + " package=" + packageName);
+        Log.d(TAG, "launcherTopmost=" + launcherActive);
         updateVisibility();
     }
 
-    private CharSequence activeWindowPackage() {
+    private boolean isLauncherTopmost() {
         List<AccessibilityWindowInfo> windows = service.getWindows();
-        if (windows != null) {
-            CharSequence focused = packageForWindow(windows, true);
-            if (focused != null) {
-                return focused;
-            }
-            CharSequence active = packageForWindow(windows, false);
-            if (active != null) {
-                return active;
-            }
+        if (windows == null) {
+            return false;
         }
-        AccessibilityNodeInfo root = AccessibilityWindowRoots.getNavigationRoot(service);
-        return root == null ? null : root.getPackageName();
-    }
-
-    private CharSequence packageForWindow(List<AccessibilityWindowInfo> windows, boolean requireFocused) {
+        AccessibilityWindowInfo launcherWindow = null;
+        Rect launcherBounds = new Rect();
+        for (AccessibilityWindowInfo window : windows) {
+            if (window == null || !isLauncherWindow(window)) {
+                continue;
+            }
+            launcherWindow = window;
+            window.getBoundsInScreen(launcherBounds);
+            break;
+        }
+        if (launcherWindow == null || launcherBounds.isEmpty()) {
+            return false;
+        }
+        int launcherLayer = launcherWindow.getLayer();
+        long launcherArea = area(launcherBounds);
+        if (launcherArea <= 0L) {
+            return false;
+        }
         for (AccessibilityWindowInfo window : windows) {
             if (window == null) {
                 continue;
             }
-            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) {
+            if (window == launcherWindow || window.getLayer() <= launcherLayer) {
                 continue;
             }
-            if (requireFocused ? !window.isFocused() : !window.isActive()) {
+            Rect bounds = new Rect();
+            window.getBoundsInScreen(bounds);
+            if (area(bounds) * 100L < launcherArea * COVERAGE_THRESHOLD_PERCENT) {
                 continue;
             }
-            AccessibilityNodeInfo root = window.getRoot();
-            if (root == null) {
-                continue;
-            }
-            CharSequence packageName = root.getPackageName();
-            root.recycle();
-            if (packageName != null) {
-                return packageName.toString();
-            }
+            return false;
         }
-        return null;
+        return true;
+    }
+
+    private boolean isLauncherWindow(AccessibilityWindowInfo window) {
+        AccessibilityNodeInfo root = window.getRoot();
+        if (root == null) {
+            return false;
+        }
+        try {
+            CharSequence packageName = root.getPackageName();
+            return packageName != null && ROKID_LAUNCHER_PACKAGE.contentEquals(packageName);
+        } finally {
+            root.recycle();
+        }
+    }
+
+    private long area(Rect bounds) {
+        if (bounds == null || bounds.isEmpty()) {
+            return 0L;
+        }
+        return (long) bounds.width() * bounds.height();
     }
 
     private void updateVisibility() {
