@@ -1,18 +1,23 @@
 package com.anezium.r08accessbridge;
 
 import android.content.Context;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 final class PrivilegedShortcutBridge {
     private static final String TAG = "R08PrivBridge";
-    private static final long ARMED_HEARTBEAT_TTL_MS = 5000L;
+    private static final long ARMED_HEARTBEAT_TTL_MS = 15000L;
+    private static final byte[] DOORBELL_SIGNAL = new byte[] {(byte) '\n'};
 
     private PrivilegedShortcutBridge() {
     }
@@ -23,7 +28,11 @@ final class PrivilegedShortcutBridge {
     }
 
     static boolean requestHiRokidShortcut(Context context) {
-        return writeRequest(context, BridgeProtocol.COMMAND_SHORTCUT);
+        if (!writeRequest(context, BridgeProtocol.COMMAND_SHORTCUT)) {
+            return false;
+        }
+        ringDoorbell(context);
+        return true;
     }
 
     static boolean requestWifiEnabled(Context context, boolean enabled) {
@@ -49,6 +58,34 @@ final class PrivilegedShortcutBridge {
         } catch (IOException e) {
             Log.w(TAG, "Failed to write bridge request", e);
             return false;
+        }
+    }
+
+    private static void ringDoorbell(Context context) {
+        File dir = bridgeDir(context);
+        if (dir == null) {
+            return;
+        }
+        File doorbell = new File(dir, BridgeProtocol.DOORBELL_FILE);
+        if (!doorbell.exists()) {
+            return;
+        }
+
+        FileDescriptor descriptor = null;
+        try {
+            descriptor = Os.open(doorbell.getAbsolutePath(),
+                    OsConstants.O_WRONLY | OsConstants.O_NONBLOCK, 0);
+            Os.write(descriptor, DOORBELL_SIGNAL, 0, DOORBELL_SIGNAL.length);
+        } catch (ErrnoException | IOException | RuntimeException ignored) {
+            // Best effort only: the bridge may be stopped, missing, or between waits.
+        } finally {
+            if (descriptor != null) {
+                try {
+                    Os.close(descriptor);
+                } catch (ErrnoException ignored) {
+                    // Best effort only.
+                }
+            }
         }
     }
 

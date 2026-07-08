@@ -5,11 +5,13 @@ BASE="${R08_BRIDGE_DIR:-/sdcard/Android/data/$PKG/files/shortcut_bridge}"
 REQUEST="$BASE/request"
 RESPONSE="$BASE/response"
 HEARTBEAT="$BASE/heartbeat"
+DOORBELL="$BASE/doorbell"
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
 POLL_SECONDS="${R08_POLL_SECONDS:-0.2}"
+IDLE_RECHECK_SECONDS="${R08_IDLE_RECHECK_SECONDS:-5}"
 WIFI_DISABLE_DELAY_SECONDS="${R08_WIFI_DISABLE_DELAY_SECONDS:-12}"
 
 log_msg() {
@@ -121,21 +123,85 @@ handle_request() {
     esac
 }
 
+check_and_dispatch() {
+    now="$(date +%s)"
+    echo "$now" > "$HEARTBEAT"
+    current="$(cat "$REQUEST" 2>/dev/null)"
+    if [ -n "$current" ] && [ "$current" != "$last" ]; then
+        last="$current"
+        handle_request "$current" "$now"
+    fi
+}
+
+prepare_doorbell() {
+    if [ -e "$DOORBELL" ] && [ ! -p "$DOORBELL" ]; then
+        log_msg "doorbell unavailable not_fifo path=$DOORBELL"
+        return 1
+    fi
+    if [ ! -p "$DOORBELL" ]; then
+        if ! mkfifo "$DOORBELL" >/dev/null 2>&1; then
+            log_msg "doorbell mkfifo failed path=$DOORBELL"
+            return 1
+        fi
+    fi
+    chmod 666 "$DOORBELL" >/dev/null 2>&1 || true
+    if ! exec 3<> "$DOORBELL"; then
+        log_msg "doorbell open failed path=$DOORBELL"
+        return 1
+    fi
+    read -t 0 _ <&3 >/dev/null 2>&1
+    read_status="$?"
+    # Android mksh reports read -t timeout as 142 (SIGALRM), not 1.
+    case "$read_status" in
+        0|1|142)
+            return 0
+            ;;
+        *)
+            log_msg "doorbell read probe failed status=$read_status"
+            exec 3<&-
+            return 1
+            ;;
+    esac
+}
+
+run_poll_loop() {
+    last="$(cat "$REQUEST" 2>/dev/null)"
+    log_msg "poll loop interval=${POLL_SECONDS}s"
+    while true; do
+        check_and_dispatch
+        sleep "$POLL_SECONDS"
+    done
+}
+
+run_event_loop() {
+    last=""
+    log_msg "doorbell loop path=$DOORBELL idle_recheck=${IDLE_RECHECK_SECONDS}s"
+    check_and_dispatch
+    while true; do
+        read -t "$IDLE_RECHECK_SECONDS" _ <&3 >/dev/null 2>&1
+        read_status="$?"
+        # Android mksh reports read -t timeout as 142 (SIGALRM), not 1.
+        case "$read_status" in
+            0|1|142)
+                ;;
+            *)
+                log_msg "doorbell read failed status=$read_status; falling back to poll"
+                exec 3<&-
+                run_poll_loop
+                ;;
+        esac
+        check_and_dispatch
+    done
+}
+
 run_loop() {
     mkdir -p "$BASE"
     echo "$$" > "$PIDFILE"
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"
-    last="$(cat "$REQUEST" 2>/dev/null)"
-    while true; do
-        now="$(date +%s)"
-        echo "$now" > "$HEARTBEAT"
-        current="$(cat "$REQUEST" 2>/dev/null)"
-        if [ -n "$current" ] && [ "$current" != "$last" ]; then
-            last="$current"
-            handle_request "$current" "$now"
-        fi
-        sleep "$POLL_SECONDS"
-    done
+    if prepare_doorbell; then
+        run_event_loop
+    fi
+    run_poll_loop
 }
 
 start_bridge() {

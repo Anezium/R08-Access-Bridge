@@ -75,6 +75,7 @@ public final class BridgeProtocol {
     public static final String REQUEST_FILE = "request";
     public static final String RESPONSE_FILE = "response";
     public static final String HEARTBEAT_FILE = "heartbeat";
+    public static final String DOORBELL_FILE = "doorbell";
 
     public static final String COMMAND_SHORTCUT = "shortcut";
     public static final String COMMAND_WIFI_ENABLE = "wifi_enable";

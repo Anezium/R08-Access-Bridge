@@ -9,6 +9,10 @@
 - The phone companion path is unchanged and still available; the on-glasses self-arm is an additional, independent route that sidesteps the Hi Rokid authorization step some users get stuck on.
 - Shell scripts pushed to the glasses are now pinned to LF line endings (`.gitattributes`), fixing a case where a CRLF watchdog script failed to run under the glasses' shell.
 
+### Lower idle battery use
+
+- The on-glasses shortcut bridge no longer busy-polls its request file 5 times a second. It now blocks on a FIFO "doorbell" that the app rings only when it actually has a shortcut to fire, with a 5-second safety re-check as a fallback. Measured on an R08: idle CPU for the bridge dropped from ~1.3% of a core to ~0.07% (about 18× less), with no change to shortcut latency — a doorbell ring dispatches in the same second. If the FIFO can't be created on a given device, the bridge automatically falls back to the old polling loop.
+
 ### Screen-off media guard
 
 - Added an opt-in `Keep screen-off taps on glasses` mode in `Ring modes`. While the display is off, Android dispatches media keys to the current media button session before the accessibility key filter runs, and on glasses connected to a phone as a Bluetooth audio sink that session is the phone-side AVRCP controller — so a screen-off ring tap could launch the phone's media app (for example Apple Music on an iPhone) while the glasses stayed dark. With the mode enabled, the app claims the media button session for the duration of the screen-off state, consumes ring media keys, and turns taps into a display wake instead. The claim is released when the display turns on and backs off while real audio is playing, so play/pause during actual playback keeps controlling that playback.

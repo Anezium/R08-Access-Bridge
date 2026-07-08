@@ -42,6 +42,9 @@ kotlin {
 }
 
 val syncWatchdogScriptResource by tasks.registering(Copy::class) {
+    from(rootProject.file("tools/r08-shortcut-bridge.sh")) {
+        rename { "r08_shortcut_bridge.sh" }
+    }
     from(rootProject.file("tools/r08-a11y-watchdog.sh")) {
         rename { "r08_a11y_watchdog.sh" }
     }
