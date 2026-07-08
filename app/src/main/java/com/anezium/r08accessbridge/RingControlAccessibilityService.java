@@ -39,6 +39,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_CONFIGURE_TOUCH = "configure_touch";
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
     public static final String COMMAND_SET_FAST_NAVIGATION = "set_fast_navigation";
+    public static final String COMMAND_SET_SCREEN_OFF_MEDIA_GUARD = "set_screen_off_media_guard";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_REQUEST_BATTERY = "request_battery";
     public static final String COMMAND_FORWARD = "forward";
@@ -48,6 +49,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_LONG_PRESS = "long_press";
     public static final String COMMAND_DEBUG_KEY = "debug_key";
     public static final String COMMAND_START_WIRELESS_DEBUG_SETUP = "start_wireless_debug_setup";
+    public static final String COMMAND_START_LOCAL_SELF_ARM = "start_local_self_arm";
     public static final String COMMAND_ENABLE_WIFI_FLOW = "enable_wifi_flow";
     public static final String EXTRA_REARM_REPLY_ID = "rearm_reply_id";
     public static final String EXTRA_APP_TYPE = "app_type";
@@ -75,9 +77,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private AccessibilityNavigator navigator;
     private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
+    private SelfArmWirelessDebuggingAutomator selfArmWirelessDebuggingAutomator;
     private WifiEnableAutomator wifiEnableAutomator;
     private RingBatteryLauncherOverlay batteryLauncherOverlay;
     private RingBleController bleController;
+    private MediaKeyGuard mediaKeyGuard;
     private PowerManager powerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
@@ -112,9 +116,15 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                 mainHandler.removeCallbacks(screenWakeGraceClear);
                 screenWakeGraceActive = true;
+                if (mediaKeyGuard != null) {
+                    mediaKeyGuard.onScreenOff();
+                }
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 mainHandler.removeCallbacks(screenWakeGraceClear);
                 mainHandler.postDelayed(screenWakeGraceClear, SCREEN_WAKE_GRACE_MS);
+                if (mediaKeyGuard != null) {
+                    mediaKeyGuard.onScreenOn();
+                }
             }
         }
     };
@@ -140,6 +150,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 setTouchMode(false);
             } else if (COMMAND_SET_FAST_NAVIGATION.equals(command)) {
                 setFastNavigationMode(intent.getBooleanExtra(EXTRA_ENABLED, false));
+            } else if (COMMAND_SET_SCREEN_OFF_MEDIA_GUARD.equals(command)) {
+                setScreenOffMediaGuardEnabled(intent.getBooleanExtra(EXTRA_ENABLED, false));
             } else if (COMMAND_PROBE_APP_TYPE.equals(command)) {
                 int appType = intent.getIntExtra(EXTRA_APP_TYPE, -1);
                 showFeedback("Probe appType " + appType);
@@ -165,6 +177,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 handleDebugKey(intent.getIntExtra(EXTRA_KEY_CODE, KeyEvent.KEYCODE_UNKNOWN));
             } else if (COMMAND_START_WIRELESS_DEBUG_SETUP.equals(command)) {
                 requestWirelessDebugSetup(context);
+            } else if (COMMAND_START_LOCAL_SELF_ARM.equals(command)) {
+                startLocalSelfArm();
             } else if (COMMAND_ENABLE_WIFI_FLOW.equals(command)) {
                 String replyId = intent.getStringExtra(EXTRA_REARM_REPLY_ID);
                 startWifiEnableFlow(replyId);
@@ -220,6 +234,20 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         Log.d(TAG, "Fast navigation mode=" + enabled);
     }
 
+    private void setScreenOffMediaGuardEnabled(boolean enabled) {
+        RingModeSettings.setScreenOffMediaGuardEnabled(this, enabled);
+        if (enabled) {
+            if (mediaKeyGuard == null) {
+                mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
+                mediaKeyGuard.start();
+            }
+        } else if (mediaKeyGuard != null) {
+            mediaKeyGuard.stop();
+            mediaKeyGuard = null;
+        }
+        Log.d(TAG, "Screen-off media guard enabled=" + enabled);
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
@@ -231,6 +259,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
+        selfArmWirelessDebuggingAutomator = new SelfArmWirelessDebuggingAutomator(this, mainHandler);
         wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
         batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
         CxrBootstrapBridge.onAccessibilityServiceConnected(this);
@@ -239,6 +268,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         registerBatteryReceiver();
         registerScreenStateReceiver();
         batteryLauncherOverlay.start();
+        if (RingModeSettings.isScreenOffMediaGuardEnabled(this)) {
+            mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
+            mediaKeyGuard.start();
+        }
         bleController = new RingBleController(this);
         bleController.setTouchMode(touchMode);
         bleController.start();
@@ -255,6 +288,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             bleController.stop();
             bleController = null;
         }
+        if (mediaKeyGuard != null) {
+            mediaKeyGuard.stop();
+            mediaKeyGuard = null;
+        }
         try {
             unregisterReceiver(commandReceiver);
         } catch (IllegalArgumentException ignored) {
@@ -267,7 +304,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             batteryLauncherOverlay = null;
         }
         tapRecognizer.cancel();
+        if (selfArmWirelessDebuggingAutomator != null) {
+            selfArmWirelessDebuggingAutomator.stop();
+        }
         wirelessDebuggingSetupAutomator = null;
+        selfArmWirelessDebuggingAutomator = null;
         wifiEnableAutomator = null;
         super.onDestroy();
     }
@@ -277,6 +318,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         AccessibilityWindowRoots.noteEvent(event, getPackageName());
         if (wirelessDebuggingSetupAutomator != null) {
             wirelessDebuggingSetupAutomator.onAccessibilityEvent(event);
+        }
+        if (selfArmWirelessDebuggingAutomator != null) {
+            selfArmWirelessDebuggingAutomator.onAccessibilityEvent(event);
         }
         if (wifiEnableAutomator != null) {
             wifiEnableAutomator.onAccessibilityEvent(event);
@@ -306,6 +350,28 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         return false;
     }
 
+    static boolean requestLocalSelfArm(Context context) {
+        Context appContext = context == null ? null : context.getApplicationContext();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            if (appContext != null) {
+                LocalSelfArmStatus.reportSimple(appContext, "api_30_required");
+                Toast.makeText(appContext, R.string.toast_self_arm_api_30_required, Toast.LENGTH_SHORT).show();
+            }
+            return false;
+        }
+        RingControlAccessibilityService service = activeService;
+        if (service != null && service.selfArmWirelessDebuggingAutomator != null) {
+            service.mainHandler.post(service::startLocalSelfArm);
+            return true;
+        }
+        if (appContext != null) {
+            LocalSelfArmStatus.reportSimple(appContext, "accessibility_service_needed");
+            Toast.makeText(appContext, R.string.toast_self_arm_accessibility_needed, Toast.LENGTH_SHORT).show();
+            openAccessibilitySettings(appContext);
+        }
+        return false;
+    }
+
     /**
      * Sends a broadcast to this service (via commandReceiver) to start the Wi-Fi enable flow.
      * Safe to call from any thread.
@@ -331,6 +397,14 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (wifiEnableAutomator != null) {
             mainHandler.post(() -> wifiEnableAutomator.start(replyId));
         }
+    }
+
+    private void startLocalSelfArm() {
+        if (selfArmWirelessDebuggingAutomator == null) {
+            return;
+        }
+        LocalSelfArmStatus.reportSimple(this, "requested");
+        selfArmWirelessDebuggingAutomator.start();
     }
 
     static void returnHome(Context context, String reason) {

@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -28,6 +29,16 @@ android {
             excludes += "META-INF/versions/**"
         }
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 val syncWatchdogScriptResource by tasks.registering(Copy::class) {
@@ -46,4 +57,6 @@ dependencies {
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
     implementation("com.flyfishxu:kadb:2.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
 }

@@ -1,9 +1,13 @@
 package com.anezium.r08accessbridge;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
@@ -56,6 +60,14 @@ public final class MainActivity extends Activity {
     private long pendingSelectAt;
     private Runnable pendingSelect;
     private int selectedActionIndex;
+    private boolean localSelfArmStatusReceiverRegistered;
+
+    private final BroadcastReceiver localSelfArmStatusReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            render();
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,10 +86,22 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        registerLocalSelfArmStatusReceiver();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         requestRingBatteryRefresh();
         render();
+    }
+
+    @Override
+    protected void onStop() {
+        unregisterLocalSelfArmStatusReceiver();
+        super.onStop();
     }
 
     @Override
@@ -248,6 +272,8 @@ public final class MainActivity extends Activity {
             case HOME:
                 action(R.string.action_pair_reconnect, R.string.detail_pair_reconnect,
                         v -> pairOrReconnect());
+                action(R.string.action_self_arm_no_phone, R.string.detail_self_arm_no_phone,
+                        v -> startLocalSelfArm());
                 action(R.string.action_modes, R.string.detail_modes, v -> showModes());
                 action(R.string.action_mapping, R.string.detail_mapping, v -> showMapping());
                 action(R.string.action_system, R.string.detail_system, v -> showSystem());
@@ -265,6 +291,8 @@ public final class MainActivity extends Activity {
                                 !RingModeSettings.isTouchMode(this),
                                 getString(R.string.detail_touch_fallback)),
                         v -> enableTouchFallbackMode());
+                action(getString(R.string.action_screen_off_media_guard), screenOffMediaGuardDetail(),
+                        v -> toggleScreenOffMediaGuard());
                 action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
                 break;
             case MAPPING:
@@ -404,6 +432,10 @@ public final class MainActivity extends Activity {
             return getString(R.string.status_forget_confirm);
         }
         String service = getString(isAccessibilityEnabled() ? R.string.status_service_on : R.string.status_service_off);
+        String localSelfArm = LocalSelfArmStatus.summary(this);
+        if (!TextUtils.isEmpty(localSelfArm) && (screen == Screen.HOME || screen == Screen.SYSTEM)) {
+            return service + " - " + localSelfArm;
+        }
         switch (screen) {
             case MODES:
                 return getString(R.string.status_modes, service);
@@ -436,6 +468,14 @@ public final class MainActivity extends Activity {
         return inactive ? detail : getString(R.string.detail_mode_active);
     }
 
+    private String screenOffMediaGuardDetail() {
+        String detail = getString(R.string.detail_screen_off_media_guard);
+        if (RingModeSettings.isScreenOffMediaGuardEnabled(this)) {
+            return getString(R.string.detail_screen_off_media_guard_active, detail);
+        }
+        return detail;
+    }
+
     private void enableStableMode() {
         RingModeSettings.setTouchMode(this, false);
         RingModeSettings.setFastNavigationMode(this, false);
@@ -460,6 +500,16 @@ public final class MainActivity extends Activity {
         sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_TOUCH);
         sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_FAST_NAVIGATION, false);
         Toast.makeText(this, R.string.toast_touch_mode, Toast.LENGTH_SHORT).show();
+        render();
+    }
+
+    private void toggleScreenOffMediaGuard() {
+        boolean enabled = !RingModeSettings.isScreenOffMediaGuardEnabled(this);
+        RingModeSettings.setScreenOffMediaGuardEnabled(this, enabled);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_SCREEN_OFF_MEDIA_GUARD, enabled);
+        Toast.makeText(this,
+                enabled ? R.string.toast_screen_off_media_guard_on : R.string.toast_screen_off_media_guard_off,
+                Toast.LENGTH_SHORT).show();
         render();
     }
 
@@ -962,6 +1012,29 @@ public final class MainActivity extends Activity {
         Toast.makeText(this, "Probe appType " + appType, Toast.LENGTH_SHORT).show();
     }
 
+    private void startLocalSelfArm() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            LocalSelfArmStatus.reportSimple(this, "api_30_required");
+            Toast.makeText(this, R.string.toast_self_arm_api_30_required, Toast.LENGTH_SHORT).show();
+            render();
+            return;
+        }
+        if (!isAccessibilityEnabled()) {
+            LocalSelfArmStatus.reportSimple(this, "accessibility_service_needed");
+            Toast.makeText(this, R.string.toast_self_arm_accessibility_needed, Toast.LENGTH_SHORT).show();
+            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            render();
+            return;
+        }
+        LocalSelfArmStatus.reportSimple(this, "requested");
+        boolean started = RingControlAccessibilityService.requestLocalSelfArm(this);
+        Toast.makeText(
+                this,
+                started ? R.string.toast_self_arm_started : R.string.toast_self_arm_accessibility_needed,
+                Toast.LENGTH_SHORT).show();
+        render();
+    }
+
     private void handleLaunchIntent(Intent intent) {
         if (intent == null) {
             return;
@@ -1016,6 +1089,34 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.fromParts("package", getPackageName(), null));
         startActivity(intent);
+    }
+
+    // Pre-Tiramisu registerReceiver has no flag parameter; the broadcast is app-internal
+    // (LocalSelfArmStatus sends it with setPackage), so NOT_EXPORTED is correct on T+.
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerLocalSelfArmStatusReceiver() {
+        if (localSelfArmStatusReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter(LocalSelfArmStatus.ACTION_CHANGED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(localSelfArmStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(localSelfArmStatusReceiver, filter);
+        }
+        localSelfArmStatusReceiverRegistered = true;
+    }
+
+    private void unregisterLocalSelfArmStatusReceiver() {
+        if (!localSelfArmStatusReceiverRegistered) {
+            return;
+        }
+        localSelfArmStatusReceiverRegistered = false;
+        try {
+            unregisterReceiver(localSelfArmStatusReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
+        }
     }
 
     private LinearLayout.LayoutParams fullWidth(int height) {

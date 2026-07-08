@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Phone-free self-arm
+
+- Added a `Self-arm (no phone)` action on the Home screen that arms the bridge entirely on the glasses — no phone companion, no Hi Rokid authorization, and no shared Wi-Fi network required. It drives the glasses' own Settings to enable Wireless Debugging, reads the pairing code, pairs over ADB loopback, then runs the same bootstrap the phone companion does: installs the shortcut bridge and accessibility watchdog, grants `WRITE_SECURE_SETTINGS`, and maps quadruple tap to the Hi Rokid shortcut. The only prerequisite is that the R08 accessibility service is enabled, on Android 11 or newer.
+- The Settings navigation is locale-independent. It matches the Wireless Debugging, Developer options, build number, and pairing-dialog labels across English, French, Spanish, Portuguese, German, Italian, Russian, and Korean, folding accents and Unicode punctuation so the flow works regardless of the glasses' display language. Verified end to end on Korean-locale glasses.
+- The phone companion path is unchanged and still available; the on-glasses self-arm is an additional, independent route that sidesteps the Hi Rokid authorization step some users get stuck on.
+- Shell scripts pushed to the glasses are now pinned to LF line endings (`.gitattributes`), fixing a case where a CRLF watchdog script failed to run under the glasses' shell.
+
+### Screen-off media guard
+
+- Added an opt-in `Keep screen-off taps on glasses` mode in `Ring modes`. While the display is off, Android dispatches media keys to the current media button session before the accessibility key filter runs, and on glasses connected to a phone as a Bluetooth audio sink that session is the phone-side AVRCP controller — so a screen-off ring tap could launch the phone's media app (for example Apple Music on an iPhone) while the glasses stayed dark. With the mode enabled, the app claims the media button session for the duration of the screen-off state, consumes ring media keys, and turns taps into a display wake instead. The claim is released when the display turns on and backs off while real audio is playing, so play/pause during actual playback keeps controlling that playback.
+- The mode is off by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display.
+- Root cause diagnosed and guard contributed by [hacha](https://x.com/hacha) ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork).
+
 ## v1.5.0 - 2026-07-03
 
 ### Ring input responsiveness

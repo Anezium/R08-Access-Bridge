@@ -52,6 +52,8 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 - Lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
 - Lets you remap triple tap, quadruple tap, and four tap+swipe combo gestures directly from the glasses UI, including launching any installed app.
 - Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
+- Optionally keeps screen-off ring taps on the glasses: an opt-in `Keep screen-off taps on glasses` mode stops ring media keys from reaching a paired phone while the display is off, so a tap wakes the glasses instead of launching the phone's media app.
+- Can arm the bridge entirely on the glasses with no phone: a `Self-arm (no phone)` action drives the glasses' own Wireless Debugging to bootstrap the bridge over ADB loopback, in any Settings language (English through Korean), sidestepping the Hi Rokid authorization step.
 - Adds a phone companion that can arm the exact Hi Rokid shortcut bridge through Hi Rokid/CXR-L plus ADB Wi-Fi.
 - Turns glasses Wi-Fi back off after arming by default to protect battery life.
 - Provides an AppType probe screen for testing R08 output modes.
@@ -182,6 +184,8 @@ This avoids relying on stale launcher accessibility focus. Fast mode can re-enab
 
 Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts — while working fine for others. The app now detects that state and resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen. Ring navigation should now behave the same for everyone, regardless of the screen timeout.
 
+One deliberate exception remains by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display. The catch is that while the display is off, Android routes media keys to the current media button session before any accessibility filtering — and when the glasses are connected to a phone as a Bluetooth audio sink, that session is the phone-side AVRCP controller. A screen-off tap can therefore land on the phone and launch its media app (Apple Music, YouTube Music, ...) while the glasses stay dark. If you never start music from the ring, enable `Keep screen-off taps on glasses` in `Ring modes`: the app then claims the media button session for the duration of the screen-off state, consumes ring media keys, and turns taps into a display wake instead. The claim is released when the display turns on and backs off while real audio is playing, so play/pause during actual playback keeps controlling the music. This guard is based on [hacha](https://x.com/hacha)'s diagnosis and [pull request](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork.
+
 ## App Screens
 
 ### Home
@@ -203,6 +207,7 @@ Launcher swiping also no longer depends on the display staying awake. The Rokid 
 - `Stable mode` restores the recommended `appType 1` media-key mode with one launcher step per slide.
 - `Fast mode` keeps `appType 1` and enables launcher acceleration after repeated slides.
 - `Touch fallback` configures `appType 4` touch-style fallback mode for debugging.
+- `Keep screen-off taps on glasses` blocks ring media keys from reaching a paired phone while the display is off; taps wake the screen instead of playing music. Off by default, which keeps tap-to-play on a dark screen.
 - `AppType probe` lets you test `appType 0` through `appType 7` and inspect key output in logs.
 
 ### System
@@ -336,7 +341,7 @@ R08 Companion requests:
 
 ## Credits
 
-- [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work.
+- [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work. He also diagnosed the screen-off media-key leak to paired phones and contributed the media button session guard ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork) that `Keep screen-off taps on glasses` is built on.
 - Reddit user `u/Rare_Wheel1907` found and confirmed the "update the ring firmware, then disconnect it from the official app before pairing" fix.
 
 ## Notes

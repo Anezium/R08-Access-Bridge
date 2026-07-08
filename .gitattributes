@@ -1,0 +1,4 @@
+# Shell scripts are pushed verbatim to the glasses and run by Android's /system/bin/sh,
+# which chokes on CRLF (syntax errors, "inaccessible" lines). Force LF regardless of
+# the checkout's core.autocrlf setting so the watchdog/bridge scripts stay POSIX-clean.
+*.sh text eol=lf
