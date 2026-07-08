@@ -25,16 +25,15 @@
 
 R08 Access Bridge lets an R08 smart ring act as a navigation controller for Rokid glasses. It pairs with the ring over Bluetooth LE, configures the ring into a usable input mode, then translates ring input into launcher navigation, app focus movement, activation, and Android Back actions through an Accessibility Service.
 
+Everything now runs on the glasses. A one-time `Self-arm (no phone)` sets up the exact Hi Rokid shortcut and keeps ring control alive across the firmware's force-stops — no phone, no Hi Rokid authorization, no shared Wi-Fi.
+
 ## Project Details
 
 | Item | Value |
 | --- | --- |
 | App name | R08 Access Bridge |
 | Package name | `com.anezium.r08accessbridge` |
-| Companion app | R08 Companion |
-| Companion package | `com.anezium.r08companion` |
-| Minimum Android SDK | 28 |
-| Companion minimum Android SDK | 31 |
+| Minimum Android SDK | 28 (self-arm needs 30+) |
 | Target Android SDK | 34 |
 | Primary target | Rokid glasses / YodaOS-Sprite, 480x640 portrait HUD |
 | Input device | R08 BLE ring |
@@ -42,22 +41,14 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 ## What It Does
 
 - Pairs or reconnects to an R08 ring over Bluetooth LE.
-- Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
-- Lets ring swipes adjust the Rokid volume screen directly without the privileged bridge.
-- Lets a single ring tap trigger a photo from the active Rokid camera page without the privileged bridge.
-- Enables Stable mode by default using R08 `appType 1`, which emits media key events.
-- Converts ring inputs into one-axis navigation suitable for Rokid glasses.
-- Uses Android Accessibility to move focus, scroll, click, inject launcher swipes, and perform Back.
-- Keeps the in-app HUD compact and readable on a 480x640 glasses display.
-- Lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
+- Converts ring inputs into one-axis navigation suitable for Rokid glasses, using Android Accessibility to move focus, scroll, click, inject launcher swipes, and perform Back.
+- Arms the exact Hi Rokid shortcut entirely on the glasses with `Self-arm (no phone)`, and keeps the Accessibility service alive after the firmware force-stops it — no phone required.
+- Enables Stable mode by default using R08 `appType 1`, which emits media key events, and lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
 - Lets you remap triple tap, quadruple tap, and four tap+swipe combo gestures directly from the glasses UI, including launching any installed app.
+- Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
+- Lets ring swipes adjust the Rokid volume screen, and a single ring tap trigger a photo from the active camera page, without the privileged bridge.
 - Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
 - Optionally keeps screen-off ring taps on the glasses: an opt-in `Keep screen-off taps on glasses` mode stops ring media keys from reaching a paired phone while the display is off, so a tap wakes the glasses instead of launching the phone's media app.
-- Can arm the bridge entirely on the glasses with no phone: a `Self-arm (no phone)` action drives the glasses' own Wireless Debugging to bootstrap the bridge over ADB loopback, in any Settings language (English through Korean), sidestepping the Hi Rokid authorization step.
-- Adds a phone companion that can arm the exact Hi Rokid shortcut bridge through Hi Rokid/CXR-L plus ADB Wi-Fi.
-- Turns glasses Wi-Fi back off after arming by default to protect battery life.
-- Provides an AppType probe screen for testing R08 output modes.
-- Provides a safe Forget R08 flow to remove the saved Bluetooth bond and pair again.
 
 ## Screenshots
 
@@ -72,10 +63,6 @@ R08 Access Bridge lets an R08 smart ring act as a navigation controller for Roki
 <p align="center">
   <img src="docs/screenshots/quadruple-tap-bridge.png" alt="Quadruple Tap mapped to the Hi Rokid Shortcut bridge" width="190">
   <img src="docs/screenshots/quadruple-tap-options.png" alt="Quadruple Tap action options" width="190">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/r08-companion.png" alt="R08 Companion phone app with the bridge armed" width="220">
 </p>
 
 ## Controls
@@ -97,8 +84,6 @@ Inside R08 Access Bridge itself, double tap goes back to the previous screen. On
 
 Triple tap, quadruple tap, and the combos ship unmapped so that single tap and double tap Back respond as fast as possible: the recognizer only waits for a longer gesture when one is actually mapped. Mapping a higher tap count or a combo adds a short (~350-500 ms) confirmation delay to the tap counts below it.
 
-The `Hi Rokid Shortcut` action requests the exact two-finger long-press path when the privileged bridge is armed. A normal APK still cannot write `/dev/input` by itself, so the exact shortcut requires either the included phone/ADB bridge, a shell/root helper, or hardware that emits the matching Rokid input event.
-
 Each mappable gesture can be set in the app to:
 
 - No action
@@ -110,57 +95,41 @@ Each mappable gesture can be set in the app to:
 - AR video toggle
 - Launch app (opens a picker listing the apps installed on the glasses)
 
-## Hi Rokid Shortcut Bridge
+## Self-arm: the Hi Rokid shortcut and surviving force-stops
 
-The exact Hi Rokid shortcut is the glasses touchpad `KEYCODE_SETTINGS` path. On tested hardware it is produced by raw input device `/dev/input/event1` with scan code `149`, which Rokid turns into `ACTION_SETTINGS_KEY`, `openAIFunction type: 2`, and CXR `Ai / Both_KeyDown`.
+Two things on the glasses need more than a normal APK can do by itself:
 
-R08 Access Bridge cannot emit that raw input as a normal APK. The repo includes two bridge launchers:
+1. **The exact Hi Rokid shortcut** (Rokid AI, the two-finger long-press). It is the glasses touchpad `KEYCODE_SETTINGS` path — on tested hardware a raw `/dev/input/event1` event with scan code `149`, which Rokid turns into `ACTION_SETTINGS_KEY` / `openAIFunction type: 2` / CXR `Ai / Both_KeyDown`. A normal app cannot write `/dev/input`.
+2. **Surviving the firmware.** Rokid RG firmware (1.21.009) force-stops the foreground third-party app and strips its Accessibility service when a temple leg is folded or the glasses sleep. Without recovery, ring control silently dies the first time you fold the glasses, and the service has to be re-enabled by hand.
 
-- `tools/arm-r08-shortcut-bridge.ps1` for PC/ADB development.
-- `phone` module, an Android companion APK that bootstraps through Hi Rokid/CXR-L, discovers the glasses IP, reads the Android 11+ Wireless Debugging dynamic port when available, then arms the same bridge over ADB Wi-Fi.
+`Self-arm (no phone)` solves both, entirely on the glasses. It installs two small helpers that run as the ADB `shell` user:
 
-The bridge runs as the ADB `shell` user on the glasses. R08 writes shortcut requests into its app bridge folder, and the shell bridge converts each request into the real `sendevent` sequence.
+- A **shortcut bridge** that turns each quadruple-tap request into the real `sendevent` sequence, so the exact Hi Rokid shortcut works.
+- An **accessibility watchdog** that re-enables the R08 Accessibility service automatically whenever the firmware kills it — so ring navigation survives folding and sleep without touching Settings.
 
-The phone companion is intentionally phone-first: a dark monochrome green, phosphor-style control panel. After first-time setup, opening the companion auto-attempts re-arm, and the primary button remains available as `Re-arm bridge`.
+Both come back on their own after a reboot: the app's boot receiver reconnects over local ADB loopback (`127.0.0.1:5555`, pinned via `persist.adb.tcp.port`) and restarts the helpers. The loopback self-arm technique is based on [hacha](https://x.com/hacha)'s [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake).
 
-PC/dev arm:
+### How to self-arm (one time)
+
+1. Open `R08 Access Bridge` → `System` → `Accessibility` and enable the **R08 Access Bridge** service.
+2. Back in the app, tap **`Self-arm (no phone)`**.
+3. The Accessibility service opens the glasses' own Wireless Debugging, reads the pairing code, pairs over ADB loopback, installs the bridge and watchdog, grants `WRITE_SECURE_SETTINGS`, and turns Wi-Fi back off. When the app shows **`Self-arm complete`**, you are done.
+
+The Settings navigation is locale-independent and works in any glasses language (English, French, Spanish, Portuguese, German, Italian, Russian, and Korean). Wireless Debugging requires Android 11+, which the R08 satisfies.
+
+**Battery note:** Wi-Fi is only enabled for the duration of the self-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation. The shortcut bridge waits on an event-driven FIFO rather than polling, so it costs almost no CPU while idle.
+
+### The phone companion is no longer needed
+
+Earlier versions required a phone companion app (`R08 Companion`) plus Hi Rokid/CXR-L and ADB over the same Wi-Fi to arm the bridge. Self-arm replaces all of that — the companion is obsolete for normal use and kept in the repo only as a legacy path. For development, `tools/arm-r08-shortcut-bridge.ps1` still arms over ADB from a PC:
 
 ```powershell
 .\tools\arm-r08-shortcut-bridge.ps1 -Serial 1901092534053723 -Action restart
 ```
 
-### Phone companion — first-time setup (one-time)
-
-1. Install `app-debug.apk` on the glasses and `phone-debug.apk` on the Android phone.
-2. In `R08 Companion`, tap `Authorize` once and approve the Hi Rokid authorization screen.
-3. Tap `Set up bridge`. The phone starts R08 Access Bridge through CXR-L, sends `r08.bootstrap.req`, and the glasses app opens Wi-Fi settings if it still needs a network.
-4. Once the glasses have a Wi-Fi IP, the phone tries the latest Wireless Debugging port reported by the glasses. If Developer Options are still disabled, the glasses Accessibility Service opens Device Info and taps Build number first. If the phone is not paired yet, the flow opens Developer Options, enters Wireless Debugging, opens the pairing-code dialog, reads the code plus IP/port, and sends them back on `r08.bootstrap.res`.
-5. The phone consumes that pairing code with KADB, using mDNS `_adb-tls-pairing._tcp` to recover the temporary pairing port when the Settings accessibility text is incomplete or ambiguous. It then connects to the dynamic Wireless Debugging port, installs/starts the shell bridge and Accessibility watchdog, maps quadruple tap to `Hi Rokid Shortcut`, grants `WRITE_SECURE_SETTINGS`, and provisions local ADB loopback self-arm for the glasses app.
-6. `Wi-Fi off after arm` is enabled by default. Once the bridge is armed, the phone asks the glasses app/shell bridge to turn glasses Wi-Fi back off for battery life. The shell bridge also disables always-on Wi-Fi scanning. When the app shows `Bridge: Armed`, the user can close the phone app.
-7. The phone and glasses must be on the same Wi-Fi/LAN for the ADB arm step. If the phone is on mobile data, VPN, guest Wi-Fi, or a different subnet, CXR-L may still report the glasses IP but ADB cannot connect.
-8. If CXR-L is not available, expand `Advanced` → tap `LAN scan / arm` or enter the glasses IP manually and tap `Arm known IP`.
-9. After the bridge is armed, quadruple tap on the R08 ring triggers the exact Hi Rokid shortcut.
-
-### After a glasses reboot or force-stop
-
-After first-time setup, the phone can recover the bridge automatically on launch:
-
-1. Open `R08 Companion` on the phone.
-2. Leave it open; it auto-attempts re-arm when a saved endpoint or Hi Rokid authorization is available. Tap `Re-arm bridge` only if you want to retry manually.
-
-The phone connects to the saved endpoint using the already-authorized key pair, or asks the glasses over Hi Rokid/CXR to bring Wi-Fi/Wireless Debugging back first. No re-pairing is needed unless Android forgets the ADB authorization. After the phone re-arms, Wi-Fi and always-on scanning are turned off again.
-
-The phone also provisions a local loopback recovery path on the glasses, based on [hacha](https://x.com/hacha)'s [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake): `persist.adb.tcp.port=5555`, a trusted ADB key, and the Accessibility watchdog script. After that provisioning, opening `R08 Access Bridge` directly on the glasses connects to `127.0.0.1:5555`, repairs `enabled_accessibility_services`, and restarts the watchdog even without the phone. This is the fallback for Rokid RG firmware 1.21.009, where folding a temple leg can force-stop the foreground third-party app and remove its AccessibilityService.
-
-**Battery note:** glasses Wi-Fi is enabled only for the duration of the re-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation.
-
-**Ring battery note:** the glasses app reads the R08 battery through the QRing-compatible BLE notification path after reconnect and after real ring input, throttled to once every 4 minutes, then overlays the latest reading next to the glasses battery on the Rokid launcher.
-
-The full CXR/Wireless Debugging pairing flow remains available under `Advanced → Recovery path` as a fallback for first-time setup or if the saved pairing expires. The multi-language Settings automator is only needed during first-time setup.
-
 ## Input Modes
 
-The release APK now contains both launcher behaviors. There is no separate fast APK and focus-sync APK anymore:
+The release APK contains both launcher behaviors — there is no separate fast APK anymore:
 
 | Mode | Behavior | Use when |
 | --- | --- | --- |
@@ -172,33 +141,25 @@ The current mode is shown in the top bar of the app so the active behavior is vi
 
 ## Launcher Behavior
 
-The Rokid launcher does not reliably respond to normal Accessibility scroll calls, so R08 Access Bridge injects small horizontal launcher swipes instead.
+The Rokid launcher does not reliably respond to normal Accessibility scroll calls, so R08 Access Bridge injects small horizontal launcher swipes instead. Each ring swipe moves one normal launcher step; Fast mode accelerates repeated slides with boosted swipes; activation taps the visible center app in the carousel. This avoids relying on stale launcher accessibility focus.
 
-The launcher movement is tuned to keep the visible Rokid launcher selection and the ring action aligned:
+Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts. The app now detects that state, resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen.
 
-- Each ring swipe moves one normal launcher step.
-- Fast mode accelerates repeated launcher slides with boosted swipes instead of issuing a second tiny swipe that the Rokid launcher may ignore.
-- Activation taps the visible center app in the launcher carousel.
-
-This avoids relying on stale launcher accessibility focus. Fast mode can re-enable repeated-swipe acceleration from the `Ring modes` screen when a device handles it correctly.
-
-Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts — while working fine for others. The app now detects that state and resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen. Ring navigation should now behave the same for everyone, regardless of the screen timeout.
-
-One deliberate exception remains by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display. The catch is that while the display is off, Android routes media keys to the current media button session before any accessibility filtering — and when the glasses are connected to a phone as a Bluetooth audio sink, that session is the phone-side AVRCP controller. A screen-off tap can therefore land on the phone and launch its media app (Apple Music, YouTube Music, ...) while the glasses stay dark. If you never start music from the ring, enable `Keep screen-off taps on glasses` in `Ring modes`: the app then claims the media button session for the duration of the screen-off state, consumes ring media keys, and turns taps into a display wake instead. The claim is released when the display turns on and backs off while real audio is playing, so play/pause during actual playback keeps controlling the music. This guard is based on [hacha](https://x.com/hacha)'s diagnosis and [pull request](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork.
+One deliberate exception remains by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display. While the display is off, Android routes media keys to the current media button session before any accessibility filtering — and when the glasses are connected to a phone as a Bluetooth audio sink, that session is the phone-side AVRCP controller, so a screen-off tap can land on the phone and launch its media app while the glasses stay dark. If you never start music from the ring, enable `Keep screen-off taps on glasses` in `Ring modes`: the app then claims the media button session while the screen is off, consumes ring media keys, and turns taps into a display wake instead. It releases the claim on screen-on and backs off during real playback. This guard is based on [hacha](https://x.com/hacha)'s diagnosis and [pull request](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork.
 
 ## App Screens
 
 ### Home
 
 - `Pair / Reconnect` scans for an R08 ring, connects to a bonded ring, or restarts the connection.
+- `Self-arm (no phone)` arms the Hi Rokid shortcut and installs the accessibility watchdog, all on the glasses.
 - `Ring modes` opens input mode settings.
-- `Action mapping` opens triple and quadruple tap mapping.
+- `Action mapping` opens tap and tap+swipe mapping.
 - `System` opens permissions and reset actions.
 
 ### Action Mapping
 
-- `Triple Tap` chooses what three taps trigger.
-- `Quadruple Tap` chooses what four taps trigger.
+- `Triple Tap` and `Quadruple Tap` choose what three or four taps trigger.
 - `1 Tap + Swipe Up/Down` and `2 Taps + Swipe Up/Down` choose the tap+swipe combo shortcuts.
 - Picking `Launch app` for any gesture opens a picker listing the installed apps; the chosen app is then launched directly by that gesture.
 
@@ -207,7 +168,7 @@ One deliberate exception remains by default: a tap on a dark screen still acts a
 - `Stable mode` restores the recommended `appType 1` media-key mode with one launcher step per slide.
 - `Fast mode` keeps `appType 1` and enables launcher acceleration after repeated slides.
 - `Touch fallback` configures `appType 4` touch-style fallback mode for debugging.
-- `Keep screen-off taps on glasses` blocks ring media keys from reaching a paired phone while the display is off; taps wake the screen instead of playing music. Off by default, which keeps tap-to-play on a dark screen.
+- `Keep screen-off taps on glasses` blocks ring media keys from reaching a paired phone while the display is off; taps wake the screen instead of playing music. Off by default.
 - `AppType probe` lets you test `appType 0` through `appType 7` and inspect key output in logs.
 
 ### System
@@ -218,112 +179,49 @@ One deliberate exception remains by default: a tap on a dark screen still acts a
 
 ## Installation
 
-Download the APKs from the GitHub Releases page:
-
-[R08 Access Bridge releases](https://github.com/Anezium/R08-Access-Bridge/releases)
+Download the APK from the [GitHub Releases page](https://github.com/Anezium/R08-Access-Bridge/releases).
 
 ### Important: update and disconnect the ring first
 
-Before pairing the ring with R08 Access Bridge, connect it to the official R08 Ring app and let the official app install any available ring firmware update.
+Before pairing the ring with R08 Access Bridge, connect it to the official R08 Ring (QRing) app and let it install any available ring firmware update.
 
-This matters for Stable mode / R08 `appType 1`: before the ring firmware update, `appType 1` may only emit swipe / previous / next input. Tap and double-tap Back may not work at all. After updating the ring in the official app, disconnect it there, then reconnect it in R08 Access Bridge so Stable mode exposes the expected swipe, tap, and Back behavior.
+This matters for Stable mode / R08 `appType 1`: before the firmware update, `appType 1` may only emit swipe / previous / next input, and tap and double-tap Back may not work at all. After updating the ring in the official app, **disconnect it there**, then reconnect it in R08 Access Bridge. If the ring stays connected to the phone, the glasses may only see normal media-key behavior and R08 Access Bridge may not take over. Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 
-After the firmware update, unbind or disconnect the ring from the official phone app before pairing it on the glasses. If the ring remains connected to the phone, the glasses may only see normal media-key behavior and R08 Access Bridge may not take over. If pairing still behaves oddly, forget the R08 ring from the phone's Bluetooth settings, or temporarily turn phone Bluetooth off while selecting `Pair / Reconnect` on the glasses.
-
-Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
-
-For the normal ring controller, install the glasses APK:
+### Set up on the glasses
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.5.0.apk
+adb install -r R08-Access-Bridge-v1.6.0.apk
 ```
 
-For the Hi Rokid shortcut bridge, also install the phone companion APK on an Android phone:
+1. Open `R08 Access Bridge` and grant Bluetooth permissions if Android asks.
+2. Open `System` → `Accessibility` and enable the `R08 Access Bridge` accessibility service.
+3. On the phone, unbind/disconnect the ring from the official R08 Ring app (or forget it from phone Bluetooth if needed).
+4. Back in the glasses app, select `Pair / Reconnect` and keep the R08 ring nearby.
+5. Tap **`Self-arm (no phone)`** and wait for `Self-arm complete`. This one step arms the Hi Rokid shortcut and installs the accessibility watchdog, so ring control survives the firmware force-stops. Do it once — it persists across reboots.
 
-```powershell
-adb install -r R08-Companion-v0.2.8.apk
-```
-
-After installing the glasses APK:
-
-1. Open `R08 Access Bridge`.
-2. Grant Bluetooth permissions if Android asks.
-3. Open `System` -> `Accessibility`.
-4. Enable the `R08 Access Bridge` accessibility service.
-5. On the phone, unbind/disconnect the ring from the official R08 Ring app. If needed, forget it from phone Bluetooth.
-6. Return to the glasses app and select `Pair / Reconnect`.
-7. Keep the R08 ring nearby and allow pairing if Android asks.
-8. Stay in `Stable mode` for the safest launcher behavior, or use `Ring modes` -> `Fast mode` if you want launcher acceleration.
-9. For the exact Hi Rokid shortcut on quadruple tap, arm the bridge from the phone companion or the PC helper.
-
-After installing the companion APK:
-
-1. Open `R08 Companion`.
-2. Tap `Authorize` once and approve the Hi Rokid authorization screen.
-3. Tap `Start Bridge`.
-4. When the status reads `Bridge: Armed`, close the companion app. The shell bridge keeps running on the glasses until it is disabled or the glasses reboot.
-
-### Run the phone companion at least once (accessibility watchdog)
-
-This step is not optional anymore, even if you never use the Hi Rokid shortcut.
-
-Rokid RG firmware 1.21.009 force-stops third-party apps and strips their Accessibility service when a temple leg is folded. Without recovery, ring control silently dies the first time you fold the glasses, and the accessibility service has to be re-enabled by hand.
-
-R08 Access Bridge recovers through an accessibility watchdog that runs on the glasses as the ADB `shell` user, but a normal APK cannot install that watchdog by itself: it has to be provisioned from outside. Arming the bridge from `R08 Companion` (or the PC helper script) once does exactly that — it installs and starts the watchdog and provisions the local loopback self-arm path. After that one-time arm:
-
-- The watchdog restores the accessibility service automatically after a firmware force-stop.
-- Opening R08 Access Bridge on the glasses can self-repair through `127.0.0.1:5555` even without the phone.
-
-The companion shows the watchdog state on its main screen so you can confirm the glasses are protected.
+Stay in `Stable mode` for the safest launcher behavior, or switch to `Fast mode` from `Ring modes` if you want launcher acceleration.
 
 ## Build From Source
 
-Requirements:
-
-- Android SDK with API 36 installed.
-- Java 17.
-- ADB access to the Rokid glasses for install/testing.
-- A phone with Hi Rokid Global installed for the CXR-L companion flow.
-
-Build a debug APK:
+Requirements: Android SDK with API 36, Java 17, and ADB access to the glasses.
 
 ```powershell
-.\gradlew.bat assembleDebug
-```
-
-Run lint:
-
-```powershell
-.\gradlew.bat lintDebug
-```
-
-Install on a connected device:
-
-```powershell
+.\gradlew.bat assembleDebug          # build the glasses APK
+.\gradlew.bat lintDebug              # lint
+.\gradlew.bat testDebugUnitTest      # unit tests
 adb install -r app\build\outputs\apk\debug\app-debug.apk
-adb install -r phone\build\outputs\apk\debug\phone-debug.apk
 ```
 
-The current project does not include a private release signing configuration. GitHub release APKs are debug-signed unless a release signing setup is added.
+The project has no private release signing configuration; GitHub release APKs are debug-signed unless a release signing setup is added.
 
 ## Debugging
 
-Useful log tags:
-
 ```powershell
-adb logcat -v time -s R08Bridge:D R08Ble:D R08Navigator:D R08Activity:D R08RokidSystem:D *:S
-```
+# Useful log tags
+adb logcat -v time -s R08Bridge:D R08Ble:D R08Navigator:D R08LocalSelfArm:D *:S
 
-Probe the R08 media-key profile / `appType 1` from ADB:
-
-```powershell
+# Probe the R08 media-key profile / appType 1 from ADB
 adb shell am start -n com.anezium.r08accessbridge/.MainActivity --ei probe_app_type 1 --ez exit_after_probe true
-```
-
-Probe another app type:
-
-```powershell
-adb shell am start -n com.anezium.r08accessbridge/.MainActivity --ei probe_app_type 4 --ez exit_after_probe true
 ```
 
 ## Privacy And Permissions
@@ -335,10 +233,6 @@ R08 Access Bridge requests:
 - Accessibility permission so ring input can control launcher/app navigation.
 - Wake lock to keep ring connection maintenance reliable.
 
-R08 Companion requests:
-
-- Internet/network access so it can connect directly to the glasses ADB TCP port on the local Wi-Fi network.
-
 ## Credits
 
 - [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work. He also diagnosed the screen-off media-key leak to paired phones and contributed the media button session guard ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork) that `Keep screen-off taps on glasses` is built on.
@@ -346,10 +240,7 @@ R08 Companion requests:
 
 ## Notes
 
-- Stable mode is the recommended default.
-- Fast mode is optional launcher acceleration for devices where visual focus and launched app stay aligned.
-- Touch fallback exists for experimentation when media-key mode is not usable.
-- The app lets the ring's touch sleep timer work instead of sending an infinite wake command every few seconds, which keeps idle ring power use lower.
+- Stable mode is the recommended default. Fast mode is optional launcher acceleration; Touch fallback exists for experimentation when media-key mode is not usable.
+- The app lets the ring's touch sleep timer work instead of sending an infinite wake command, which keeps idle ring power use lower.
 - Native DPAD output was not observed in the tested `appType 0..7` range, so the app bridges media/touch outputs into navigation behavior.
-- The exact Hi Rokid two-finger shortcut is available through the bridge-backed `Hi Rokid Shortcut` action; without the bridge, normal APK permissions are not enough to emit the raw input event.
 - The app is designed for the Rokid glasses HUD, not a phone-first UI.

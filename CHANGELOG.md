@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.6.0 - 2026-07-08
 
 ### Phone-free self-arm
 
