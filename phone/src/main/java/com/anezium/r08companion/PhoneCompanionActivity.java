@@ -181,19 +181,12 @@ public final class PhoneCompanionActivity extends Activity {
         // ── Status panel ─────────────────────────────────────────────────────
         LinearLayout statusPanel = panel(PANEL_RAISED, dp(16));
         root.addView(statusPanel, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        statusPanel.addView(sectionTitle("Bridge"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        statusPanel.addView(sectionTitle("Status"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         bridgeStatusText = prominentStatusRow(statusPanel, "Bridge", "Not armed");
         bridgeStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
         watchdogStatusText = prominentStatusRow(statusPanel, "Watchdog", "Unknown");
         watchdogStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
         renderStoredWatchdogStatus();
-        TextView armedCopy = label("When Bridge says Armed, the shortcut is ready. Watchdog auto-repairs R08 Accessibility after firmware force-stops. Run this companion once to enable it.", 13, MUTED, Typeface.NORMAL);
-        armedCopy.setLineSpacing(dp(2), 1f);
-        statusPanel.addView(armedCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        addGap(statusPanel, 8);
-        cxrStatusText = statusRow(statusPanel, "Hi Rokid", cxrClient.hasAuthToken() ? "Authorized" : "Needs authorization");
-        ipStatusText = statusRow(statusPanel, "Glasses IP", endpointLabel(prefs.getString(PREF_HOST, DEFAULT_HOST)));
-        adbStatusText = statusRow(statusPanel, "ADB", "Not armed yet");
 
         addGap(root, 10);
         detailText = label("No operation running.", 13, MUTED, Typeface.NORMAL);
@@ -221,7 +214,10 @@ public final class PhoneCompanionActivity extends Activity {
         addGap(outer, 8);
 
         TextView body = label(
-                "The Hi Rokid two-finger shortcut is triggered by a raw input event that a normal "
+                "When Bridge says Armed, the shortcut is ready. The Watchdog auto-repairs R08 "
+                + "Accessibility after the firmware force-stops it. Running this companion once enables "
+                + "both.\n\n"
+                + "The Hi Rokid two-finger shortcut is triggered by a raw input event that a normal "
                 + "Android app cannot send — it requires the ADB shell user.\n\n"
                 + "First-time setup (one-time): tap \"Set up bridge\". The companion sends the glasses app "
                 + "a command through Hi Rokid/CXR-L, the Accessibility Service opens Wireless Debugging, "
@@ -233,7 +229,10 @@ public final class PhoneCompanionActivity extends Activity {
                 + "(no re-pairing), restarts the bridge script, then turns glasses Wi-Fi and "
                 + "always-on scanning back off.\n\n"
                 + "Glasses Wi-Fi is off when idle to protect battery. The Bluetooth Hi Rokid channel "
-                + "is always available to trigger the re-arm flow.",
+                + "is always available to trigger the re-arm flow.\n\n"
+                + "No phone? You can also arm entirely on the glasses: open the R08 app and tap "
+                + "\"Self-arm (no phone)\". It drives the glasses' own Wireless Debugging and skips this "
+                + "companion and the Hi Rokid authorization altogether.",
                 13, MUTED, Typeface.NORMAL);
         body.setLineSpacing(dp(2), 1f);
         body.setVisibility(View.GONE);
@@ -272,6 +271,13 @@ public final class PhoneCompanionActivity extends Activity {
                 toggle.setText("Advanced");
             }
         });
+
+        // Link diagnostics — the arming pipeline, shown here instead of on the main screen.
+        addGap(inner, 14);
+        inner.addView(sectionTitle("Link status"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        cxrStatusText = statusRow(inner, "Hi Rokid", cxrClient.hasAuthToken() ? "Authorized" : "Needs authorization");
+        ipStatusText = statusRow(inner, "Glasses IP", endpointLabel(prefs.getString(PREF_HOST, DEFAULT_HOST)));
+        adbStatusText = statusRow(inner, "ADB", "Not armed yet");
 
         // Recovery / first-run path
         addGap(inner, 14);
@@ -709,8 +715,8 @@ public final class PhoneCompanionActivity extends Activity {
         renderStoredWatchdogStatus();
         summary("Setup complete", ACCENT);
         setDetail(state.wifiConnected
-                ? "Bridge is already armed on the glasses. You can close this app."
-                : "Bridge is already armed on the glasses. Wi-Fi is off after arm, so no glasses IP is needed until re-arm.");
+                ? "You can close this app."
+                : "Wi-Fi is off after arm to save battery. You can close this app.");
     }
 
     private void executeSetupDecision(BridgeSetupCoordinator.Decision decision) {

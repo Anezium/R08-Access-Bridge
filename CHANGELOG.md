@@ -9,6 +9,10 @@
 - The phone companion path is unchanged and still available; the on-glasses self-arm is an additional, independent route that sidesteps the Hi Rokid authorization step some users get stuck on.
 - Shell scripts pushed to the glasses are now pinned to LF line endings (`.gitattributes`), fixing a case where a CRLF watchdog script failed to run under the glasses' shell.
 
+### Companion app clarity
+
+- Cleaned up the phone companion's main screen so the armed state is stated once, not four times. The status card now shows just Bridge and Watchdog; the arming pipeline (Hi Rokid link, glasses IP, ADB) moved into `Advanced` where it belongs as diagnostics, and the "already armed" wall of text became a single "You can close this app." `How this works` now also points to the on-glasses `Self-arm (no phone)` route.
+
 ### Lower idle battery use
 
 - The on-glasses shortcut bridge no longer busy-polls its request file 5 times a second. It now blocks on a FIFO "doorbell" that the app rings only when it actually has a shortcut to fire, with a 5-second safety re-check as a fallback. Measured on an R08: idle CPU for the bridge dropped from ~1.3% of a core to ~0.07% (about 18× less), with no change to shortcut latency — a doorbell ring dispatches in the same second. If the FIFO can't be created on a given device, the bridge automatically falls back to the old polling loop.
