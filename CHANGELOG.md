@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.1 - 2026-07-08
+
+### Launcher battery indicator
+
+- Fixed the ring-battery indicator flickering on top of whatever glasses app was open instead of staying on the launcher. Glasses apps — Rokid's own and third-party ones alike — render as fullscreen overlay windows stacked above the launcher, whose window stays "focused" underneath; the indicator's two detection paths (a 2-second window poll and per-event package checks) kept disagreeing about what was foreground and attached/removed the indicator twice per tick.
+- The indicator now derives visibility from a single z-order check: it shows only when no higher window covers at least half of the launcher. It reacts to window events with a short debounce, and the old 2-second poll became a 30-second safety net — which also trims idle wake-ups.
+
 ## v1.6.0 - 2026-07-08
 
 ### Phone-free self-arm
