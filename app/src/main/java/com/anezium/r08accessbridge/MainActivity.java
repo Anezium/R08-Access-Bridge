@@ -355,6 +355,8 @@ public final class MainActivity extends Activity {
                         v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
                 action(R.string.action_wifi_settings, R.string.detail_wifi_settings,
                         v -> GlassesWifiSettings.enableThenOpen(this));
+                action(R.string.action_developer_options, R.string.detail_developer_options,
+                        v -> openDeveloperOptions());
                 action(R.string.action_app_settings, R.string.detail_app_settings, v -> openAppSettings());
                 action(R.string.action_export_diagnostics, R.string.detail_export_diagnostics,
                         v -> exportDiagnostics());
@@ -1147,6 +1149,16 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.fromParts("package", getPackageName(), null));
         startActivity(intent);
+    }
+
+    private void openDeveloperOptions() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (RuntimeException exception) {
+            Toast.makeText(this, R.string.toast_developer_options_failed, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void toggleDiagnosticsSharing() {

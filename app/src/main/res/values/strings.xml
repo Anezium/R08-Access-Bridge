@@ -46,6 +46,8 @@
     <string name="detail_accessibility">Enable the R08 service</string>
     <string name="action_wifi_settings">Wi-Fi settings</string>
     <string name="detail_wifi_settings">Open glasses Wi-Fi options</string>
+    <string name="action_developer_options">Open Developer options</string>
+    <string name="detail_developer_options">For manual setup: Wireless debugging &gt; Pair with code</string>
     <string name="action_app_settings">App settings</string>
     <string name="detail_app_settings">Bluetooth permissions and app info</string>
     <string name="action_export_diagnostics">Export diagnostics</string>
@@ -117,4 +119,5 @@
     <string name="toast_touch_mode">Touch fallback enabled</string>
     <string name="toast_screen_off_media_guard_on">Screen-off taps stay on glasses</string>
     <string name="toast_screen_off_media_guard_off">Screen-off taps can control media</string>
+    <string name="toast_developer_options_failed">Could not open Developer options</string>
 </resources>

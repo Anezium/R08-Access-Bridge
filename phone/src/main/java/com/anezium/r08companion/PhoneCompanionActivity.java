@@ -8,7 +8,10 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -29,6 +32,7 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public final class PhoneCompanionActivity extends Activity {
     private static final String TAG = "R08Phone";
@@ -79,6 +83,20 @@ public final class PhoneCompanionActivity extends Activity {
     private boolean continueBootstrapAfterAuthorization;
     private boolean continueWirelessSetupAfterAuthorization;
     private boolean autoReArmAttempted;
+    private volatile boolean activityStarted;
+    private volatile boolean manualSetupVisible;
+    private volatile boolean manualSetupRunning;
+    private volatile int manualDiscoveryGeneration;
+    private ExecutorService manualDiscoveryExecutor;
+    private Future<?> manualDiscoveryTask;
+    private EditText manualHostField;
+    private EditText manualPortField;
+    private EditText manualCodeField;
+    private TextView manualDiscoveryStatusText;
+    private TextView manualOperationStatusText;
+    private Button manualPairButton;
+    private String lastManualDiscoveredHost = "";
+    private String lastManualDiscoveredPort = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,7 +131,34 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        activityStarted = true;
+        if (manualSetupVisible) {
+            startManualPairingDiscovery();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        activityStarted = false;
+        stopManualPairingDiscovery();
+        super.onStop();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (manualSetupVisible) {
+            showMainSetupScreen();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
     protected void onDestroy() {
+        manualSetupVisible = false;
+        stopManualPairingDiscovery();
         if (cxrClient != null) {
             cxrClient.shutdown();
         }
@@ -159,9 +204,15 @@ public final class PhoneCompanionActivity extends Activity {
         hero.addView(summaryStatusText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         addGap(hero, 14);
+        LinearLayout setupActions = horizontal();
+        hero.addView(setupActions, fullWidth(dp(54), 0));
         primaryButton = button(initialPrimaryButtonLabel(), true);
         primaryButton.setOnClickListener(v -> onPrimaryButtonClicked());
-        hero.addView(primaryButton, fullWidth(dp(54), 0));
+        setupActions.addView(primaryButton, new LinearLayout.LayoutParams(0, dp(54), 1.35f));
+        addGapHorizontal(setupActions, 10);
+        Button manualSetup = button("Manual setup", false);
+        manualSetup.setOnClickListener(v -> showManualSetupScreen());
+        setupActions.addView(manualSetup, new LinearLayout.LayoutParams(0, dp(54), 1f));
 
         addGap(hero, 10);
         wifiOffAfterArmCheck = new CheckBox(this);
@@ -203,6 +254,128 @@ public final class PhoneCompanionActivity extends Activity {
         // ── Advanced collapsible section ──────────────────────────────────────
         root.addView(buildAdvancedSection(prefs), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
+        return scroll;
+    }
+
+    private void showManualSetupScreen() {
+        manualSetupVisible = true;
+        lastManualDiscoveredHost = "";
+        lastManualDiscoveredPort = "";
+        setContentView(buildManualSetupView());
+        startManualPairingDiscovery();
+    }
+
+    private void showMainSetupScreen() {
+        manualSetupVisible = false;
+        stopManualPairingDiscovery();
+        setContentView(buildView());
+        handleLaunchIntent();
+    }
+
+    private View buildManualSetupView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(SURFACE);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18), dp(18), dp(18), dp(24));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
+
+        TextView title = label("Manual setup", 28, INK, Typeface.BOLD);
+        title.setShadowLayer(dp(6), 0, 0, Color.rgb(17, 112, 38));
+        root.addView(title, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        addGap(root, 16);
+        LinearLayout setupPanel = panel(PANEL_STRONG, dp(18));
+        root.addView(setupPanel, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        TextView instructions = label(
+                "1. On the glasses, open Settings > Developer options > Wireless debugging.\n\n"
+                        + "2. Select 'Pair device with pairing code' and leave that screen open.\n\n"
+                        + "3. Enter the 6-digit code below. The address fills in automatically when the glasses are detected.",
+                15, INK, Typeface.NORMAL);
+        instructions.setLineSpacing(dp(2), 1f);
+        setupPanel.addView(instructions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        addGap(setupPanel, 16);
+        manualDiscoveryStatusText = label(
+                "Looking for the glasses on this Wi-Fi...", 14, MUTED, Typeface.BOLD);
+        manualDiscoveryStatusText.setLineSpacing(dp(2), 1f);
+        setupPanel.addView(manualDiscoveryStatusText,
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        addGap(setupPanel, 14);
+        LinearLayout endpointFields = horizontal();
+        setupPanel.addView(endpointFields,
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        LinearLayout hostColumn = new LinearLayout(this);
+        hostColumn.setOrientation(LinearLayout.VERTICAL);
+        endpointFields.addView(hostColumn,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.9f));
+        hostColumn.addView(label("IP address", 13, MUTED, Typeface.BOLD),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        String initialManualHost = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
+        lastManualDiscoveredHost = initialManualHost == null ? "" : initialManualHost.trim();
+        manualHostField = field("192.168.x.x", lastManualDiscoveredHost,
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        hostColumn.addView(manualHostField, fullWidth(dp(56), 0));
+
+        addGapHorizontal(endpointFields, 10);
+        LinearLayout portColumn = new LinearLayout(this);
+        portColumn.setOrientation(LinearLayout.VERTICAL);
+        endpointFields.addView(portColumn,
+                new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        portColumn.addView(label("Pairing port", 13, MUTED, Typeface.BOLD),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        manualPortField = field("Port", "", InputType.TYPE_CLASS_NUMBER);
+        portColumn.addView(manualPortField, fullWidth(dp(56), 0));
+
+        addGap(setupPanel, 12);
+        setupPanel.addView(label("6-digit pairing code", 13, MUTED, Typeface.BOLD),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        manualCodeField = field("000000", "", InputType.TYPE_CLASS_NUMBER);
+        manualCodeField.setFilters(new InputFilter[]{new InputFilter.LengthFilter(6)});
+        setupPanel.addView(manualCodeField, fullWidth(dp(56), 0));
+
+        TextWatcher inputWatcher = new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                updateManualPairButtonState();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        };
+        manualHostField.addTextChangedListener(inputWatcher);
+        manualPortField.addTextChangedListener(inputWatcher);
+        manualCodeField.addTextChangedListener(inputWatcher);
+
+        addGap(setupPanel, 16);
+        manualPairButton = button("Pair and arm", true);
+        manualPairButton.setOnClickListener(v -> runManualPairAndArm());
+        setupPanel.addView(manualPairButton, fullWidth(dp(54), 0));
+
+        addGap(setupPanel, 10);
+        manualOperationStatusText = label("", 14, MUTED, Typeface.BOLD);
+        manualOperationStatusText.setLineSpacing(dp(2), 1f);
+        setupPanel.addView(manualOperationStatusText,
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        addGap(root, 14);
+        Button back = button("Back", false);
+        back.setOnClickListener(v -> showMainSetupScreen());
+        root.addView(back, fullWidth(dp(48), 0));
+
+        updateManualPairButtonState();
         return scroll;
     }
 
@@ -404,6 +577,274 @@ public final class PhoneCompanionActivity extends Activity {
         }
     }
 
+    private void updateManualPairButtonState() {
+        if (manualPairButton == null || manualHostField == null
+                || manualPortField == null || manualCodeField == null) {
+            return;
+        }
+        String host = manualHostField.getText().toString().trim();
+        String port = manualPortField.getText().toString().trim();
+        String code = manualCodeField.getText().toString().trim();
+        boolean enabled = !manualSetupRunning
+                && !host.isEmpty()
+                && !port.isEmpty()
+                && code.matches("\\d{6}");
+        manualPairButton.setEnabled(enabled);
+        manualPairButton.setAlpha(enabled ? 1f : 0.45f);
+    }
+
+    private void startManualPairingDiscovery() {
+        if (!activityStarted || !manualSetupVisible || manualSetupRunning
+                || (manualDiscoveryTask != null && !manualDiscoveryTask.isDone())) {
+            return;
+        }
+        final int generation = ++manualDiscoveryGeneration;
+        manualDiscoveryExecutor = Executors.newSingleThreadExecutor();
+        manualDiscoveryTask = manualDiscoveryExecutor.submit(() -> {
+            while (isManualDiscoveryActive(generation)) {
+                try {
+                    AdbMdnsPairingResolver.PairingEndpoint endpoint =
+                            mdnsPairingResolver.resolvePairingEndpoint("", 4000L);
+                    runOnUiThread(() -> applyManualPairingEndpoint(endpoint, generation));
+                } catch (Throwable throwable) {
+                    if (!isManualDiscoveryActive(generation)) {
+                        return;
+                    }
+                    runOnUiThread(() -> {
+                        if (isManualDiscoveryActive(generation)
+                                && manualDiscoveryStatusText != null) {
+                            manualDiscoveryStatusText.setText(
+                                    "Looking for the glasses on this Wi-Fi...");
+                            manualDiscoveryStatusText.setTextColor(MUTED);
+                        }
+                    });
+                }
+                if (!pauseManualDiscovery(generation)) {
+                    return;
+                }
+            }
+        });
+    }
+
+    private void stopManualPairingDiscovery() {
+        manualDiscoveryGeneration++;
+        Future<?> task = manualDiscoveryTask;
+        manualDiscoveryTask = null;
+        if (task != null) {
+            task.cancel(true);
+        }
+        ExecutorService discoveryExecutor = manualDiscoveryExecutor;
+        manualDiscoveryExecutor = null;
+        if (discoveryExecutor != null) {
+            discoveryExecutor.shutdownNow();
+        }
+    }
+
+    private boolean isManualDiscoveryActive(int generation) {
+        return activityStarted
+                && manualSetupVisible
+                && !manualSetupRunning
+                && generation == manualDiscoveryGeneration
+                && !Thread.currentThread().isInterrupted();
+    }
+
+    private boolean pauseManualDiscovery(int generation) {
+        try {
+            Thread.sleep(900L);
+            return isManualDiscoveryActive(generation);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void applyManualPairingEndpoint(
+            AdbMdnsPairingResolver.PairingEndpoint endpoint,
+            int generation) {
+        if (!isManualDiscoveryActive(generation) || endpoint == null
+                || manualHostField == null || manualPortField == null) {
+            return;
+        }
+        String currentHost = manualHostField.getText().toString().trim();
+        String currentPort = manualPortField.getText().toString().trim();
+        if (currentHost.isEmpty() || currentHost.equals(lastManualDiscoveredHost)) {
+            manualHostField.setText(endpoint.host);
+        }
+        if (currentPort.isEmpty() || currentPort.equals(lastManualDiscoveredPort)) {
+            manualPortField.setText(Integer.toString(endpoint.port));
+        }
+        lastManualDiscoveredHost = endpoint.host;
+        lastManualDiscoveredPort = Integer.toString(endpoint.port);
+        manualDiscoveryStatusText.setText(
+                "Glasses found at " + endpoint.host + ":" + endpoint.port);
+        manualDiscoveryStatusText.setTextColor(ACCENT);
+    }
+
+    private void runManualPairAndArm() {
+        if (manualSetupRunning || manualHostField == null
+                || manualPortField == null || manualCodeField == null) {
+            return;
+        }
+        String pairHost = manualHostField.getText().toString().trim();
+        String pairPortText = manualPortField.getText().toString().trim();
+        String pairCode = manualCodeField.getText().toString().trim();
+        int pairPort;
+        try {
+            pairPort = Integer.parseInt(pairPortText);
+        } catch (NumberFormatException exception) {
+            showManualFailure(
+                    "Could not reach the glasses - make sure both devices are on the same Wi-Fi");
+            return;
+        }
+        if (pairHost.isEmpty() || pairPort <= 0 || pairPort > 65535
+                || !pairCode.matches("\\d{6}")) {
+            showManualFailure(
+                    "Could not reach the glasses - make sure both devices are on the same Wi-Fi");
+            return;
+        }
+
+        manualSetupRunning = true;
+        stopManualPairingDiscovery();
+        manualOperationStatusText.setText("Pairing...");
+        manualOperationStatusText.setTextColor(MUTED);
+        updateManualPairButtonState();
+
+        executor.execute(() -> {
+            try {
+                adbBridgeClient.pairWirelessDebugging(pairHost, pairPort, pairCode);
+            } catch (Throwable throwable) {
+                String message = isManualNetworkFailure(throwable)
+                        ? "Could not reach the glasses - make sure both devices are on the same Wi-Fi"
+                        : "Pairing failed - check the code and try again";
+                runOnUiThread(() -> showManualFailure(message));
+                return;
+            }
+
+            runOnUiThread(() -> {
+                if (manualSetupVisible && manualOperationStatusText != null) {
+                    manualOperationStatusText.setText("Arming the bridge...");
+                    manualOperationStatusText.setTextColor(MUTED);
+                }
+            });
+
+            try (ConnectedAdb connected = connectManualAfterPairing(pairHost)) {
+                final String[] armedHost = {connected.host};
+                BridgeOperationResult result = adbBridgeClient.arm(
+                        connected.session,
+                        wifiOffAfterArm(),
+                        ip -> {
+                            armedHost[0] = ip;
+                            saveEndpoint(ip, connected.port);
+                            runOnUiThread(() -> {
+                                if (manualSetupVisible && manualHostField != null) {
+                                    manualHostField.setText(ip);
+                                }
+                            });
+                        });
+                String resultHost = armedHost[0];
+                int resultPort = connected.port;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
+                    if (manualSetupVisible) {
+                        showMainSetupScreen();
+                    }
+                    updateEndpoint(resultHost, resultPort);
+                    applyBridgeResult(resultHost, result);
+                    manualSetupRunning = false;
+                });
+            } catch (Throwable throwable) {
+                runOnUiThread(() -> showManualFailure(
+                        "Could not reach the glasses - make sure both devices are on the same Wi-Fi"));
+            }
+        });
+    }
+
+    private ConnectedAdb connectManualAfterPairing(String pairHost) throws Exception {
+        Throwable mdnsFailure;
+        try {
+            AdbMdnsPairingResolver.PairingEndpoint endpoint =
+                    mdnsPairingResolver.resolveConnectEndpoint(pairHost, 12000L);
+            return new ConnectedAdb(
+                    connectAfterPairing(endpoint.host, endpoint.port),
+                    endpoint.host,
+                    endpoint.port);
+        } catch (Throwable throwable) {
+            mdnsFailure = throwable;
+        }
+
+        int fallbackPort = prefs().getInt(
+                BridgeProtocol.PREF_LAST_PORT,
+                prefs().getInt(PREF_PORT, BridgeProtocol.DEFAULT_ADB_PORT));
+        try {
+            return new ConnectedAdb(
+                    connectAfterPairing(pairHost, fallbackPort),
+                    pairHost,
+                    fallbackPort);
+        } catch (Throwable directFailure) {
+            mdnsFailure.addSuppressed(directFailure);
+        }
+
+        try {
+            String discoveredHost = lanDiscovery.findGlassesHost(fallbackPort);
+            if (discoveredHost != null && !discoveredHost.trim().isEmpty()) {
+                return new ConnectedAdb(
+                        connectAfterPairing(discoveredHost, fallbackPort),
+                        discoveredHost,
+                        fallbackPort);
+            }
+        } catch (Throwable discoveryFailure) {
+            mdnsFailure.addSuppressed(discoveryFailure);
+        }
+
+        if (mdnsFailure instanceof Exception) {
+            throw (Exception) mdnsFailure;
+        }
+        if (mdnsFailure instanceof Error) {
+            throw (Error) mdnsFailure;
+        }
+        throw new IllegalStateException("Could not resolve the Wireless Debugging endpoint");
+    }
+
+    private void showManualFailure(String message) {
+        manualSetupRunning = false;
+        if (!manualSetupVisible || manualOperationStatusText == null) {
+            return;
+        }
+        manualOperationStatusText.setText(message);
+        manualOperationStatusText.setTextColor(ERROR);
+        updateManualPairButtonState();
+        startManualPairingDiscovery();
+    }
+
+    private boolean isManualNetworkFailure(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof java.net.ConnectException
+                    || current instanceof java.net.NoRouteToHostException
+                    || current instanceof java.net.SocketTimeoutException
+                    || current instanceof java.net.UnknownHostException) {
+                return true;
+            }
+            String message = current.getMessage();
+            if (message != null) {
+                String value = message.toLowerCase(Locale.US);
+                if (value.contains("timed out")
+                        || value.contains("timeout")
+                        || value.contains("connection refused")
+                        || value.contains("failed to connect")
+                        || value.contains("no route")
+                        || value.contains("unreachable")
+                        || value.contains("phone wi-fi is not connected")) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     // -------------------------------------------------------------------------
     // Launch intent handling
     // -------------------------------------------------------------------------
@@ -596,6 +1037,9 @@ public final class PhoneCompanionActivity extends Activity {
     private final CxrBootstrapClient.Listener cxrListener = new CxrBootstrapClient.Listener() {
         @Override
         public void onCxrStatus(String status) {
+            if (manualSetupVisible) {
+                return;
+            }
             runOnUiThread(() -> {
                 boolean error = isCxrErrorStatus(status);
                 setStatusLine(cxrStatusText, "Hi Rokid", status, error ? ERROR : MUTED);
@@ -612,6 +1056,9 @@ public final class PhoneCompanionActivity extends Activity {
 
         @Override
         public void onBootstrapState(CxrBootstrapClient.BootstrapState state) {
+            if (manualSetupVisible) {
+                return;
+            }
             BridgeSetupCoordinator.Decision decision = setupCoordinator.onBootstrapState(state);
             Log.d(TAG, "bootstrap state setup=" + state.setupState
                     + " trigger=" + state.trigger
@@ -629,6 +1076,9 @@ public final class PhoneCompanionActivity extends Activity {
 
         @Override
         public void onGlassesIp(String ip) {
+            if (manualSetupVisible) {
+                return;
+            }
             runOnUiThread(() -> {
                 updateEndpoint(ip, setupCoordinator.currentPort(BridgeProtocol.DEFAULT_ADB_PORT));
                 if (!setupCoordinator.isBridgeArmed() && !setupCoordinator.isWirelessSetupRequested()) {
