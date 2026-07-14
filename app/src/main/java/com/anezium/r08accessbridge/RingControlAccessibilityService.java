@@ -31,8 +31,12 @@ import android.widget.Toast;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public final class RingControlAccessibilityService extends AccessibilityService {
     public static final String ACTION_COMMAND = "com.anezium.r08accessbridge.COMMAND";
@@ -88,6 +92,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private RingBatteryLauncherOverlay batteryLauncherOverlay;
     private RingBleController bleController;
     private MediaKeyGuard mediaKeyGuard;
+    private SelfArmDiagnostics selfArmDiagnostics;
+    private Thread.UncaughtExceptionHandler previousUncaughtExceptionHandler;
+    private Thread.UncaughtExceptionHandler diagnosticUncaughtExceptionHandler;
+    private final LinkedHashMap<String, Integer> selfArmEventHistogram = new LinkedHashMap<>();
     private PowerManager powerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
@@ -258,6 +266,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        if (selfArmDiagnostics == null) {
+            selfArmDiagnostics = new SelfArmDiagnostics(this);
+        }
+        installDiagnosticCrashHandler();
+        selfArmDiagnostics.log("SERVICE onServiceConnected");
         activeService = this;
         ensureFastModeDefault(this);
         PrivilegedShortcutBridge.ensureReady(this);
@@ -288,6 +301,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     @Override
     public void onDestroy() {
+        if (selfArmDiagnostics != null) {
+            selfArmDiagnostics.log("SERVICE onDestroy");
+        }
         if (activeService == this) {
             activeService = null;
         }
@@ -319,6 +335,19 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         selfArmWirelessDebuggingAutomator = null;
         wifiEnableAutomator = null;
         super.onDestroy();
+        restoreDiagnosticCrashHandler();
+        if (selfArmDiagnostics != null) {
+            selfArmDiagnostics.shutdown();
+            selfArmDiagnostics = null;
+        }
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        if (selfArmDiagnostics != null) {
+            selfArmDiagnostics.log("SERVICE onUnbind");
+        }
+        return super.onUnbind(intent);
     }
 
     @Override
@@ -327,7 +356,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (wirelessDebuggingSetupAutomator != null) {
             wirelessDebuggingSetupAutomator.onAccessibilityEvent(event);
         }
-        if (selfArmWirelessDebuggingAutomator != null) {
+        if (selfArmWirelessDebuggingAutomator != null
+                && selfArmWirelessDebuggingAutomator.isActive()) {
+            countSelfArmAccessibilityEvent(event);
             selfArmWirelessDebuggingAutomator.onAccessibilityEvent(event);
         }
         if (wifiEnableAutomator != null) {
@@ -340,7 +371,100 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     @Override
     public void onInterrupt() {
+        if (selfArmDiagnostics != null) {
+            selfArmDiagnostics.log("SERVICE onInterrupt");
+        }
         Log.d(TAG, "Accessibility service interrupted");
+    }
+
+    SelfArmDiagnostics selfArmDiagnostics() {
+        return selfArmDiagnostics;
+    }
+
+    void beginSelfArmDiagnosticsRun(int runGeneration) {
+        selfArmEventHistogram.clear();
+        if (selfArmDiagnostics == null) {
+            return;
+        }
+        selfArmDiagnostics.startRun(runGeneration);
+        selfArmDiagnostics.startWatchdog(mainHandler, () -> {
+            SelfArmWirelessDebuggingAutomator automator = selfArmWirelessDebuggingAutomator;
+            if (automator != null && automator.isActive()) {
+                automator.dumpLastKnownRootForWatchdog();
+            }
+        });
+    }
+
+    void endSelfArmDiagnosticsRun() {
+        selfArmEventHistogram.clear();
+        if (selfArmDiagnostics != null) {
+            selfArmDiagnostics.stopWatchdog();
+        }
+    }
+
+    String consumeSelfArmEventHistogram() {
+        if (selfArmEventHistogram.isEmpty()) {
+            return "(none)";
+        }
+        StringBuilder result = new StringBuilder();
+        for (Map.Entry<String, Integer> entry : selfArmEventHistogram.entrySet()) {
+            if (result.length() > 0) {
+                result.append(", ");
+            }
+            result.append(entry.getKey()).append('=').append(entry.getValue());
+        }
+        selfArmEventHistogram.clear();
+        return result.toString();
+    }
+
+    private void countSelfArmAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) {
+            return;
+        }
+        CharSequence packageName = event.getPackageName();
+        String key = AccessibilityEvent.eventTypeToString(event.getEventType())
+                + "|" + (packageName == null ? "(none)" : packageName.toString());
+        Integer current = selfArmEventHistogram.get(key);
+        selfArmEventHistogram.put(key, current == null ? 1 : current + 1);
+    }
+
+    private void installDiagnosticCrashHandler() {
+        if (diagnosticUncaughtExceptionHandler != null
+                && Thread.getDefaultUncaughtExceptionHandler() == diagnosticUncaughtExceptionHandler) {
+            return;
+        }
+        previousUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler();
+        diagnosticUncaughtExceptionHandler = (thread, failure) -> {
+            try {
+                if (selfArmDiagnostics != null) {
+                    String headline = "UNCAUGHT EXCEPTION thread=" + thread.getName()
+                            + " type=" + failure.getClass().getName();
+                    selfArmDiagnostics.logCriticalSync(
+                            headline,
+                            headline + "\n" + fullStackTrace(failure));
+                }
+            } finally {
+                if (previousUncaughtExceptionHandler != null) {
+                    previousUncaughtExceptionHandler.uncaughtException(thread, failure);
+                }
+            }
+        };
+        Thread.setDefaultUncaughtExceptionHandler(diagnosticUncaughtExceptionHandler);
+    }
+
+    private void restoreDiagnosticCrashHandler() {
+        if (diagnosticUncaughtExceptionHandler != null
+                && Thread.getDefaultUncaughtExceptionHandler() == diagnosticUncaughtExceptionHandler) {
+            Thread.setDefaultUncaughtExceptionHandler(previousUncaughtExceptionHandler);
+        }
+        diagnosticUncaughtExceptionHandler = null;
+        previousUncaughtExceptionHandler = null;
+    }
+
+    private static String fullStackTrace(Throwable failure) {
+        StringWriter output = new StringWriter();
+        failure.printStackTrace(new PrintWriter(output));
+        return output.toString();
     }
 
     static boolean isServiceActive() {

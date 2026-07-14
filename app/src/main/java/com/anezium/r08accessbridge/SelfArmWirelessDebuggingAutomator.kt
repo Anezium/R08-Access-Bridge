@@ -50,8 +50,10 @@ internal class SelfArmWirelessDebuggingAutomator(
     private val service: RingControlAccessibilityService,
     private val handler: Handler,
 ) {
+    @Volatile
     private var active = false
     private var deadlineAt = 0L
+    private var runStartedAt = 0L
     private var lastClickAt = 0L
 
     private var wifiConfirmed = false
@@ -94,6 +96,10 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var runGeneration = 0
     private var accessibilityEventsSinceStep = 0
     private var stepSequence = 0
+    private var developerOptionsTreeDumped = false
+
+    @Volatile
+    private var lastKnownRoot: AccessibilityNodeInfo? = null
 
     private val stepRunnable: Runnable = Runnable { runStepSafely() }
     private val stepScheduler: EarliestDeadlineScheduler = EarliestDeadlineScheduler(
@@ -108,6 +114,18 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
     }
 
+    fun isActive(): Boolean = active
+
+    fun dumpLastKnownRootForWatchdog() {
+        val root = lastKnownRoot
+        val diagnostics = service.selfArmDiagnostics()
+        if (!active || root == null) {
+            diagnostics?.log("NODE TREE SNAPSHOT skipped label=watchdog-first-stall reason=no-safe-root")
+            return
+        }
+        diagnostics?.dumpNodeTree(root, "watchdog-first-stall")
+    }
+
     fun start() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             LocalSelfArmStatus.report(service, setupState = "api_30_required")
@@ -119,8 +137,10 @@ internal class SelfArmWirelessDebuggingAutomator(
         runGeneration++
         accessibilityEventsSinceStep = 0
         stepSequence = 0
-        deadlineAt = SystemClock.uptimeMillis() + TIMEOUT_MS
+        runStartedAt = SystemClock.uptimeMillis()
+        deadlineAt = runStartedAt + TIMEOUT_MS
         handler.postAtTime(timeoutRunnable, deadlineAt)
+        service.beginSelfArmDiagnosticsRun(runGeneration)
         service.beginSelfArmForeground()
         lastClickAt = 0L
         wifiConfirmed = false
@@ -157,6 +177,8 @@ internal class SelfArmWirelessDebuggingAutomator(
         lastDeveloperOpenAt = 0L
         developerOpenStartedAt = 0L
         developerScreenSeen = false
+        developerOptionsTreeDumped = false
+        lastKnownRoot = null
         lastConnectHost = lastPairingHost
         lastConnectPort = SelfArmWirelessAdbController.readWirelessPort()
         Log.d(TAG, "start: local self-arm wireless debugging setup started")
@@ -172,21 +194,29 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     fun stop() {
+        val wasActive = active
         active = false
         cancelScheduledWork()
+        service.endSelfArmDiagnosticsRun()
         service.endSelfArmForeground()
         localSelfPairingThread?.interrupt()
         localSelfPairingThread = null
+        lastKnownRoot = null
+        if (wasActive) {
+            service.selfArmDiagnostics()?.finishRun(
+                "STOP run=$runGeneration reason=automator-stopped elapsed=${runElapsedMs()}ms",
+            )
+        }
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!active) return
         accessibilityEventsSinceStep++
         if (!wifiConfirmed && wifiClickIssued) {
-            schedule(WIFI_POLL_INTERVAL_MS)
+            scheduleFromAccessibilityEvent(WIFI_POLL_INTERVAL_MS)
             return
         }
-        schedule(180L)
+        scheduleFromAccessibilityEvent(180L)
     }
 
     private fun runStepSafely() {
@@ -196,6 +226,11 @@ internal class SelfArmWirelessDebuggingAutomator(
         val events = accessibilityEventsSinceStep
         accessibilityEventsSinceStep = 0
         stepSequence++
+        val histogram = service.consumeSelfArmEventHistogram()
+        diagnostic(
+            "STEP ENTER run=$runGeneration seq=$stepSequence elapsed=${runElapsedMs(startedAt)}ms " +
+                "events=$events histogram={$histogram}",
+        )
         try {
             step()
         } catch (exception: RuntimeException) {
@@ -204,6 +239,10 @@ internal class SelfArmWirelessDebuggingAutomator(
             failAutomation(error)
         } finally {
             val elapsed = SystemClock.uptimeMillis() - startedAt
+            diagnostic(
+                "STEP EXIT run=$runGeneration seq=$stepSequence elapsed=${runElapsedMs()}ms " +
+                    "duration=${elapsed}ms active=$active",
+            )
             if (elapsed >= SLOW_STEP_MS || stepSequence <= 3) {
                 Log.d(TAG, "step run=$runGeneration seq=$stepSequence events=$events elapsed=${elapsed}ms")
             }
@@ -213,6 +252,10 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun failAutomation(failure: Throwable) {
         val detail = failureDetail(failure)
         Log.e(TAG, "automation failed run=$runGeneration step=$stepSequence detail=$detail", failure)
+        diagnostic(
+            "AUTOMATION FAILURE run=$runGeneration seq=$stepSequence detail=$detail\n" +
+                failure.stackTraceToString(),
+        )
         finish("accessibility_automation_error", false, detail)
     }
 
@@ -236,7 +279,10 @@ internal class SelfArmWirelessDebuggingAutomator(
             return
         }
 
-        val root = AccessibilityWindowRoots.getNavigationRoot(service)
+        val root = timedTreeHelper("getNavigationRoot") {
+            AccessibilityWindowRoots.getNavigationRoot(service)
+        }
+        lastKnownRoot = root
         if (pairingReadyReported) {
             if (readPairingDialogFromAnyRoot(root)) return
             reportCachedPairingReady()
@@ -279,6 +325,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         firstEndpoint(root)?.let {
             lastConnectHost = it.host
             lastConnectPort = it.port
+            diagnostic("REPORT state=wireless_debugging_open")
             LocalSelfArmStatus.report(service,
                 setupState = "wireless_debugging_open",
                 wifiIp = it.host,
@@ -287,12 +334,32 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
 
         when {
-            isWirelessDebuggingPage(root) -> handleWirelessDebuggingPage(root)
-            deviceInfoFallback -> handleDeviceInfoPage(root)
-            isDeveloperOptionsDisabledPrompt(root) -> startDeveloperOptionsEnableFlow()
-            !SelfArmWirelessAdbController.areDeveloperOptionsUsable(service) -> startDeveloperOptionsEnableFlow()
-            !isDeveloperOptionsScreen(root) -> waitForDeveloperOptions(root)
+            isWirelessDebuggingPage(root) -> {
+                diagnostic("STEP BRANCH screen=wireless-debugging")
+                handleWirelessDebuggingPage(root)
+            }
+            deviceInfoFallback -> {
+                diagnostic("STEP BRANCH screen=device-info-fallback")
+                handleDeviceInfoPage(root)
+            }
+            isDeveloperOptionsDisabledPrompt(root) -> {
+                diagnostic("STEP BRANCH screen=developer-options-disabled-prompt")
+                startDeveloperOptionsEnableFlow()
+            }
+            !SelfArmWirelessAdbController.areDeveloperOptionsUsable(service) -> {
+                diagnostic("STEP BRANCH screen=developer-options-unusable")
+                startDeveloperOptionsEnableFlow()
+            }
+            !isDeveloperOptionsScreen(root) -> {
+                diagnostic("STEP BRANCH screen=other-waiting-for-developer-options")
+                waitForDeveloperOptions(root)
+            }
             else -> {
+                diagnostic("STEP BRANCH screen=developer-options")
+                if (!developerOptionsTreeDumped) {
+                    developerOptionsTreeDumped = true
+                    service.selfArmDiagnostics()?.dumpNodeTree(root, "developer-options-first-classification")
+                }
                 developerScreenSeen = true
                 handleDeveloperOptionsPage(root)
             }
@@ -317,7 +384,10 @@ internal class SelfArmWirelessDebuggingAutomator(
             wifiClickIssued = false
         }
 
-        val root = AccessibilityWindowRoots.getNavigationRoot(service)
+        val root = timedTreeHelper("getNavigationRoot.wifi") {
+            AccessibilityWindowRoots.getNavigationRoot(service)
+        }
+        lastKnownRoot = root
         if (root == null) {
             schedule(STEP_DELAY_MS)
             return
@@ -440,9 +510,10 @@ internal class SelfArmWirelessDebuggingAutomator(
             schedule(900L)
             return
         }
-        val buildNumber = findBuildNumberByBuildIdentifier(root) ?: findFirst(root) {
-            containsText(
-                it,
+        val buildNumber = timedTreeHelper("findBuildNumber") {
+            findBuildNumberByBuildIdentifier(root) ?: findFirst(root) {
+                containsText(
+                    it,
                 "build number",
                 "numero de build",
                 "numero de version",
@@ -454,7 +525,8 @@ internal class SelfArmWirelessDebuggingAutomator(
                 "소프트웨어 정보",
                 "기기 정보",
                 "номер сборки",
-            )
+                )
+            }
         }
         if (buildNumber != null && buildNumberTaps < MAX_BUILD_NUMBER_TAPS) {
             if (!canClickNow()) {
@@ -486,10 +558,11 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun handleWirelessDebuggingPage(root: AccessibilityNodeInfo) {
-        val switchNode = findFirst(root) { className(it).lowercase(Locale.US).contains("switch") }
-        val switchBar = firstByViewId(root, "com.android.settings:id/switch_bar")
-        val switchText = findFirst(root) {
-            containsText(
+        val toggleTarget = timedTreeHelper("findWirelessDebuggingToggle") {
+            val switchNode = findFirst(root) { className(it).lowercase(Locale.US).contains("switch") }
+            val switchBar = firstByViewId(root, "com.android.settings:id/switch_bar")
+            val switchText = findFirst(root) {
+                containsText(
                 it,
                 "use wireless debugging",
                 "utiliser le debogage sans fil",
@@ -500,9 +573,10 @@ internal class SelfArmWirelessDebuggingAutomator(
                 "использовать отладку по wi-fi",
                 "использовать отладку по wi fi",
                 "использовать отладку по wifi",
-            )
+                )
+            }
+            switchBar ?: switchNode ?: switchText
         }
-        val toggleTarget = switchBar ?: switchNode ?: switchText
         if (toggleTarget != null && !SelfArmWirelessAdbController.isEnabled(service)) {
             if (canClickNow() && clickNode(toggleTarget)) {
                 awaitingWirelessDebugConfirmation = true
@@ -515,6 +589,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         val livePort = SelfArmWirelessAdbController.readWirelessPort()
         if (livePort > 0) {
             lastConnectPort = livePort
+            diagnostic("REPORT state=wireless_debugging_on")
             LocalSelfArmStatus.report(service,
                 setupState = "wireless_debugging_on",
                 wifiIp = wifiIpv4().ifBlank { lastConnectHost },
@@ -560,13 +635,18 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun readPairingDialogFromAnyRoot(primary: AccessibilityNodeInfo?): Boolean {
-        if (primary != null && readPairingDialog(primary)) return true
-        return AccessibilityWindowRoots.anyReadableRoot(service) { root ->
-            readPairingDialog(root)
+        return timedTreeHelper("readPairingDialogFromAnyRoot") {
+            if (primary != null && readPairingDialog(primary)) return@timedTreeHelper true
+            AccessibilityWindowRoots.anyReadableRoot(service) { root ->
+                readPairingDialog(root)
+            }
         }
     }
 
-    private fun readPairingDialog(root: AccessibilityNodeInfo): Boolean {
+    private fun readPairingDialog(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("readPairingDialog") { readPairingDialogUninstrumented(root) }
+
+    private fun readPairingDialogUninstrumented(root: AccessibilityNodeInfo): Boolean {
         val codeNode = firstByViewId(root, "com.android.settings:id/pairing_code")
         var code = codeNode?.let { firstCodeInText(rawText(it)) }.orEmpty()
         val endpoint = textByViewId(root, "com.android.settings:id/ip_addr")
@@ -751,6 +831,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         val now = SystemClock.uptimeMillis()
         if (now - lastLocalSelfPairingStatusAt < PAIRING_READY_REPORT_INTERVAL_MS) return
         lastLocalSelfPairingStatusAt = now
+        diagnostic("REPORT state=self_pairing_started")
         LocalSelfArmStatus.report(service,
             setupState = "self_pairing_started",
             wifiIp = host,
@@ -769,6 +850,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     ) {
         lastPairingReadyToken = token
         lastPairingReadyReportAt = SystemClock.uptimeMillis()
+        diagnostic("REPORT state=pairing_ready")
         LocalSelfArmStatus.report(service,
             setupState = "pairing_ready",
             wifiIp = host,
@@ -784,6 +866,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         val now = SystemClock.uptimeMillis()
         if (now - lastPairingReadyReportAt < PAIRING_READY_REPORT_INTERVAL_MS) return
         lastPairingReadyReportAt = now
+        diagnostic("REPORT state=pairing_ready cached=true")
         LocalSelfArmStatus.report(service,
             setupState = "pairing_ready",
             wifiIp = lastPairingHost,
@@ -819,7 +902,10 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
     }
 
-    private fun clickConfirmation(root: AccessibilityNodeInfo): Boolean {
+    private fun clickConfirmation(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("clickConfirmation") { clickConfirmationUninstrumented(root) }
+
+    private fun clickConfirmationUninstrumented(root: AccessibilityNodeInfo): Boolean {
         if (!isWirelessDebuggingConfirmation(root)) return false
         val button = findFirst(root) { node ->
             if (!node.isClickable) return@findFirst false
@@ -834,10 +920,18 @@ internal class SelfArmWirelessDebuggingAutomator(
                 else -> false
             }
         }
-        return button != null && canClickNow() && clickNode(button)
+        val allowed = canClickNow()
+        val result = button != null && allowed && clickNode(button)
+        diagnostic("CLICK confirmation targetFound=${button != null} allowed=$allowed result=$result")
+        return result
     }
 
     private fun isWirelessDebuggingConfirmation(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("isWirelessDebuggingConfirmation") {
+            isWirelessDebuggingConfirmationUninstrumented(root)
+        }
+
+    private fun isWirelessDebuggingConfirmationUninstrumented(root: AccessibilityNodeInfo): Boolean =
         containsInTree(
             root,
             "wireless debugging",
@@ -854,6 +948,11 @@ internal class SelfArmWirelessDebuggingAutomator(
         )
 
     private fun isWirelessDebuggingPage(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("isWirelessDebuggingPage") {
+            isWirelessDebuggingPageUninstrumented(root)
+        }
+
+    private fun isWirelessDebuggingPageUninstrumented(root: AccessibilityNodeInfo): Boolean =
         containsInTree(
             root,
             "wireless debugging",
@@ -888,6 +987,11 @@ internal class SelfArmWirelessDebuggingAutomator(
             )
 
     private fun isDeveloperOptionsScreen(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("isDeveloperOptionsScreen") {
+            isDeveloperOptionsScreenUninstrumented(root)
+        }
+
+    private fun isDeveloperOptionsScreenUninstrumented(root: AccessibilityNodeInfo): Boolean =
         containsInTree(
             root,
             "developer options",
@@ -928,6 +1032,11 @@ internal class SelfArmWirelessDebuggingAutomator(
                 )
 
     private fun isDeveloperOptionsDisabledPrompt(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("isDeveloperOptionsDisabledPrompt") {
+            isDeveloperOptionsDisabledPromptUninstrumented(root)
+        }
+
+    private fun isDeveloperOptionsDisabledPromptUninstrumented(root: AccessibilityNodeInfo): Boolean =
         containsInTree(
             root,
             "activer les options pour developpeur",
@@ -946,7 +1055,10 @@ internal class SelfArmWirelessDebuggingAutomator(
             "включите параметры разработчика",
         )
 
-    private fun clickWifiToggle(root: AccessibilityNodeInfo): Boolean {
+    private fun clickWifiToggle(root: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("clickWifiToggle") { clickWifiToggleUninstrumented(root) }
+
+    private fun clickWifiToggleUninstrumented(root: AccessibilityNodeInfo): Boolean {
         val switchNode = findFirst(root) {
             val cls = className(it).lowercase(Locale.US)
             cls.endsWith("switch") || cls.endsWith("togglebutton")
@@ -956,37 +1068,68 @@ internal class SelfArmWirelessDebuggingAutomator(
             ?: firstByViewId(root, "android:id/switch_widget")
         val textNode = findFirst(root) { containsText(it, "wi-fi", "wifi", "wlan", "wi fi", "와이파이") }
         val target = idNode ?: switchNode ?: textNode
-        return target != null && canClickNow() && clickNode(target)
+        val allowed = canClickNow()
+        val result = target != null && allowed && clickNode(target)
+        diagnostic("CLICK wifi-toggle targetFound=${target != null} allowed=$allowed result=$result")
+        return result
     }
 
     private fun clickText(root: AccessibilityNodeInfo, vararg needles: String): Boolean {
-        val target = findFirst(root) { containsText(it, *needles) }
-        return target != null && canClickNow() && clickNode(target)
+        return timedTreeHelper("clickText[${needles.firstOrNull().orEmpty().take(40)}]") {
+            val target = findFirst(root) { containsText(it, *needles) }
+            val allowed = canClickNow()
+            val result = target != null && allowed && clickNode(target)
+            diagnostic(
+                "CLICK text=${needles.firstOrNull().orEmpty().take(60)} " +
+                    "targetFound=${target != null} allowed=$allowed result=$result",
+            )
+            result
+        }
     }
 
-    private fun clickNode(node: AccessibilityNodeInfo): Boolean {
-        var current: AccessibilityNodeInfo? = node
-        while (current != null) {
-            val candidate = current ?: return false
-            if (candidate.isClickable && candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                lastClickAt = SystemClock.uptimeMillis()
-                return true
+    private fun clickNode(node: AccessibilityNodeInfo): Boolean =
+        timedTreeHelper("clickNode") { clickNodeUninstrumented(node) }
+
+    private fun clickNodeUninstrumented(node: AccessibilityNodeInfo): Boolean {
+        return timedTreeHelper("clickNode") {
+            var current: AccessibilityNodeInfo? = node
+            var ancestorDepth = 0
+            while (current != null) {
+                val candidate = current
+                if (candidate.isClickable) {
+                    val result = candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    diagnostic("CLICK node ancestorDepth=$ancestorDepth result=$result")
+                    if (result) {
+                        lastClickAt = SystemClock.uptimeMillis()
+                        return@timedTreeHelper true
+                    }
+                }
+                current = candidate.parent
+                ancestorDepth++
             }
-            current = candidate.parent
+            diagnostic("CLICK node result=false reason=no-clickable-ancestor")
+            false
         }
-        return false
     }
 
     private fun scrollForward(root: AccessibilityNodeInfo): Boolean {
-        val scrollable = findFirst(root) { it.isScrollable }
-        if (scrollable != null && scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-            return true
+        return timedTreeHelper("scrollForward") {
+            val scrollable = findFirst(root) { it.isScrollable }
+            if (scrollable != null) {
+                val result = scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                diagnostic("SCROLL node targetFound=true result=$result")
+                if (result) return@timedTreeHelper true
+            } else {
+                diagnostic("SCROLL node targetFound=false result=false")
+            }
+            val gestureResult = swipeUpGesture()
+            diagnostic("SCROLL fallback-gesture result=$gestureResult")
+            gestureResult
         }
-        return swipeUpGesture()
     }
 
-    private fun swipeUpGesture(): Boolean =
-        runCatching {
+    private fun swipeUpGesture(): Boolean {
+        val result = runCatching {
             val metrics: DisplayMetrics = service.resources.displayMetrics
             val x = metrics.widthPixels * 0.5f
             val startY = metrics.heightPixels * 0.74f
@@ -1000,6 +1143,9 @@ internal class SelfArmWirelessDebuggingAutomator(
                 .build()
             service.dispatchGesture(gesture, null, null)
         }.getOrDefault(false)
+        diagnostic("SCROLL gesture-dispatch result=$result")
+        return result
+    }
 
     private fun openDeveloperSettings() {
         val now = SystemClock.uptimeMillis()
@@ -1096,9 +1242,11 @@ internal class SelfArmWirelessDebuggingAutomator(
         }
 
     private fun firstByViewId(root: AccessibilityNodeInfo, viewId: String): AccessibilityNodeInfo? =
-        runCatching {
-            root.findAccessibilityNodeInfosByViewId(viewId)?.firstOrNull()
-        }.getOrNull()
+        timedTreeHelper("firstByViewId[$viewId]") {
+            runCatching {
+                root.findAccessibilityNodeInfosByViewId(viewId)?.firstOrNull()
+            }.getOrNull()
+        }
 
     private fun findFirst(
         root: AccessibilityNodeInfo?,
@@ -1113,7 +1261,9 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun containsInTree(root: AccessibilityNodeInfo, vararg needles: String): Boolean =
-        findFirst(root) { containsText(it, *needles) } != null
+        timedTreeHelper("containsInTree[${needles.firstOrNull().orEmpty().take(40)}]") {
+            findFirst(root) { containsText(it, *needles) } != null
+        }
 
     private fun containsText(node: AccessibilityNodeInfo, vararg needles: String): Boolean {
         val value = normalizedText(node)
@@ -1125,6 +1275,13 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun findBuildNumberByBuildIdentifier(root: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        timedTreeHelper("findBuildNumberByBuildIdentifier") {
+            findBuildNumberByBuildIdentifierUninstrumented(root)
+        }
+
+    private fun findBuildNumberByBuildIdentifierUninstrumented(
+        root: AccessibilityNodeInfo,
+    ): AccessibilityNodeInfo? =
         findFirst(root) {
             it !== root &&
                 it.isClickable &&
@@ -1156,11 +1313,14 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun firstEndpoint(root: AccessibilityNodeInfo): Endpoint? {
-        val node = findFirst(root) { IPV4_ENDPOINT.matcher(rawText(it)).find() } ?: return null
-        val matcher = IPV4_ENDPOINT.matcher(rawText(node))
-        if (!matcher.find()) return null
-        val port = parsePort(matcher.group(2))
-        return if (port > 0) Endpoint(matcher.group(1).orEmpty(), port) else null
+        return timedTreeHelper("firstEndpoint") {
+            val node = findFirst(root) { IPV4_ENDPOINT.matcher(rawText(it)).find() }
+                ?: return@timedTreeHelper null
+            val matcher = IPV4_ENDPOINT.matcher(rawText(node))
+            if (!matcher.find()) return@timedTreeHelper null
+            val port = parsePort(matcher.group(2))
+            if (port > 0) Endpoint(matcher.group(1).orEmpty(), port) else null
+        }
     }
 
     private fun firstStandalonePort(root: AccessibilityNodeInfo, code: String): Int {
@@ -1270,6 +1430,10 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun report(setupState: String, errorMessage: String = "") {
+        diagnostic(
+            "REPORT state=$setupState" +
+                (if (errorMessage.isBlank()) "" else " error=${errorMessage.take(240)}"),
+        )
         LocalSelfArmStatus.report(service,
             setupState = setupState,
             wifiIp = wifiIpv4().ifBlank { lastPairingHost.ifBlank { lastConnectHost } },
@@ -1283,6 +1447,7 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun finish(setupState: String, success: Boolean, errorMessage: String = "") {
         active = false
         cancelScheduledWork()
+        service.endSelfArmDiagnosticsRun()
         service.endSelfArmForeground()
         report(setupState, errorMessage)
         service.showFeedback(
@@ -1293,12 +1458,25 @@ internal class SelfArmWirelessDebuggingAutomator(
                 runCatching { service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) }
             }, 300L)
         }
+        lastKnownRoot = null
+        service.selfArmDiagnostics()?.finishRun(
+            "FINISH run=$runGeneration reason=$setupState success=$success " +
+                "elapsed=${runElapsedMs()}ms" +
+                (if (errorMessage.isBlank()) "" else " error=${errorMessage.take(240)}"),
+        )
     }
 
     private fun canClickNow(): Boolean =
         SystemClock.uptimeMillis() - lastClickAt >= CLICK_COOLDOWN_MS
 
     private fun schedule(delayMs: Long) {
+        diagnostic("SCHEDULE delay=${delayMs}ms active=$active")
+        if (active) {
+            stepScheduler.schedule(delayMs)
+        }
+    }
+
+    private fun scheduleFromAccessibilityEvent(delayMs: Long) {
         if (active) {
             stepScheduler.schedule(delayMs)
         }
@@ -1307,6 +1485,28 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun cancelScheduledWork() {
         stepScheduler.cancel()
         handler.removeCallbacks(timeoutRunnable)
+    }
+
+    private fun diagnostic(line: String) {
+        service.selfArmDiagnostics()?.log(line)
+    }
+
+    private fun runElapsedMs(now: Long = SystemClock.uptimeMillis()): Long =
+        if (runStartedAt > 0L) (now - runStartedAt).coerceAtLeast(0L) else 0L
+
+    private inline fun <T> timedTreeHelper(name: String, block: () -> T): T {
+        val startedAt = SystemClock.uptimeMillis()
+        try {
+            return block()
+        } finally {
+            val elapsed = SystemClock.uptimeMillis() - startedAt
+            if (elapsed > SLOW_TREE_HELPER_MS) {
+                diagnostic(
+                    "SLOW TREE HELPER name=$name duration=${elapsed}ms " +
+                        "run=$runGeneration seq=$stepSequence",
+                )
+            }
+        }
     }
 
     private data class Endpoint(val host: String, val port: Int)
@@ -1326,6 +1526,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         private const val PAIRING_READY_REPORT_INTERVAL_MS = 2_000L
         private const val SWIPE_DURATION_MS = 180L
         private const val SLOW_STEP_MS = 80L
+        private const val SLOW_TREE_HELPER_MS = 50L
         private const val MAX_WIFI_CLICK_ATTEMPTS = 2
         private const val MAX_WIFI_SCROLLS = 8
         private const val MAX_DEVELOPER_OPEN_ATTEMPTS = 3

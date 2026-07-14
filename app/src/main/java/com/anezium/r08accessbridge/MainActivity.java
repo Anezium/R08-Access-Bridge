@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
+import android.content.ContentValues;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -17,9 +18,11 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
@@ -31,11 +34,22 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public final class MainActivity extends Activity {
@@ -61,6 +75,9 @@ public final class MainActivity extends Activity {
     private Runnable pendingSelect;
     private int selectedActionIndex;
     private boolean localSelfArmStatusReceiverRegistered;
+    private SelfArmDiagnosticsShareServer diagnosticsShareServer;
+    private String diagnosticsShareStatus = "";
+    private int diagnosticsShareGeneration;
 
     private final BroadcastReceiver localSelfArmStatusReceiver = new BroadcastReceiver() {
         @Override
@@ -111,6 +128,7 @@ public final class MainActivity extends Activity {
             activityBleController = null;
         }
         clearPendingSelect();
+        stopDiagnosticsSharing(false);
         super.onDestroy();
     }
 
@@ -331,11 +349,20 @@ public final class MainActivity extends Activity {
                 addLaunchAppPickerActions();
                 break;
             case SYSTEM:
+                addDiagnosticSummary();
+                addDiagnosticsShareStatus();
                 action(R.string.action_accessibility, R.string.detail_accessibility,
                         v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
                 action(R.string.action_wifi_settings, R.string.detail_wifi_settings,
                         v -> GlassesWifiSettings.enableThenOpen(this));
                 action(R.string.action_app_settings, R.string.detail_app_settings, v -> openAppSettings());
+                action(R.string.action_export_diagnostics, R.string.detail_export_diagnostics,
+                        v -> exportDiagnostics());
+                action(getString(R.string.action_share_diagnostics),
+                        getString(diagnosticsShareServer == null
+                                ? R.string.detail_share_diagnostics
+                                : R.string.detail_diagnostics_sharing_active),
+                        v -> toggleDiagnosticsSharing());
                 action(R.string.action_forget_r08, R.string.detail_forget_r08, v -> showForgetConfirm());
                 break;
             case FORGET_CONFIRM:
@@ -462,6 +489,37 @@ public final class MainActivity extends Activity {
 
     private void action(int titleRes, int detailRes, View.OnClickListener listener) {
         action(getString(titleRes), getString(detailRes), listener);
+    }
+
+    private void addDiagnosticSummary() {
+        String summary = SelfArmDiagnostics.lastRunSummary(this);
+        if (TextUtils.isEmpty(summary)) {
+            summary = getString(R.string.diagnostics_none);
+        }
+        TextView diagnostics = new TextView(this);
+        diagnostics.setText(getString(R.string.diagnostics_summary, summary));
+        diagnostics.setTextColor(Color.rgb(197, 218, 208));
+        diagnostics.setTextSize(10);
+        diagnostics.setSingleLine(true);
+        diagnostics.setEllipsize(TextUtils.TruncateAt.END);
+        diagnostics.setGravity(Gravity.CENTER_VERTICAL);
+        content.addView(diagnostics, fullWidth(dp(20)));
+    }
+
+    private void addDiagnosticsShareStatus() {
+        if (TextUtils.isEmpty(diagnosticsShareStatus)) {
+            return;
+        }
+        TextView status = new TextView(this);
+        status.setText(diagnosticsShareStatus);
+        status.setTextColor(Color.rgb(238, 246, 242));
+        status.setTextSize(14);
+        status.setTypeface(Typeface.DEFAULT_BOLD);
+        status.setGravity(Gravity.CENTER_VERTICAL);
+        status.setPadding(0, dp(4), 0, dp(6));
+        content.addView(status, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
     }
 
     private String modeDetail(boolean inactive, String detail) {
@@ -1089,6 +1147,232 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.fromParts("package", getPackageName(), null));
         startActivity(intent);
+    }
+
+    private void toggleDiagnosticsSharing() {
+        if (diagnosticsShareServer != null) {
+            stopDiagnosticsSharing(true);
+            return;
+        }
+        diagnosticsShareStatus = getString(R.string.diagnostics_share_starting);
+        int generation = ++diagnosticsShareGeneration;
+        diagnosticsShareServer = new SelfArmDiagnosticsShareServer(
+                this,
+                new SelfArmDiagnosticsShareServer.Listener() {
+                    @Override
+                    public void onStarted(int port) {
+                        String wifiIp = wifiIpv4();
+                        runOnUiThread(() -> {
+                            if (generation != diagnosticsShareGeneration
+                                    || diagnosticsShareServer == null) {
+                                return;
+                            }
+                            diagnosticsShareStatus = TextUtils.isEmpty(wifiIp)
+                                    ? getString(R.string.diagnostics_share_no_wifi)
+                                    : getString(R.string.diagnostics_share_address, wifiIp, port);
+                            if (screen == Screen.SYSTEM) {
+                                render();
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onStartFailed() {
+                        runOnUiThread(() -> {
+                            if (generation != diagnosticsShareGeneration) {
+                                return;
+                            }
+                            diagnosticsShareGeneration++;
+                            diagnosticsShareServer = null;
+                            diagnosticsShareStatus = getString(R.string.diagnostics_share_failed);
+                            if (screen == Screen.SYSTEM) {
+                                render();
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onStopped() {
+                        runOnUiThread(() -> {
+                            if (generation != diagnosticsShareGeneration) {
+                                return;
+                            }
+                            diagnosticsShareGeneration++;
+                            diagnosticsShareServer = null;
+                            diagnosticsShareStatus = getString(R.string.diagnostics_share_stopped);
+                            if (screen == Screen.SYSTEM) {
+                                render();
+                            }
+                        });
+                    }
+                });
+        diagnosticsShareServer.start();
+        render();
+    }
+
+    private void stopDiagnosticsSharing(boolean renderStatus) {
+        SelfArmDiagnosticsShareServer server = diagnosticsShareServer;
+        if (server == null) {
+            return;
+        }
+        diagnosticsShareGeneration++;
+        diagnosticsShareServer = null;
+        diagnosticsShareStatus = getString(R.string.diagnostics_share_stopped);
+        server.stop();
+        if (renderStatus && screen == Screen.SYSTEM) {
+            render();
+        }
+    }
+
+    private String wifiIpv4() {
+        String fallback = "";
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces != null && interfaces.hasMoreElements()) {
+                NetworkInterface networkInterface = interfaces.nextElement();
+                if (!networkInterface.isUp() || networkInterface.isLoopback()) {
+                    continue;
+                }
+                String name = networkInterface.getName().toLowerCase(Locale.US);
+                if (!(name.equals("wlan0") || name.startsWith("wlan") || name.contains("wifi"))) {
+                    continue;
+                }
+                Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress address = addresses.nextElement();
+                    if (!(address instanceof Inet4Address)
+                            || address.isLoopbackAddress()
+                            || address.isLinkLocalAddress()) {
+                        continue;
+                    }
+                    String host = address.getHostAddress();
+                    if (TextUtils.isEmpty(host)) {
+                        continue;
+                    }
+                    if (address.isSiteLocalAddress()) {
+                        return host;
+                    }
+                    if (TextUtils.isEmpty(fallback)) {
+                        fallback = host;
+                    }
+                }
+            }
+        } catch (Exception failure) {
+            Log.w(TAG, "Could not resolve the Wi-Fi address", failure);
+        }
+        return fallback;
+    }
+
+    private void exportDiagnostics() {
+        List<File> sourceFiles = SelfArmDiagnostics.diagnosticFiles(this);
+        if (sourceFiles.isEmpty()) {
+            Toast.makeText(this, R.string.toast_no_diagnostics, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Context appContext = getApplicationContext();
+        String expectedDestination = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                ? Environment.DIRECTORY_DOWNLOADS + "/R08AccessBridge"
+                : "app external Downloads/R08AccessBridge";
+        new Thread(() -> {
+            try {
+                String destination = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                        ? exportDiagnosticsToMediaStore(appContext, sourceFiles)
+                        : exportDiagnosticsToExternalFiles(appContext, sourceFiles);
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        getString(R.string.toast_diagnostics_exported, destination),
+                        Toast.LENGTH_LONG).show());
+            } catch (Exception failure) {
+                String message = failure.getMessage();
+                if (TextUtils.isEmpty(message)) {
+                    message = failure.getClass().getSimpleName();
+                }
+                String detail = message;
+                runOnUiThread(() -> Toast.makeText(
+                        MainActivity.this,
+                        getString(
+                                R.string.toast_diagnostics_export_failed,
+                                expectedDestination,
+                                detail),
+                        Toast.LENGTH_LONG).show());
+            }
+        }, "SelfArmDiagnosticsExport").start();
+    }
+
+    private String exportDiagnosticsToMediaStore(Context context, List<File> sourceFiles)
+            throws IOException {
+        String relativePath = Environment.DIRECTORY_DOWNLOADS + "/R08AccessBridge";
+        String suffix = "-" + System.currentTimeMillis();
+        for (File source : sourceFiles) {
+            String displayName = diagnosticExportName(source.getName(), suffix);
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Downloads.DISPLAY_NAME, displayName);
+            values.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
+            values.put(MediaStore.Downloads.RELATIVE_PATH, relativePath);
+            values.put(MediaStore.Downloads.IS_PENDING, 1);
+            Uri destination = context.getContentResolver().insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values);
+            if (destination == null) {
+                throw new IOException("Downloads provider did not create " + displayName);
+            }
+            try {
+                try (InputStream input = new FileInputStream(source);
+                     OutputStream output = context.getContentResolver().openOutputStream(destination)) {
+                    if (output == null) {
+                        throw new IOException("Downloads provider did not open " + displayName);
+                    }
+                    copy(input, output);
+                }
+                ContentValues ready = new ContentValues();
+                ready.put(MediaStore.Downloads.IS_PENDING, 0);
+                context.getContentResolver().update(destination, ready, null, null);
+            } catch (Exception failure) {
+                context.getContentResolver().delete(destination, null, null);
+                if (failure instanceof IOException) {
+                    throw (IOException) failure;
+                }
+                throw new IOException(failure);
+            }
+        }
+        return relativePath + " (" + sourceFiles.size() + " file"
+                + (sourceFiles.size() == 1 ? "" : "s") + ")";
+    }
+
+    private String exportDiagnosticsToExternalFiles(Context context, List<File> sourceFiles)
+            throws IOException {
+        File downloads = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (downloads == null) {
+            throw new IOException("External files directory is unavailable");
+        }
+        File destinationDirectory = new File(downloads, "R08AccessBridge");
+        if (!destinationDirectory.isDirectory() && !destinationDirectory.mkdirs()) {
+            throw new IOException("Could not create " + destinationDirectory.getAbsolutePath());
+        }
+        for (File source : sourceFiles) {
+            File destination = new File(destinationDirectory, source.getName());
+            try (InputStream input = new FileInputStream(source);
+                 OutputStream output = new FileOutputStream(destination, false)) {
+                copy(input, output);
+            }
+        }
+        return destinationDirectory.getAbsolutePath();
+    }
+
+    private String diagnosticExportName(String sourceName, String suffix) {
+        int extension = sourceName.lastIndexOf('.');
+        if (extension <= 0) {
+            return sourceName + suffix;
+        }
+        return sourceName.substring(0, extension) + suffix + sourceName.substring(extension);
+    }
+
+    private void copy(InputStream input, OutputStream output) throws IOException {
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = input.read(buffer)) >= 0) {
+            output.write(buffer, 0, count);
+        }
     }
 
     // Pre-Tiramisu registerReceiver has no flag parameter; the broadcast is app-internal

@@ -48,8 +48,27 @@
     <string name="detail_wifi_settings">Open glasses Wi-Fi options</string>
     <string name="action_app_settings">App settings</string>
     <string name="detail_app_settings">Bluetooth permissions and app info</string>
+    <string name="action_export_diagnostics">Export diagnostics</string>
+    <string name="detail_export_diagnostics">Copy the self-arm trace to Downloads</string>
+    <string name="action_share_diagnostics">Share diagnostics</string>
+    <string name="detail_share_diagnostics">Open the self-arm trace on your phone</string>
+    <string name="detail_diagnostics_sharing_active">Select again to stop sharing</string>
     <string name="action_forget_r08">Forget R08</string>
     <string name="detail_forget_r08">Opens a confirmation screen</string>
+    <string name="diagnostics_summary">Diagnostics: %1$s</string>
+    <string name="diagnostics_none">no diagnostics yet</string>
+    <string name="diagnostics_share_starting">Starting sharing…</string>
+    <string name="diagnostics_share_address">On your phone (same Wi-Fi), open: http://%1$s:%2$d</string>
+    <string name="diagnostics_share_no_wifi">Wi-Fi not connected. Connect the glasses and phone to the same Wi-Fi, then stop and start sharing again.</string>
+    <string name="diagnostics_share_stopped">Sharing stopped</string>
+    <string name="diagnostics_share_failed">Sharing could not start. Please try again.</string>
+    <string name="diagnostics_share_page_title">R08 Access Bridge diagnostics</string>
+    <string name="diagnostics_share_page_version">App version: %1$s</string>
+    <string name="diagnostics_share_page_explanation">This trace helps find out why self-arm did not finish. You can download it or copy it below.</string>
+    <string name="diagnostics_share_page_downloads">Download trace files</string>
+    <string name="diagnostics_share_page_current_trace">Current trace</string>
+    <string name="diagnostics_share_page_no_files">No trace files are available yet.</string>
+    <string name="diagnostics_share_page_no_current">No current trace is available yet.</string>
 
     <string name="action_stable_mode">Stable mode</string>
     <string name="detail_stable_mode">Default: one launcher step per slide</string>
@@ -87,6 +106,9 @@
     <string name="toast_self_arm_started">Self-arm started</string>
     <string name="toast_self_arm_accessibility_needed">Enable R08 Accessibility first</string>
     <string name="toast_self_arm_api_30_required">Self-arm needs Android 11 or newer</string>
+    <string name="toast_no_diagnostics">No diagnostics yet</string>
+    <string name="toast_diagnostics_exported">Diagnostics exported to %1$s</string>
+    <string name="toast_diagnostics_export_failed">Diagnostics export failed for %1$s: %2$s</string>
     <string name="toast_forget_submitted">R08 forget requested</string>
     <string name="toast_no_bonded_r08">No bonded R08 found</string>
     <string name="toast_mapping_saved">Mapped to %1$s</string>
