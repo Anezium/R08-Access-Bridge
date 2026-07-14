@@ -1430,7 +1430,9 @@ internal class SelfArmWirelessDebuggingAutomator(
     }
 
     private fun report(setupState: String, errorMessage: String = "") {
-        diagnostic(
+        // REPORT lines are the run's milestones: write them synchronously so they survive
+        // an external force-stop that lands moments later.
+        service.selfArmDiagnostics()?.logSync(
             "REPORT state=$setupState" +
                 (if (errorMessage.isBlank()) "" else " error=${errorMessage.take(240)}"),
         )

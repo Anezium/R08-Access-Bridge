@@ -271,6 +271,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         installDiagnosticCrashHandler();
         selfArmDiagnostics.log("SERVICE onServiceConnected");
+        selfArmDiagnostics.logPreviousRunOutcomeAtConnect();
         activeService = this;
         ensureFastModeDefault(this);
         PrivilegedShortcutBridge.ensureReady(this);

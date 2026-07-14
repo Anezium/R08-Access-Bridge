@@ -47,7 +47,11 @@ internal class SelfArmDiagnostics(context: Context) {
 
     fun log(line: String) {
         val entry = entry(line)
-        writerHandler.post { write(entry, flush = false) }
+        // Flush on every write: an external force-stop (SIGKILL) gives no shutdown hook,
+        // so anything sitting in the BufferedWriter would be lost. Writes happen on the
+        // dedicated writer thread and the trace volume is small, so per-line flushing
+        // costs nothing observable.
+        writerHandler.post { write(entry, flush = true) }
     }
 
     fun logSync(line: String) {
@@ -56,8 +60,10 @@ internal class SelfArmDiagnostics(context: Context) {
 
     fun startRun(runGeneration: Int) {
         val summary = "run $runGeneration started"
-        storeLastSummary(summary, sync = false)
-        log(
+        storeLastSummary(summary, sync = true)
+        // Written synchronously so an immediate external force-stop cannot erase the
+        // evidence that a run began.
+        logSync(
             "=== SELF-ARM RUN $runGeneration START " +
                 "version=${versionName()} sdk=${Build.VERSION.SDK_INT} " +
                 "locale=${Locale.getDefault().toLanguageTag()} " +
@@ -65,9 +71,19 @@ internal class SelfArmDiagnostics(context: Context) {
         )
     }
 
+    fun logPreviousRunOutcomeAtConnect() {
+        val summary = lastRunSummary(appContext)
+        if (summary.matches(Regex("run \\d+ started"))) {
+            logSync(
+                "PREVIOUS RUN DID NOT FINISH (last summary: \"$summary\") — " +
+                    "the process was killed externally before the flow could report an outcome",
+            )
+        }
+    }
+
     fun finishRun(line: String) {
-        storeLastSummary(line, sync = false)
-        log(line)
+        storeLastSummary(line, sync = true)
+        logSync(line)
     }
 
     fun logCriticalSync(summary: String, detail: String) {
