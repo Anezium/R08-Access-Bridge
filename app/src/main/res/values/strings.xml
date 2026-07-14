@@ -3,6 +3,9 @@
     <string name="app_name">R08 Access Bridge</string>
     <string name="service_name">R08 Access Bridge</string>
     <string name="service_description">Use the R08 ring as a navigation controller on Rokid glasses.</string>
+    <string name="self_arm_notification_channel">Self-arm setup</string>
+    <string name="self_arm_notification_title">R08 self-arm in progress</string>
+    <string name="self_arm_notification_text">Opening Wireless Debugging and pairing local ADB</string>
 
     <string name="title_modes">Ring Modes</string>
     <string name="title_mapping">Action Mapping</string>

@@ -28,6 +28,7 @@
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <permission
         android:name="com.anezium.r08accessbridge.permission.INTERNAL_COMMAND"
@@ -77,6 +78,7 @@
         <service
             android:name=".RingControlAccessibilityService"
             android:exported="true"
+            android:foregroundServiceType="shortService"
             android:label="@string/service_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>

@@ -21,6 +21,31 @@ import java.net.NetworkInterface
 import java.util.Locale
 import java.util.regex.Pattern
 
+internal class EarliestDeadlineScheduler(
+    private val now: () -> Long,
+    private val postAt: (Long) -> Unit,
+    private val remove: () -> Unit,
+) {
+    private var scheduledAt = 0L
+
+    fun schedule(delayMs: Long) {
+        val requestedAt = now() + delayMs.coerceAtLeast(0L)
+        if (scheduledAt > 0L && scheduledAt <= requestedAt) return
+        remove()
+        scheduledAt = requestedAt
+        postAt(requestedAt)
+    }
+
+    fun fired() {
+        scheduledAt = 0L
+    }
+
+    fun cancel() {
+        remove()
+        scheduledAt = 0L
+    }
+}
+
 internal class SelfArmWirelessDebuggingAutomator(
     private val service: RingControlAccessibilityService,
     private val handler: Handler,
@@ -66,8 +91,22 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var developerScreenSeen = false
     private var lastConnectHost = ""
     private var lastConnectPort = 0
+    private var runGeneration = 0
+    private var accessibilityEventsSinceStep = 0
+    private var stepSequence = 0
 
-    private val stepRunnable = Runnable { step() }
+    private val stepRunnable: Runnable = Runnable { runStepSafely() }
+    private val stepScheduler: EarliestDeadlineScheduler = EarliestDeadlineScheduler(
+        now = SystemClock::uptimeMillis,
+        postAt = { scheduledAt: Long -> handler.postAtTime(stepRunnable, scheduledAt) },
+        remove = { handler.removeCallbacks(stepRunnable) },
+    )
+    private val timeoutRunnable = Runnable {
+        if (active) {
+            Log.w(TAG, "timeout run=$runGeneration step=$stepSequence events=$accessibilityEventsSinceStep")
+            finish("wireless_setup_timeout", false)
+        }
+    }
 
     fun start() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -75,8 +114,14 @@ internal class SelfArmWirelessDebuggingAutomator(
             service.showFeedback("Self-arm needs Android 11+")
             return
         }
+        cancelScheduledWork()
         active = true
+        runGeneration++
+        accessibilityEventsSinceStep = 0
+        stepSequence = 0
         deadlineAt = SystemClock.uptimeMillis() + TIMEOUT_MS
+        handler.postAtTime(timeoutRunnable, deadlineAt)
+        service.beginSelfArmForeground()
         lastClickAt = 0L
         wifiConfirmed = false
         wifiClickIssued = false
@@ -128,18 +173,47 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     fun stop() {
         active = false
-        handler.removeCallbacks(stepRunnable)
+        cancelScheduledWork()
+        service.endSelfArmForeground()
         localSelfPairingThread?.interrupt()
         localSelfPairingThread = null
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!active) return
+        accessibilityEventsSinceStep++
         if (!wifiConfirmed && wifiClickIssued) {
             schedule(WIFI_POLL_INTERVAL_MS)
             return
         }
         schedule(180L)
+    }
+
+    private fun runStepSafely() {
+        stepScheduler.fired()
+        if (!active) return
+        val startedAt = SystemClock.uptimeMillis()
+        val events = accessibilityEventsSinceStep
+        accessibilityEventsSinceStep = 0
+        stepSequence++
+        try {
+            step()
+        } catch (exception: RuntimeException) {
+            failAutomation(exception)
+        } catch (error: StackOverflowError) {
+            failAutomation(error)
+        } finally {
+            val elapsed = SystemClock.uptimeMillis() - startedAt
+            if (elapsed >= SLOW_STEP_MS || stepSequence <= 3) {
+                Log.d(TAG, "step run=$runGeneration seq=$stepSequence events=$events elapsed=${elapsed}ms")
+            }
+        }
+    }
+
+    private fun failAutomation(failure: Throwable) {
+        val detail = failureDetail(failure)
+        Log.e(TAG, "automation failed run=$runGeneration step=$stepSequence detail=$detail", failure)
+        finish("accessibility_automation_error", false, detail)
     }
 
     private fun step() {
@@ -1139,6 +1213,9 @@ internal class SelfArmWirelessDebuggingAutomator(
     private fun shortMessage(throwable: Throwable): String =
         throwable.message.orEmpty().trim().ifBlank { throwable::class.java.simpleName }
 
+    private fun failureDetail(throwable: Throwable): String =
+        causeChainMessage(throwable).take(240).ifBlank { throwable::class.java.simpleName }
+
     /**
      * Full failure detail for the phone log: walk the cause chain so we never drop the underlying
      * KADB/socket reason (e.g. "connection closed", "Connection refused") behind a generic wrapper.
@@ -1205,7 +1282,8 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     private fun finish(setupState: String, success: Boolean, errorMessage: String = "") {
         active = false
-        handler.removeCallbacks(stepRunnable)
+        cancelScheduledWork()
+        service.endSelfArmForeground()
         report(setupState, errorMessage)
         service.showFeedback(
             if (success) "Self-arm complete" else "Self-arm needs a tap",
@@ -1221,8 +1299,14 @@ internal class SelfArmWirelessDebuggingAutomator(
         SystemClock.uptimeMillis() - lastClickAt >= CLICK_COOLDOWN_MS
 
     private fun schedule(delayMs: Long) {
-        handler.removeCallbacks(stepRunnable)
-        handler.postDelayed(stepRunnable, delayMs)
+        if (active) {
+            stepScheduler.schedule(delayMs)
+        }
+    }
+
+    private fun cancelScheduledWork() {
+        stepScheduler.cancel()
+        handler.removeCallbacks(timeoutRunnable)
     }
 
     private data class Endpoint(val host: String, val port: Int)
@@ -1241,6 +1325,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         private const val PAIRING_PORT_GRACE_MS = 1_800L
         private const val PAIRING_READY_REPORT_INTERVAL_MS = 2_000L
         private const val SWIPE_DURATION_MS = 180L
+        private const val SLOW_STEP_MS = 80L
         private const val MAX_WIFI_CLICK_ATTEMPTS = 2
         private const val MAX_WIFI_SCROLLS = 8
         private const val MAX_DEVELOPER_OPEN_ATTEMPTS = 3

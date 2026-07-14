@@ -77,6 +77,18 @@ class SelfArmSettingsTextMatcherTest {
                 "débogage sans fil",
             ),
         )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "Options pour les développeurs",
+                "options pour les developpeurs",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "Débogage sans fil",
+                "debogage sans fil",
+            ),
+        )
     }
 
     @Test

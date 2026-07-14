@@ -101,6 +101,7 @@ object LocalSelfArmStatus {
             "pairing_code_expired" -> "Self-arm failed: pairing code expired"
             "wifi_enable_timeout" -> "Self-arm failed: Wi-Fi did not turn on"
             "wireless_setup_timeout" -> "Self-arm failed: setup timed out"
+            "accessibility_automation_error" -> "Self-arm failed: " + errorMessage.ifBlank { "Accessibility error" }
             "wireless_debugging_manual_step_needed" -> "Self-arm needs a Settings tap"
             else -> "Self-arm: " + setupState.replace('_', ' ')
         }

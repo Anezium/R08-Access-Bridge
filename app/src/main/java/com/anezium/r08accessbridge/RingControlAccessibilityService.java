@@ -4,6 +4,10 @@ import android.annotation.SuppressLint;
 import android.accessibilityservice.AccessibilityGestureEvent;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -72,6 +76,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final long LAUNCHER_ACCELERATION_WINDOW_MS = 900L;
     private static final int LAUNCHER_ACCELERATION_START_STREAK = 3;
     private static final int LAUNCHER_ACCELERATED_STEPS = 2;
+    private static final int SELF_ARM_NOTIFICATION_ID = 1601;
+    private static final String SELF_ARM_NOTIFICATION_CHANNEL = "r08_self_arm";
 
     private static RingControlAccessibilityService activeService;
 
@@ -100,6 +106,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private int lastAcceptedRingKeyCode = KeyEvent.KEYCODE_UNKNOWN;
     private long lastAcceptedRingKeyDownTime;
     private long suppressGesturesUntil;
+    private boolean selfArmForeground;
     private float downX;
     private float downY;
     private long downAt;
@@ -307,6 +314,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (selfArmWirelessDebuggingAutomator != null) {
             selfArmWirelessDebuggingAutomator.stop();
         }
+        endSelfArmForeground();
         wirelessDebuggingSetupAutomator = null;
         selfArmWirelessDebuggingAutomator = null;
         wifiEnableAutomator = null;
@@ -599,6 +607,55 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     void suppressInjectedGestures(long durationMs) {
         suppressGesturesUntil = Math.max(suppressGesturesUntil, SystemClock.uptimeMillis() + durationMs);
+    }
+
+    void beginSelfArmForeground() {
+        if (selfArmForeground) {
+            return;
+        }
+        try {
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        SELF_ARM_NOTIFICATION_CHANNEL,
+                        getString(R.string.self_arm_notification_channel),
+                        NotificationManager.IMPORTANCE_LOW);
+                channel.setShowBadge(false);
+                manager.createNotificationChannel(channel);
+            }
+            Intent launchIntent = new Intent(this, MainActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            Notification notification = new Notification.Builder(this, SELF_ARM_NOTIFICATION_CHANNEL)
+                    .setSmallIcon(R.drawable.r08_access_bridge_logo_icon)
+                    .setContentTitle(getString(R.string.self_arm_notification_title))
+                    .setContentText(getString(R.string.self_arm_notification_text))
+                    .setContentIntent(PendingIntent.getActivity(this, 0, launchIntent, pendingIntentFlags))
+                    .setOngoing(true)
+                    .setCategory(Notification.CATEGORY_PROGRESS)
+                    .build();
+            startForeground(SELF_ARM_NOTIFICATION_ID, notification);
+            selfArmForeground = true;
+            Log.d(TAG, "Self-arm foreground protection started");
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Could not start Self-arm foreground protection", exception);
+        }
+    }
+
+    void endSelfArmForeground() {
+        if (!selfArmForeground) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+        } else {
+            stopForeground(true);
+        }
+        selfArmForeground = false;
+        Log.d(TAG, "Self-arm foreground protection stopped");
     }
 
     private void configureServiceInfo() {
