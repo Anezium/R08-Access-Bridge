@@ -46,8 +46,15 @@
     <string name="detail_accessibility">Enable the R08 service</string>
     <string name="action_wifi_settings">Wi-Fi settings</string>
     <string name="detail_wifi_settings">Open glasses Wi-Fi options</string>
+    <string name="action_enable_developer_options">Enable Developer options</string>
+    <string name="detail_enable_developer_options">If they are off: tap Build number 7 times</string>
+    <string name="toast_enable_developer_options">Tap \"Build number\" 7 times to enable Developer options</string>
+    <string name="toast_enable_developer_options_failed">Could not open the About screen</string>
     <string name="action_developer_options">Open Developer options</string>
     <string name="detail_developer_options">For manual setup: Wireless debugging &gt; Pair with code</string>
+    <string name="action_wireless_debugging">Open Wireless debugging</string>
+    <string name="detail_wireless_debugging">Jump straight to Pair with code</string>
+    <string name="toast_wireless_debugging_fallback">Scroll down to Wireless debugging</string>
     <string name="action_app_settings">App settings</string>
     <string name="detail_app_settings">Bluetooth permissions and app info</string>
     <string name="action_export_diagnostics">Export diagnostics</string>

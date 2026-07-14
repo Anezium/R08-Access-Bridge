@@ -355,8 +355,12 @@ public final class MainActivity extends Activity {
                         v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
                 action(R.string.action_wifi_settings, R.string.detail_wifi_settings,
                         v -> GlassesWifiSettings.enableThenOpen(this));
+                action(R.string.action_enable_developer_options, R.string.detail_enable_developer_options,
+                        v -> enableDeveloperOptions());
                 action(R.string.action_developer_options, R.string.detail_developer_options,
                         v -> openDeveloperOptions());
+                action(R.string.action_wireless_debugging, R.string.detail_wireless_debugging,
+                        v -> openWirelessDebugging());
                 action(R.string.action_app_settings, R.string.detail_app_settings, v -> openAppSettings());
                 action(R.string.action_export_diagnostics, R.string.detail_export_diagnostics,
                         v -> exportDiagnostics());
@@ -1158,6 +1162,46 @@ public final class MainActivity extends Activity {
             startActivity(intent);
         } catch (RuntimeException exception) {
             Toast.makeText(this, R.string.toast_developer_options_failed, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openWirelessDebugging() {
+        // Jump straight to the Wireless debugging screen so the user never has to scroll the
+        // Developer options list, which is hard to navigate when the glasses display dozes and the
+        // system MockWindow steals input focus. Requires Developer options to be enabled already.
+        // Falls back to the Developer options page if the direct deep-link is unavailable.
+        Intent deepLink = new Intent();
+        deepLink.setClassName("com.android.settings", "com.android.settings.SubSettings");
+        deepLink.putExtra(":settings:show_fragment",
+                "com.android.settings.development.WirelessDebuggingFragment");
+        deepLink.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(deepLink);
+            return;
+        } catch (RuntimeException ignored) {
+            // Deep-link blocked or missing on this build; fall through to the Developer options page.
+        }
+        try {
+            Intent devOptions = new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
+            devOptions.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(devOptions);
+            Toast.makeText(this, R.string.toast_wireless_debugging_fallback, Toast.LENGTH_LONG).show();
+        } catch (RuntimeException exception) {
+            Toast.makeText(this, R.string.toast_developer_options_failed, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void enableDeveloperOptions() {
+        // Developer options can only be unlocked by tapping Build number seven times, which needs
+        // no special permission. Open the About screen where Build number lives and tell the user
+        // what to tap; this is the manual counterpart to the automated build-number tapping.
+        try {
+            Intent intent = new Intent(Settings.ACTION_DEVICE_INFO_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Toast.makeText(this, R.string.toast_enable_developer_options, Toast.LENGTH_LONG).show();
+        } catch (RuntimeException exception) {
+            Toast.makeText(this, R.string.toast_enable_developer_options_failed, Toast.LENGTH_SHORT).show();
         }
     }
 
