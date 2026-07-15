@@ -292,42 +292,65 @@ final class RingBatteryLauncherOverlay {
         if (windows == null) {
             return null;
         }
+        long screenArea = (long) service.getResources().getDisplayMetrics().widthPixels
+                * service.getResources().getDisplayMetrics().heightPixels;
+        // Only the topmost near-fullscreen window can anchor the chip. Small
+        // windows (the double-tap exit banner) never carry the status row, and
+        // launcher windows below the topmost one (the home screen behind an
+        // in-launcher screen such as translation) carry an invisible status
+        // row - anchoring there put the chip mid-screen. If the topmost window
+        // can't resolve, the caller holds the last known position instead.
+        AccessibilityWindowInfo topWindow = null;
+        int topLayer = Integer.MIN_VALUE;
         for (AccessibilityWindowInfo window : windows) {
             if (window == null) {
                 continue;
             }
-            AccessibilityNodeInfo root = null;
+            Rect windowBounds = new Rect();
             try {
-                root = window.getRoot();
-                if (root == null) {
-                    continue;
-                }
-                CharSequence packageName = root.getPackageName();
-                if (packageName == null || !ROKID_LAUNCHER_PACKAGE.contentEquals(packageName)) {
-                    continue;
-                }
-                Rect bounds = findNodeBounds(root, STATUS_WIFI_VIEW_ID);
-                if (bounds != null) {
-                    return new Anchor(bounds, AnchorKind.WIFI);
-                }
-                bounds = findNodeBounds(root, STATUS_POWER_VIEW_ID);
-                if (bounds != null) {
-                    return new Anchor(bounds, AnchorKind.POWER);
-                }
-                bounds = findNodeBounds(root, STATUS_BAR_VIEW_ID);
-                if (bounds != null) {
-                    return new Anchor(bounds, AnchorKind.STATUS_BAR_CONTAINER);
-                }
-                // This launcher window has no status row (for example the
-                // double-tap exit banner, which is its own launcher-package
-                // window); keep scanning for the main launcher window.
+                window.getBoundsInScreen(windowBounds);
             } catch (RuntimeException ignored) {
-                return null;
-            } finally {
-                recycle(root);
+                continue;
+            }
+            if (area(windowBounds) * 100L < screenArea * COVERAGE_THRESHOLD_PERCENT) {
+                continue;
+            }
+            if (window.getLayer() > topLayer) {
+                topLayer = window.getLayer();
+                topWindow = window;
             }
         }
-        return null;
+        if (topWindow == null) {
+            return null;
+        }
+        AccessibilityNodeInfo root = null;
+        try {
+            root = topWindow.getRoot();
+            if (root == null) {
+                return null;
+            }
+            CharSequence packageName = root.getPackageName();
+            if (packageName == null || !ROKID_LAUNCHER_PACKAGE.contentEquals(packageName)) {
+                return null;
+            }
+            Rect bounds = findNodeBounds(root, STATUS_WIFI_VIEW_ID);
+            if (bounds != null) {
+                return new Anchor(bounds, AnchorKind.WIFI);
+            }
+            bounds = findNodeBounds(root, STATUS_POWER_VIEW_ID);
+            if (bounds != null) {
+                return new Anchor(bounds, AnchorKind.POWER);
+            }
+            bounds = findNodeBounds(root, STATUS_BAR_VIEW_ID);
+            if (bounds != null) {
+                return new Anchor(bounds, AnchorKind.STATUS_BAR_CONTAINER);
+            }
+            return null;
+        } catch (RuntimeException ignored) {
+            return null;
+        } finally {
+            recycle(root);
+        }
     }
 
     private Rect findNodeBounds(AccessibilityNodeInfo root, String viewId) {

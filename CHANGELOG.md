@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.4 - 2026-07-15
+
+### Launcher battery indicator
+
+- Fixed the chip parking mid-screen for the first ~8 seconds after opening an in-launcher screen such as translation. v1.6.3's anchor lookup could fall through to the launcher's home window - which sits behind the visible screen and carries its own, invisible status row - and anchor the chip to it. The lookup now only ever reads the topmost near-fullscreen window (small transient windows like the exit banner are skipped by size), and holds the last anchored position whenever that window can't resolve.
+
 ## v1.6.3 - 2026-07-15
 
 ### Launcher battery indicator
