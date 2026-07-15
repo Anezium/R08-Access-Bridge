@@ -293,6 +293,8 @@ public final class MainActivity extends Activity {
                         v -> enableTouchFallbackMode());
                 action(getString(R.string.action_screen_off_media_guard), screenOffMediaGuardDetail(),
                         v -> toggleScreenOffMediaGuard());
+                action(getString(R.string.action_show_ring_battery_indicator), ringBatteryIndicatorDetail(),
+                        v -> toggleRingBatteryIndicator());
                 action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
                 break;
             case MAPPING:
@@ -476,6 +478,14 @@ public final class MainActivity extends Activity {
         return detail;
     }
 
+    private String ringBatteryIndicatorDetail() {
+        String detail = getString(R.string.detail_show_ring_battery_indicator);
+        if (RingModeSettings.isRingBatteryIndicatorEnabled(this)) {
+            return getString(R.string.detail_show_ring_battery_indicator_active, detail);
+        }
+        return detail;
+    }
+
     private void enableStableMode() {
         RingModeSettings.setTouchMode(this, false);
         RingModeSettings.setFastNavigationMode(this, false);
@@ -509,6 +519,17 @@ public final class MainActivity extends Activity {
         sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_SCREEN_OFF_MEDIA_GUARD, enabled);
         Toast.makeText(this,
                 enabled ? R.string.toast_screen_off_media_guard_on : R.string.toast_screen_off_media_guard_off,
+                Toast.LENGTH_SHORT).show();
+        render();
+    }
+
+    private void toggleRingBatteryIndicator() {
+        boolean enabled = !RingModeSettings.isRingBatteryIndicatorEnabled(this);
+        RingModeSettings.setRingBatteryIndicatorEnabled(this, enabled);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_RING_BATTERY_INDICATOR, enabled);
+        Toast.makeText(this,
+                enabled ? R.string.toast_ring_battery_indicator_shown
+                        : R.string.toast_ring_battery_indicator_hidden,
                 Toast.LENGTH_SHORT).show();
         render();
     }

@@ -40,6 +40,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
     public static final String COMMAND_SET_FAST_NAVIGATION = "set_fast_navigation";
     public static final String COMMAND_SET_SCREEN_OFF_MEDIA_GUARD = "set_screen_off_media_guard";
+    public static final String COMMAND_SET_RING_BATTERY_INDICATOR = "set_ring_battery_indicator";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_REQUEST_BATTERY = "request_battery";
     public static final String COMMAND_FORWARD = "forward";
@@ -152,6 +153,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 setFastNavigationMode(intent.getBooleanExtra(EXTRA_ENABLED, false));
             } else if (COMMAND_SET_SCREEN_OFF_MEDIA_GUARD.equals(command)) {
                 setScreenOffMediaGuardEnabled(intent.getBooleanExtra(EXTRA_ENABLED, false));
+            } else if (COMMAND_SET_RING_BATTERY_INDICATOR.equals(command)) {
+                setRingBatteryIndicatorEnabled(intent.getBooleanExtra(EXTRA_ENABLED, true));
             } else if (COMMAND_PROBE_APP_TYPE.equals(command)) {
                 int appType = intent.getIntExtra(EXTRA_APP_TYPE, -1);
                 showFeedback("Probe appType " + appType);
@@ -248,6 +251,24 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         Log.d(TAG, "Screen-off media guard enabled=" + enabled);
     }
 
+    private void setRingBatteryIndicatorEnabled(boolean enabled) {
+        RingModeSettings.setRingBatteryIndicatorEnabled(this, enabled);
+        if (enabled) {
+            if (batteryLauncherOverlay == null) {
+                batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
+            }
+            registerBatteryReceiver();
+            batteryLauncherOverlay.start();
+        } else {
+            unregisterBatteryReceiver();
+            if (batteryLauncherOverlay != null) {
+                batteryLauncherOverlay.stop();
+                batteryLauncherOverlay = null;
+            }
+        }
+        Log.d(TAG, "Ring battery indicator enabled=" + enabled);
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
@@ -261,13 +282,15 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
         selfArmWirelessDebuggingAutomator = new SelfArmWirelessDebuggingAutomator(this, mainHandler);
         wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
-        batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
         CxrBootstrapBridge.onAccessibilityServiceConnected(this);
         configureServiceInfo();
         registerCommandReceiver();
-        registerBatteryReceiver();
         registerScreenStateReceiver();
-        batteryLauncherOverlay.start();
+        if (RingModeSettings.isRingBatteryIndicatorEnabled(this)) {
+            batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
+            registerBatteryReceiver();
+            batteryLauncherOverlay.start();
+        }
         if (RingModeSettings.isScreenOffMediaGuardEnabled(this)) {
             mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
             mediaKeyGuard.start();

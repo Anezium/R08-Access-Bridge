@@ -25,10 +25,18 @@ import java.util.List;
 final class RingBatteryLauncherOverlay {
     private static final String TAG = "R08BatteryOverlay";
     private static final String ROKID_LAUNCHER_PACKAGE = "com.rokid.os.sprite.launcher";
+    private static final String STATUS_WIFI_VIEW_ID =
+            ROKID_LAUNCHER_PACKAGE + ":id/status_wifi_iv";
+    private static final String STATUS_POWER_VIEW_ID =
+            ROKID_LAUNCHER_PACKAGE + ":id/status_power_iv";
+    private static final String STATUS_BAR_VIEW_ID =
+            ROKID_LAUNCHER_PACKAGE + ":id/activity_global_status_bar";
     private static final int OVERLAY_WIDTH_DP = 66;
     private static final int OVERLAY_HEIGHT_DP = 20;
     private static final int LAUNCHER_STATUS_ROW_END_RESERVED_DP = 70;
     private static final int LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP = 173;
+    private static final int STATUS_ICON_GAP_DP = 4;
+    private static final int STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP = 25;
     private static final long REFRESH_INTERVAL_MS = 30_000L;
     private static final long REFRESH_DEBOUNCE_MS = 150L;
     private static final int COVERAGE_THRESHOLD_PERCENT = 50;
@@ -42,6 +50,8 @@ final class RingBatteryLauncherOverlay {
     private boolean attached;
     private boolean launcherActive;
     private boolean started;
+    private WindowManager.LayoutParams layoutParams;
+    private OverlayPosition lastPosition;
 
     private final Runnable refreshCurrentWindow = new Runnable() {
         @Override
@@ -97,10 +107,18 @@ final class RingBatteryLauncherOverlay {
     }
 
     void refreshForCurrentWindow() {
-        updateLauncherTopmost(isLauncherTopmost());
+        boolean active = isLauncherTopmost();
+        RingBatteryStatus.State state = RingBatteryStatus.read(service);
+        if (active && state.isKnown()) {
+            updatePosition(resolveLauncherPosition());
+        }
+        updateLauncherTopmost(active, state);
     }
 
     void onBatteryChanged() {
+        if (!started) {
+            return;
+        }
         updateContent();
         scheduleRefresh();
     }
@@ -115,6 +133,7 @@ final class RingBatteryLauncherOverlay {
             // Already removed by the window manager.
         }
         attached = false;
+        layoutParams = null;
     }
 
     private void scheduleRefresh() {
@@ -125,66 +144,73 @@ final class RingBatteryLauncherOverlay {
         handler.postDelayed(refreshCurrentWindow, REFRESH_DEBOUNCE_MS);
     }
 
-    private void updateLauncherTopmost(boolean active) {
+    private void updateLauncherTopmost(boolean active, RingBatteryStatus.State state) {
         if (launcherActive == active) {
-            updateVisibility();
+            updateVisibility(state);
             return;
         }
         launcherActive = active;
         Log.d(TAG, "launcherTopmost=" + launcherActive);
-        updateVisibility();
+        updateVisibility(state);
     }
 
     private boolean isLauncherTopmost() {
-        List<AccessibilityWindowInfo> windows = service.getWindows();
-        if (windows == null) {
+        try {
+            List<AccessibilityWindowInfo> windows = service.getWindows();
+            if (windows == null) {
+                return false;
+            }
+            AccessibilityWindowInfo launcherWindow = null;
+            Rect launcherBounds = new Rect();
+            for (AccessibilityWindowInfo window : windows) {
+                if (window == null || !isLauncherWindow(window)) {
+                    continue;
+                }
+                launcherWindow = window;
+                window.getBoundsInScreen(launcherBounds);
+                break;
+            }
+            if (launcherWindow == null || launcherBounds.isEmpty()) {
+                return false;
+            }
+            int launcherLayer = launcherWindow.getLayer();
+            long launcherArea = area(launcherBounds);
+            if (launcherArea <= 0L) {
+                return false;
+            }
+            for (AccessibilityWindowInfo window : windows) {
+                if (window == null) {
+                    continue;
+                }
+                if (window == launcherWindow || window.getLayer() <= launcherLayer) {
+                    continue;
+                }
+                Rect bounds = new Rect();
+                window.getBoundsInScreen(bounds);
+                if (area(bounds) * 100L < launcherArea * COVERAGE_THRESHOLD_PERCENT) {
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        } catch (RuntimeException ignored) {
             return false;
         }
-        AccessibilityWindowInfo launcherWindow = null;
-        Rect launcherBounds = new Rect();
-        for (AccessibilityWindowInfo window : windows) {
-            if (window == null || !isLauncherWindow(window)) {
-                continue;
-            }
-            launcherWindow = window;
-            window.getBoundsInScreen(launcherBounds);
-            break;
-        }
-        if (launcherWindow == null || launcherBounds.isEmpty()) {
-            return false;
-        }
-        int launcherLayer = launcherWindow.getLayer();
-        long launcherArea = area(launcherBounds);
-        if (launcherArea <= 0L) {
-            return false;
-        }
-        for (AccessibilityWindowInfo window : windows) {
-            if (window == null) {
-                continue;
-            }
-            if (window == launcherWindow || window.getLayer() <= launcherLayer) {
-                continue;
-            }
-            Rect bounds = new Rect();
-            window.getBoundsInScreen(bounds);
-            if (area(bounds) * 100L < launcherArea * COVERAGE_THRESHOLD_PERCENT) {
-                continue;
-            }
-            return false;
-        }
-        return true;
     }
 
     private boolean isLauncherWindow(AccessibilityWindowInfo window) {
-        AccessibilityNodeInfo root = window.getRoot();
-        if (root == null) {
-            return false;
-        }
+        AccessibilityNodeInfo root = null;
         try {
+            root = window.getRoot();
+            if (root == null) {
+                return false;
+            }
             CharSequence packageName = root.getPackageName();
             return packageName != null && ROKID_LAUNCHER_PACKAGE.contentEquals(packageName);
+        } catch (RuntimeException ignored) {
+            return false;
         } finally {
-            root.recycle();
+            recycle(root);
         }
     }
 
@@ -195,8 +221,7 @@ final class RingBatteryLauncherOverlay {
         return (long) bounds.width() * bounds.height();
     }
 
-    private void updateVisibility() {
-        RingBatteryStatus.State state = RingBatteryStatus.read(service);
+    private void updateVisibility(RingBatteryStatus.State state) {
         if (launcherActive && state.isKnown()) {
             ensureAttached();
             updateContent(state);
@@ -220,16 +245,210 @@ final class RingBatteryLauncherOverlay {
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.BOTTOM | Gravity.END;
-        params.x = dp(LAUNCHER_STATUS_ROW_END_RESERVED_DP);
-        params.y = dp(LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP);
+        OverlayPosition position = lastPosition;
+        if (position == null) {
+            position = calculateOverlayPosition(null, null,
+                    service.getResources().getDisplayMetrics().widthPixels,
+                    service.getResources().getDisplayMetrics().heightPixels,
+                    service.getResources().getDisplayMetrics().density);
+        }
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.x = position.x;
+        params.y = position.y;
         try {
             windowManager.addView(view, params);
             attached = true;
+            layoutParams = params;
+            lastPosition = position;
             Log.d(TAG, "Launcher ring battery overlay shown");
         } catch (RuntimeException exception) {
             attached = false;
+            layoutParams = null;
             Log.w(TAG, "Launcher ring battery overlay failed", exception);
+        }
+    }
+
+    private OverlayPosition resolveLauncherPosition() {
+        Anchor anchor = findLauncherAnchor();
+        Rect bounds = anchor == null ? null : anchor.bounds;
+        AnchorKind kind = anchor == null ? null : anchor.kind;
+        return calculateOverlayPosition(bounds, kind,
+                service.getResources().getDisplayMetrics().widthPixels,
+                service.getResources().getDisplayMetrics().heightPixels,
+                service.getResources().getDisplayMetrics().density);
+    }
+
+    private Anchor findLauncherAnchor() {
+        List<AccessibilityWindowInfo> windows;
+        try {
+            windows = service.getWindows();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+        if (windows == null) {
+            return null;
+        }
+        for (AccessibilityWindowInfo window : windows) {
+            if (window == null) {
+                continue;
+            }
+            AccessibilityNodeInfo root = null;
+            try {
+                root = window.getRoot();
+                if (root == null) {
+                    continue;
+                }
+                CharSequence packageName = root.getPackageName();
+                if (packageName == null || !ROKID_LAUNCHER_PACKAGE.contentEquals(packageName)) {
+                    continue;
+                }
+                Rect bounds = findNodeBounds(root, STATUS_WIFI_VIEW_ID);
+                if (bounds != null) {
+                    return new Anchor(bounds, AnchorKind.WIFI);
+                }
+                bounds = findNodeBounds(root, STATUS_POWER_VIEW_ID);
+                if (bounds != null) {
+                    return new Anchor(bounds, AnchorKind.POWER);
+                }
+                bounds = findNodeBounds(root, STATUS_BAR_VIEW_ID);
+                if (bounds != null) {
+                    return new Anchor(bounds, AnchorKind.STATUS_BAR_CONTAINER);
+                }
+                return null;
+            } catch (RuntimeException ignored) {
+                return null;
+            } finally {
+                recycle(root);
+            }
+        }
+        return null;
+    }
+
+    private Rect findNodeBounds(AccessibilityNodeInfo root, String viewId) {
+        List<AccessibilityNodeInfo> nodes = null;
+        Rect result = null;
+        try {
+            nodes = root.findAccessibilityNodeInfosByViewId(viewId);
+            if (nodes == null) {
+                return null;
+            }
+            for (AccessibilityNodeInfo node : nodes) {
+                if (node == null) {
+                    continue;
+                }
+                try {
+                    Rect bounds = new Rect();
+                    node.getBoundsInScreen(bounds);
+                    if (result == null && !bounds.isEmpty()) {
+                        result = bounds;
+                    }
+                } catch (RuntimeException ignored) {
+                    // The launcher can replace nodes while its status row is updating.
+                }
+            }
+            return result;
+        } catch (RuntimeException ignored) {
+            return null;
+        } finally {
+            if (nodes != null) {
+                for (AccessibilityNodeInfo node : nodes) {
+                    recycle(node);
+                }
+            }
+        }
+    }
+
+    private void updatePosition(OverlayPosition position) {
+        if (position == null || position.sameCoordinates(lastPosition)) {
+            return;
+        }
+        if (!attached || view == null || layoutParams == null) {
+            lastPosition = position;
+            return;
+        }
+        int previousX = layoutParams.x;
+        int previousY = layoutParams.y;
+        layoutParams.x = position.x;
+        layoutParams.y = position.y;
+        try {
+            windowManager.updateViewLayout(view, layoutParams);
+            lastPosition = position;
+        } catch (RuntimeException exception) {
+            layoutParams.x = previousX;
+            layoutParams.y = previousY;
+            Log.w(TAG, "Launcher ring battery overlay reposition failed", exception);
+        }
+    }
+
+    static OverlayPosition calculateOverlayPosition(
+            Rect anchorBounds,
+            AnchorKind anchorKind,
+            int screenWidth,
+            int screenHeight,
+            float density) {
+        int overlayWidth = pixels(OVERLAY_WIDTH_DP, density);
+        int overlayHeight = pixels(OVERLAY_HEIGHT_DP, density);
+        int fallbackX = screenWidth - overlayWidth
+                - pixels(LAUNCHER_STATUS_ROW_END_RESERVED_DP, density);
+        int fallbackY = screenHeight - overlayHeight
+                - pixels(LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP, density);
+        if (anchorBounds == null || anchorKind == null
+                || anchorBounds.right <= anchorBounds.left
+                || anchorBounds.bottom <= anchorBounds.top) {
+            return new OverlayPosition(fallbackX, fallbackY);
+        }
+        if (anchorKind == AnchorKind.STATUS_BAR_CONTAINER) {
+            int centerY = anchorBounds.bottom
+                    - pixels(STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP, density);
+            return new OverlayPosition(fallbackX, centerY - overlayHeight / 2);
+        }
+        int right = anchorBounds.left - pixels(STATUS_ICON_GAP_DP, density);
+        int centerY = (anchorBounds.top + anchorBounds.bottom) / 2;
+        return new OverlayPosition(right - overlayWidth, centerY - overlayHeight / 2);
+    }
+
+    private static int pixels(int dp, float density) {
+        return Math.round(dp * density);
+    }
+
+    private static void recycle(AccessibilityNodeInfo node) {
+        if (node == null) {
+            return;
+        }
+        try {
+            node.recycle();
+        } catch (RuntimeException ignored) {
+            // Stale accessibility nodes can fail even while being released.
+        }
+    }
+
+    enum AnchorKind {
+        WIFI,
+        POWER,
+        STATUS_BAR_CONTAINER
+    }
+
+    static final class OverlayPosition {
+        final int x;
+        final int y;
+
+        OverlayPosition(int x, int y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        boolean sameCoordinates(OverlayPosition other) {
+            return other != null && x == other.x && y == other.y;
+        }
+    }
+
+    private static final class Anchor {
+        final Rect bounds;
+        final AnchorKind kind;
+
+        Anchor(Rect bounds, AnchorKind kind) {
+            this.bounds = bounds;
+            this.kind = kind;
         }
     }
 

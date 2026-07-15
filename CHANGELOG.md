@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Launcher battery indicator
+
+- Anchored the ring-battery chip to the launcher's real status row instead of fixed screen offsets. The launcher shifts its whole UI vertically with the user's display-position setting, so the old fixed placement could leave the chip floating in the middle of the screen; the chip now follows the launcher's Wi-Fi/power status nodes, with safe status-bar and fixed-position fallbacks when the accessibility tree is unavailable.
+- Added a `Show ring battery on launcher` toggle under `Ring modes`. Hiding the indicator removes its overlay and stops its battery listener and launcher refresh work until it is enabled again.
+
 ## v1.6.1 - 2026-07-08
 
 ### Launcher battery indicator

@@ -57,6 +57,9 @@
     <string name="action_screen_off_media_guard">Keep screen-off taps on glasses</string>
     <string name="detail_screen_off_media_guard">Block ring media keys from reaching the paired phone while the display is off; taps wake the screen instead of playing music.</string>
     <string name="detail_screen_off_media_guard_active">Active - %1$s</string>
+    <string name="action_show_ring_battery_indicator">Show ring battery on launcher</string>
+    <string name="detail_show_ring_battery_indicator">Display ring charge beside the launcher status icons.</string>
+    <string name="detail_show_ring_battery_indicator_active">Active - %1$s</string>
     <string name="action_probe_app_type">AppType probe</string>
     <string name="detail_probe_app_type">Find native DPAD mode</string>
     <string name="detail_restore_fast_mode">Restore appType 1 media keys</string>
@@ -92,4 +95,6 @@
     <string name="toast_touch_mode">Touch fallback enabled</string>
     <string name="toast_screen_off_media_guard_on">Screen-off taps stay on glasses</string>
     <string name="toast_screen_off_media_guard_off">Screen-off taps can control media</string>
+    <string name="toast_ring_battery_indicator_shown">Ring battery indicator shown</string>
+    <string name="toast_ring_battery_indicator_hidden">Ring battery indicator hidden</string>
 </resources>

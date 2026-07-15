@@ -11,6 +11,7 @@ final class RingModeSettings {
     private static final String PREF_TOUCH_MODE = "touch_mode";
     private static final String PREF_FAST_NAVIGATION_MODE = "fast_navigation_mode";
     private static final String PREF_SCREEN_OFF_MEDIA_GUARD = "screen_off_media_guard";
+    private static final String PREF_SHOW_RING_BATTERY_INDICATOR = "show_ring_battery_indicator";
     private static final String PREF_DEFAULT_MODE_VERSION = "default_mode_version";
     private static final int DEFAULT_MODE_VERSION = 2;
 
@@ -52,6 +53,14 @@ final class RingModeSettings {
 
     static void setScreenOffMediaGuardEnabled(Context context, boolean enabled) {
         prefs(context).edit().putBoolean(PREF_SCREEN_OFF_MEDIA_GUARD, enabled).apply();
+    }
+
+    static boolean isRingBatteryIndicatorEnabled(Context context) {
+        return prefs(context).getBoolean(PREF_SHOW_RING_BATTERY_INDICATOR, true);
+    }
+
+    static void setRingBatteryIndicatorEnabled(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean(PREF_SHOW_RING_BATTERY_INDICATOR, enabled).apply();
     }
 
     static String modeLabel(Context context) {
