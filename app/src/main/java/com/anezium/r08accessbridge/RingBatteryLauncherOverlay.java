@@ -270,9 +270,13 @@ final class RingBatteryLauncherOverlay {
 
     private OverlayPosition resolveLauncherPosition() {
         Anchor anchor = findLauncherAnchor();
-        Rect bounds = anchor == null ? null : anchor.bounds;
-        AnchorKind kind = anchor == null ? null : anchor.kind;
-        return calculateOverlayPosition(bounds, kind,
+        if (anchor == null) {
+            // Transient launcher windows (the double-tap exit banner) can hide
+            // the status row for a moment; hold the last anchored position
+            // instead of jumping to the fixed fallback mid-screen.
+            return lastPosition;
+        }
+        return calculateOverlayPosition(anchor.bounds, anchor.kind,
                 service.getResources().getDisplayMetrics().widthPixels,
                 service.getResources().getDisplayMetrics().heightPixels,
                 service.getResources().getDisplayMetrics().density);
@@ -314,7 +318,9 @@ final class RingBatteryLauncherOverlay {
                 if (bounds != null) {
                     return new Anchor(bounds, AnchorKind.STATUS_BAR_CONTAINER);
                 }
-                return null;
+                // This launcher window has no status row (for example the
+                // double-tap exit banner, which is its own launcher-package
+                // window); keep scanning for the main launcher window.
             } catch (RuntimeException ignored) {
                 return null;
             } finally {

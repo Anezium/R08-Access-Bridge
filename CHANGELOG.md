@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6.3 - 2026-07-15
+
+### Launcher battery indicator
+
+- Fixed the ring-battery chip jumping onto the "double-click again to exit" banner inside launcher screens (teleprompter, translation, ...). The banner is its own launcher-package window without a status row; anchor resolution used to stop at the first launcher window it saw and fall back to the fixed mid-screen position. It now keeps scanning for the window that actually has the status row, and holds the last anchored position through transient windows instead of jumping.
+
 ## v1.6.2 - 2026-07-15
 
 ### Launcher battery indicator
