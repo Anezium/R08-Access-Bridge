@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.6.2 - 2026-07-15
 
 ### Launcher battery indicator
 
