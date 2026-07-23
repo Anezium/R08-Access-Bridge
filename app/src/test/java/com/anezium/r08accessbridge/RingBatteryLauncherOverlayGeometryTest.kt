@@ -20,6 +20,39 @@ class RingBatteryLauncherOverlayGeometryTest {
     }
 
     @Test
+    fun farLeftSameRowIconIsExcludedFromRightStatusCluster() {
+        val cluster = RingBatteryLauncherOverlay.calculateStatusIconClusterBounds(
+            listOf(
+                Rect(47, 355, 67, 375),
+                Rect(380, 355, 400, 375),
+                Rect(405, 355, 425, 375),
+                Rect(430, 355, 450, 375),
+            ),
+            Rect(405, 355, 425, 375),
+            1.5f,
+        )
+        val position = calculate(
+            cluster,
+            RingBatteryLauncherOverlay.AnchorKind.STATUS_ICON_CLUSTER,
+        )
+
+        assertEquals(Rect(380, 355, 450, 375), cluster)
+        assertEquals(275, position.x)
+        assertEquals(350, position.y)
+    }
+
+    @Test
+    fun negativeAnchoredXUsesFallbackXAndKeepsRowCenteredY() {
+        val position = calculate(
+            Rect(47, 355, 450, 375),
+            RingBatteryLauncherOverlay.AnchorKind.STATUS_ICON_CLUSTER,
+        )
+
+        assertEquals(276, position.x)
+        assertEquals(350, position.y)
+    }
+
+    @Test
     fun wifiAnchorPlacesChipImmediatelyLeftAndCentersItOnRow() {
         val position = calculate(
             Rect(415, 515, 435, 535),

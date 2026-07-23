@@ -20,6 +20,9 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 final class RingBatteryLauncherOverlay {
@@ -38,6 +41,7 @@ final class RingBatteryLauncherOverlay {
     private static final int STATUS_ICON_GAP_DP = 4;
     private static final int STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP = 25;
     private static final int STATUS_ICON_ROW_TOLERANCE_DP = 10;
+    private static final int STATUS_ICON_CLUSTER_GAP_TOLERANCE_DP = 16;
     private static final long REFRESH_INTERVAL_MS = 30_000L;
     private static final long REFRESH_DEBOUNCE_MS = 150L;
     private static final int COVERAGE_THRESHOLD_PERCENT = 50;
@@ -391,19 +395,14 @@ final class RingBatteryLauncherOverlay {
                 if (seedBounds == null) {
                     seedBounds = findNodeBounds(statusBar, STATUS_POWER_VIEW_ID, true);
                 }
-                int rowCenter = seedBounds == null
-                        ? statusBarBounds.bottom
-                                - pixels(STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP, density)
-                        : centerY(seedBounds);
-                Rect clusterBounds = new Rect();
+                if (seedBounds == null) {
+                    continue;
+                }
+                int rowCenter = centerY(seedBounds);
+                List<Rect> candidateBounds = new ArrayList<>();
                 collectStatusIconBounds(
-                        statusBar, statusBarBounds, rowCenter, density, clusterBounds);
-                if (seedBounds != null) {
-                    clusterBounds.union(seedBounds);
-                }
-                if (!clusterBounds.isEmpty()) {
-                    return clusterBounds;
-                }
+                        statusBar, statusBarBounds, rowCenter, density, candidateBounds);
+                return calculateStatusIconClusterBounds(candidateBounds, seedBounds, density);
             }
             return null;
         } catch (RuntimeException ignored) {
@@ -422,7 +421,7 @@ final class RingBatteryLauncherOverlay {
             Rect statusBarBounds,
             int rowCenter,
             float density,
-            Rect clusterBounds) {
+            List<Rect> candidateBounds) {
         int childCount;
         try {
             childCount = parent.getChildCount();
@@ -442,16 +441,65 @@ final class RingBatteryLauncherOverlay {
                         && isStatusIconNode(child)
                         && Math.abs(centerY(bounds) - rowCenter)
                                 <= pixels(STATUS_ICON_ROW_TOLERANCE_DP, density)) {
-                    clusterBounds.union(bounds);
+                    candidateBounds.add(bounds);
                 }
                 collectStatusIconBounds(
-                        child, statusBarBounds, rowCenter, density, clusterBounds);
+                        child, statusBarBounds, rowCenter, density, candidateBounds);
             } catch (RuntimeException ignored) {
                 // The launcher can replace descendants while the row is updating.
             } finally {
                 recycle(child);
             }
         }
+    }
+
+    static Rect calculateStatusIconClusterBounds(
+            List<Rect> candidateBounds, Rect seedBounds, float density) {
+        if (seedBounds == null || seedBounds.isEmpty()) {
+            return null;
+        }
+        List<Rect> sortedBounds = new ArrayList<>();
+        if (candidateBounds != null) {
+            for (Rect candidateBoundsItem : candidateBounds) {
+                if (candidateBoundsItem != null && !candidateBoundsItem.isEmpty()) {
+                    sortedBounds.add(new Rect(candidateBoundsItem));
+                }
+            }
+        }
+        Rect seed = new Rect(seedBounds);
+        sortedBounds.add(seed);
+        Collections.sort(sortedBounds, new Comparator<Rect>() {
+            @Override
+            public int compare(Rect first, Rect second) {
+                return Integer.compare(first.left, second.left);
+            }
+        });
+
+        int seedIndex = 0;
+        for (int index = 0; index < sortedBounds.size(); index++) {
+            if (sortedBounds.get(index) == seed) {
+                seedIndex = index;
+                break;
+            }
+        }
+
+        int gapTolerance = pixels(STATUS_ICON_CLUSTER_GAP_TOLERANCE_DP, density);
+        Rect clusterBounds = new Rect(seed);
+        for (int index = seedIndex - 1; index >= 0; index--) {
+            Rect candidateBoundsItem = sortedBounds.get(index);
+            if (clusterBounds.left - candidateBoundsItem.right > gapTolerance) {
+                break;
+            }
+            clusterBounds.union(candidateBoundsItem);
+        }
+        for (int index = seedIndex + 1; index < sortedBounds.size(); index++) {
+            Rect candidateBoundsItem = sortedBounds.get(index);
+            if (candidateBoundsItem.left - clusterBounds.right > gapTolerance) {
+                break;
+            }
+            clusterBounds.union(candidateBoundsItem);
+        }
+        return clusterBounds;
     }
 
     private boolean isStatusIconNode(AccessibilityNodeInfo node) {
@@ -568,7 +616,8 @@ final class RingBatteryLauncherOverlay {
         }
         int right = anchorBounds.left - pixels(STATUS_ICON_GAP_DP, density);
         int centerY = (anchorBounds.top + anchorBounds.bottom) / 2;
-        return new OverlayPosition(right - overlayWidth, centerY - overlayHeight / 2);
+        int x = right - overlayWidth;
+        return new OverlayPosition(x < 0 ? fallbackX : x, centerY - overlayHeight / 2);
     }
 
     private static int pixels(int dp, float density) {
