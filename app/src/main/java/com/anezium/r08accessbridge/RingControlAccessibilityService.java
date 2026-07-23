@@ -58,6 +58,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String EXTRA_KEY_CODE = "key_code";
 
     private static final String TAG = "R08Bridge";
+    private static final String ACTION_NEXUS_RING_FOCUS =
+            "com.anezium.r08accessbridge.action.NEXUS_RING_FOCUS";
+    private static final String EXTRA_NEXUS_RING_FOCUSED = "focused";
+    private static final String EXTRA_NEXUS_RING_FOCUS_TIMESTAMP = "ts";
+    private static final long NEXUS_RING_FOCUS_STALE_MS = 10L * 60L * 1000L;
     private static final long FAST_DIRECTION_DEBOUNCE_MS = 55L;
     private static final long FAST_LAUNCHER_DIRECTION_DEBOUNCE_MS = 150L;
     private static final long TOUCH_DIRECTION_DEBOUNCE_MS = 110L;
@@ -106,8 +111,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private long downAt;
     private boolean trackingMotion;
     private boolean batteryReceiverRegistered;
+    private boolean nexusRingFocusReceiverRegistered;
     private boolean screenStateReceiverRegistered;
     private boolean screenWakeGraceActive;
+    private volatile boolean nexusRingFocused;
+    private volatile long nexusRingFocusTimestamp;
     private final Runnable screenWakeGraceClear = this::clearScreenWakeGrace;
 
     private final BroadcastReceiver screenStateReceiver = new BroadcastReceiver() {
@@ -199,6 +207,23 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
     };
 
+    private final BroadcastReceiver nexusRingFocusReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!ACTION_NEXUS_RING_FOCUS.equals(intent.getAction())) {
+                return;
+            }
+            boolean focused = intent.getBooleanExtra(EXTRA_NEXUS_RING_FOCUSED, false);
+            long timestamp = intent.getLongExtra(EXTRA_NEXUS_RING_FOCUS_TIMESTAMP, 0L);
+            boolean focusChanged = nexusRingFocused != focused;
+            nexusRingFocusTimestamp = timestamp;
+            nexusRingFocused = focused;
+            if (focusChanged) {
+                Log.d(TAG, "Nexus ring focus=" + focused + " ts=" + timestamp);
+            }
+        }
+    };
+
     static boolean ensureFastModeDefault(Context context) {
         boolean modeChanged = RingModeSettings.ensureDefaults(context);
         boolean actionsChanged = RingActionMappings.ensureDefaults(context);
@@ -285,6 +310,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         CxrBootstrapBridge.onAccessibilityServiceConnected(this);
         configureServiceInfo();
         registerCommandReceiver();
+        registerNexusRingFocusReceiver();
         registerScreenStateReceiver();
         if (RingModeSettings.isRingBatteryIndicatorEnabled(this)) {
             batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
@@ -321,6 +347,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             // Receiver was not registered.
         }
         unregisterBatteryReceiver();
+        unregisterNexusRingFocusReceiver();
         unregisterScreenStateReceiver();
         if (batteryLauncherOverlay != null) {
             batteryLauncherOverlay.stop();
@@ -514,6 +541,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (!isRingDevice(event.getDevice())) {
             return false;
         }
+        if (isNexusRingFocused()) {
+            Log.d(TAG, "Passing R08 key to Nexus action=" + event.getAction()
+                    + " code=" + event.getKeyCode());
+            return false;
+        }
         if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() > 0) {
             return true;
         }
@@ -575,6 +607,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     @Override
     public void onMotionEvent(MotionEvent event) {
         if (!isRingDevice(event.getDevice())) {
+            return;
+        }
+        if (isNexusRingFocused()) {
+            Log.d(TAG, "Passing R08 motion to Nexus action=" + event.getActionMasked());
             return;
         }
         if (wakeScreenForRingInput("motion")) {
@@ -655,6 +691,32 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             registerReceiver(commandReceiver, filter, COMMAND_PERMISSION, null, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(commandReceiver, filter, COMMAND_PERMISSION, null);
+        }
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerNexusRingFocusReceiver() {
+        if (nexusRingFocusReceiverRegistered) {
+            return;
+        }
+        IntentFilter filter = new IntentFilter(ACTION_NEXUS_RING_FOCUS);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(nexusRingFocusReceiver, filter, Context.RECEIVER_EXPORTED);
+        } else {
+            registerReceiver(nexusRingFocusReceiver, filter);
+        }
+        nexusRingFocusReceiverRegistered = true;
+    }
+
+    private void unregisterNexusRingFocusReceiver() {
+        if (!nexusRingFocusReceiverRegistered) {
+            return;
+        }
+        nexusRingFocusReceiverRegistered = false;
+        try {
+            unregisterReceiver(nexusRingFocusReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
         }
     }
 
@@ -1101,6 +1163,11 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         String name = device.getName();
         return name != null && name.toUpperCase(Locale.US).contains("R08");
+    }
+
+    private boolean isNexusRingFocused() {
+        return nexusRingFocused
+                && System.currentTimeMillis() - nexusRingFocusTimestamp <= NEXUS_RING_FOCUS_STALE_MS;
     }
 
     void showFeedback(String text) {
