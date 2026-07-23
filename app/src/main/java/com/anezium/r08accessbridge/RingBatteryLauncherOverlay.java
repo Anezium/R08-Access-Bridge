@@ -37,6 +37,7 @@ final class RingBatteryLauncherOverlay {
     private static final int LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP = 173;
     private static final int STATUS_ICON_GAP_DP = 4;
     private static final int STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP = 25;
+    private static final int STATUS_ICON_ROW_TOLERANCE_DP = 10;
     private static final long REFRESH_INTERVAL_MS = 30_000L;
     private static final long REFRESH_DEBOUNCE_MS = 150L;
     private static final int COVERAGE_THRESHOLD_PERCENT = 50;
@@ -100,8 +101,15 @@ final class RingBatteryLauncherOverlay {
             scheduleRefresh();
             return;
         }
-        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                || event.getEventType() == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+        int eventType = event.getEventType();
+        CharSequence packageName = event.getPackageName();
+        boolean launcherContentChanged =
+                eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                        && packageName != null
+                        && ROKID_LAUNCHER_PACKAGE.contentEquals(packageName);
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+                || launcherContentChanged) {
             scheduleRefresh();
         }
     }
@@ -276,10 +284,15 @@ final class RingBatteryLauncherOverlay {
             // instead of jumping to the fixed fallback mid-screen.
             return lastPosition;
         }
-        return calculateOverlayPosition(anchor.bounds, anchor.kind,
+        OverlayPosition position = calculateOverlayPosition(anchor.bounds, anchor.kind,
                 service.getResources().getDisplayMetrics().widthPixels,
                 service.getResources().getDisplayMetrics().heightPixels,
                 service.getResources().getDisplayMetrics().density);
+        if (!position.sameCoordinates(lastPosition)) {
+            Log.d(TAG, "anchor=" + anchor.kind + " bounds=" + anchor.bounds
+                    + " position=(" + position.x + "," + position.y + ")");
+        }
+        return position;
     }
 
     private Anchor findLauncherAnchor() {
@@ -333,7 +346,12 @@ final class RingBatteryLauncherOverlay {
             if (packageName == null || !ROKID_LAUNCHER_PACKAGE.contentEquals(packageName)) {
                 return null;
             }
-            Rect bounds = findNodeBounds(root, STATUS_WIFI_VIEW_ID);
+            float density = service.getResources().getDisplayMetrics().density;
+            Rect bounds = findStatusIconClusterBounds(root, density);
+            if (bounds != null) {
+                return new Anchor(bounds, AnchorKind.STATUS_ICON_CLUSTER);
+            }
+            bounds = findNodeBounds(root, STATUS_WIFI_VIEW_ID);
             if (bounds != null) {
                 return new Anchor(bounds, AnchorKind.WIFI);
             }
@@ -353,7 +371,125 @@ final class RingBatteryLauncherOverlay {
         }
     }
 
+    private Rect findStatusIconClusterBounds(AccessibilityNodeInfo root, float density) {
+        List<AccessibilityNodeInfo> statusBars = null;
+        try {
+            statusBars = root.findAccessibilityNodeInfosByViewId(STATUS_BAR_VIEW_ID);
+            if (statusBars == null) {
+                return null;
+            }
+            for (AccessibilityNodeInfo statusBar : statusBars) {
+                if (statusBar == null) {
+                    continue;
+                }
+                Rect statusBarBounds = nodeBounds(statusBar, false);
+                if (statusBarBounds == null) {
+                    continue;
+                }
+
+                Rect seedBounds = findNodeBounds(statusBar, STATUS_WIFI_VIEW_ID, true);
+                if (seedBounds == null) {
+                    seedBounds = findNodeBounds(statusBar, STATUS_POWER_VIEW_ID, true);
+                }
+                int rowCenter = seedBounds == null
+                        ? statusBarBounds.bottom
+                                - pixels(STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP, density)
+                        : centerY(seedBounds);
+                Rect clusterBounds = new Rect();
+                collectStatusIconBounds(
+                        statusBar, statusBarBounds, rowCenter, density, clusterBounds);
+                if (seedBounds != null) {
+                    clusterBounds.union(seedBounds);
+                }
+                if (!clusterBounds.isEmpty()) {
+                    return clusterBounds;
+                }
+            }
+            return null;
+        } catch (RuntimeException ignored) {
+            return null;
+        } finally {
+            if (statusBars != null) {
+                for (AccessibilityNodeInfo statusBar : statusBars) {
+                    recycle(statusBar);
+                }
+            }
+        }
+    }
+
+    private void collectStatusIconBounds(
+            AccessibilityNodeInfo parent,
+            Rect statusBarBounds,
+            int rowCenter,
+            float density,
+            Rect clusterBounds) {
+        int childCount;
+        try {
+            childCount = parent.getChildCount();
+        } catch (RuntimeException ignored) {
+            return;
+        }
+        for (int index = 0; index < childCount; index++) {
+            AccessibilityNodeInfo child = null;
+            try {
+                child = parent.getChild(index);
+                if (child == null) {
+                    continue;
+                }
+                Rect bounds = nodeBounds(child, true);
+                if (bounds != null
+                        && Rect.intersects(statusBarBounds, bounds)
+                        && isStatusIconNode(child)
+                        && Math.abs(centerY(bounds) - rowCenter)
+                                <= pixels(STATUS_ICON_ROW_TOLERANCE_DP, density)) {
+                    clusterBounds.union(bounds);
+                }
+                collectStatusIconBounds(
+                        child, statusBarBounds, rowCenter, density, clusterBounds);
+            } catch (RuntimeException ignored) {
+                // The launcher can replace descendants while the row is updating.
+            } finally {
+                recycle(child);
+            }
+        }
+    }
+
+    private boolean isStatusIconNode(AccessibilityNodeInfo node) {
+        try {
+            CharSequence className = node.getClassName();
+            if (className != null && className.toString().endsWith("ImageView")) {
+                return true;
+            }
+            String viewId = node.getViewIdResourceName();
+            return viewId != null && viewId.endsWith("_iv");
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private Rect nodeBounds(AccessibilityNodeInfo node, boolean requireVisible) {
+        try {
+            if (requireVisible && !node.isVisibleToUser()) {
+                return null;
+            }
+            Rect bounds = new Rect();
+            node.getBoundsInScreen(bounds);
+            return bounds.isEmpty() ? null : bounds;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static int centerY(Rect bounds) {
+        return bounds.top + bounds.height() / 2;
+    }
+
     private Rect findNodeBounds(AccessibilityNodeInfo root, String viewId) {
+        return findNodeBounds(root, viewId, false);
+    }
+
+    private Rect findNodeBounds(
+            AccessibilityNodeInfo root, String viewId, boolean requireVisible) {
         List<AccessibilityNodeInfo> nodes = null;
         Rect result = null;
         try {
@@ -366,9 +502,8 @@ final class RingBatteryLauncherOverlay {
                     continue;
                 }
                 try {
-                    Rect bounds = new Rect();
-                    node.getBoundsInScreen(bounds);
-                    if (result == null && !bounds.isEmpty()) {
+                    Rect bounds = nodeBounds(node, requireVisible);
+                    if (result == null && bounds != null) {
                         result = bounds;
                     }
                 } catch (RuntimeException ignored) {
@@ -452,6 +587,7 @@ final class RingBatteryLauncherOverlay {
     }
 
     enum AnchorKind {
+        STATUS_ICON_CLUSTER,
         WIFI,
         POWER,
         STATUS_BAR_CONTAINER

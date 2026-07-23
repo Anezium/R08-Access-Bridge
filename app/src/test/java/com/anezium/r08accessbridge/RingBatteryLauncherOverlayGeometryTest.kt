@@ -9,6 +9,17 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class RingBatteryLauncherOverlayGeometryTest {
     @Test
+    fun fullStatusIconClusterPushesChipLeftOfEveryPresentIcon() {
+        val position = calculate(
+            Rect(380, 515, 450, 535),
+            RingBatteryLauncherOverlay.AnchorKind.STATUS_ICON_CLUSTER,
+        )
+
+        assertEquals(275, position.x)
+        assertEquals(510, position.y)
+    }
+
+    @Test
     fun wifiAnchorPlacesChipImmediatelyLeftAndCentersItOnRow() {
         val position = calculate(
             Rect(415, 515, 435, 535),
