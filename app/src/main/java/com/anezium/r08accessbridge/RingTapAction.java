@@ -2,6 +2,7 @@ package com.anezium.r08accessbridge;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
@@ -9,11 +10,15 @@ enum RingTapAction {
     NONE("none", "No action", "Ignore this tap count", "No action"),
     LAUNCH_APP("launch_app", "Launch app", "Open a chosen installed app", "Launch app"),
     AI_ASSIST("ai_assist", "Rokid AI", "Open the AI assistant scene", "Rokid AI"),
+    NEXUS_LAUNCHER("nexus_launcher", "Nexus launcher", "Toggle the Rokid Nexus HUD launcher", "Nexus launcher"),
     HI_ROKID_SHORTCUT(BridgeProtocol.ACTION_HI_ROKID_SHORTCUT, "Hi Rokid Shortcut", "Trigger the real two-finger AI shortcut via the phone bridge", "Hi shortcut"),
     TAKE_PHOTO("take_photo", "Take photo", "Capture a normal camera photo", "Take photo"),
     VIDEO_RECORD_TOGGLE("toggle_video", "Video toggle", "Start video, then stop on next trigger", "Video"),
     AR_SCREENSHOT("ar_screenshot", "AR screenshot", "Capture the AR/HUD view", "AR screenshot"),
     AR_RECORD_TOGGLE("toggle_ar_record", "AR video toggle", "Start AR video, then stop on next trigger", "AR video");
+
+    private static final String NEXUS_PACKAGE = "com.anezium.rokidbus.glasses";
+    private static final String NEXUS_LAUNCHER_ACTION = "com.anezium.rokidbus.glasses.action.OPEN_LAUNCHER";
 
     private final String id;
     private final String title;
@@ -69,6 +74,14 @@ enum RingTapAction {
                     return true;
                 }
                 return false;
+            case NEXUS_LAUNCHER:
+                try {
+                    context.getPackageManager().getPackageInfo(NEXUS_PACKAGE, 0);
+                } catch (PackageManager.NameNotFoundException e) {
+                    return false;
+                }
+                context.sendBroadcast(new Intent(NEXUS_LAUNCHER_ACTION).setPackage(NEXUS_PACKAGE));
+                return true;
             case HI_ROKID_SHORTCUT:
                 if (PrivilegedShortcutBridge.requestHiRokidShortcut(context)) {
                     return true;
