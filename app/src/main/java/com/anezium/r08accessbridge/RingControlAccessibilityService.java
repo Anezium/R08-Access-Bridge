@@ -33,9 +33,9 @@ import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 public final class RingControlAccessibilityService extends AccessibilityService {
@@ -77,6 +77,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final float MOTION_TAP_SLOP = 32f;
     private static final float MOTION_SWIPE_THRESHOLD = 70f;
     private static final long SCREEN_WAKE_GRACE_MS = 600L;
+    private static final long RING_INPUT_PRESENCE_CHECK_DELAY_MS = 12_000L;
     private static final long LAUNCHER_ACCELERATION_WINDOW_MS = 900L;
     private static final int LAUNCHER_ACCELERATION_START_STREAK = 3;
     private static final int LAUNCHER_ACCELERATED_STEPS = 2;
@@ -97,8 +98,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private Thread.UncaughtExceptionHandler previousUncaughtExceptionHandler;
     private Thread.UncaughtExceptionHandler diagnosticUncaughtExceptionHandler;
     private final LinkedHashMap<String, Integer> selfArmEventHistogram = new LinkedHashMap<>();
+    private final HashSet<String> ignoredInputDeviceNames = new HashSet<>();
     private PowerManager powerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable ringInputPresenceCheck = this::checkRingInputPresence;
     private final TapSequenceRecognizer tapRecognizer = new TapSequenceRecognizer(
             mainHandler,
             this::resolveTapGesture,
@@ -123,6 +126,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private boolean batteryReceiverRegistered;
     private boolean screenStateReceiverRegistered;
     private boolean screenWakeGraceActive;
+    private boolean ringGattConnected;
+    private boolean ringNoInputFeedbackShown;
     private final Runnable screenWakeGraceClear = this::clearScreenWakeGrace;
 
     private final BroadcastReceiver screenStateReceiver = new BroadcastReceiver() {
@@ -294,7 +299,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
             mediaKeyGuard.start();
         }
-        bleController = new RingBleController(this);
+        bleController = new RingBleController(this, this::onRingGattConnectionStateChanged);
         bleController.setTouchMode(touchMode);
         bleController.start();
         Log.d(TAG, "Accessibility service connected touchMode=" + touchMode
@@ -313,6 +318,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (activeService == this) {
             activeService = null;
         }
+        clearRingGattConnectionState();
         if (bleController != null) {
             bleController.stop();
             bleController = null;
@@ -633,7 +639,13 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (isOwnAppActive()) {
             return false;
         }
-        if (!isRingDevice(event.getDevice())) {
+        InputDevice device = event.getDevice();
+        if (!isRingDevice(device)) {
+            String deviceName = device == null ? null : device.getName();
+            if (deviceName != null && ignoredInputDeviceNames.add(deviceName)) {
+                Log.d(TAG, "Ignored key from non-ring input device name='" + deviceName
+                        + "' keyCode=" + event.getKeyCode());
+            }
             return false;
         }
         if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() > 0) {
@@ -1270,8 +1282,37 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         if (device == null) {
             return false;
         }
-        String name = device.getName();
-        return name != null && name.toUpperCase(Locale.US).contains("R08");
+        return RingInputPresence.isRingName(device.getName());
+    }
+
+    private void onRingGattConnectionStateChanged(boolean connected) {
+        if (connected) {
+            ringGattConnected = true;
+            ringNoInputFeedbackShown = false;
+            mainHandler.removeCallbacks(ringInputPresenceCheck);
+            mainHandler.postDelayed(
+                    ringInputPresenceCheck,
+                    RING_INPUT_PRESENCE_CHECK_DELAY_MS);
+        } else {
+            clearRingGattConnectionState();
+        }
+    }
+
+    private void checkRingInputPresence() {
+        if (!ringGattConnected
+                || ringNoInputFeedbackShown
+                || RingInputPresence.ringInputDevicePresent()) {
+            return;
+        }
+        ringNoInputFeedbackShown = true;
+        showFeedback(getString(R.string.status_ring_no_input));
+        Log.w(TAG, "Ring GATT-connected but no R08 input device present (half-completed bond?)");
+    }
+
+    private void clearRingGattConnectionState() {
+        ringGattConnected = false;
+        ringNoInputFeedbackShown = false;
+        mainHandler.removeCallbacks(ringInputPresenceCheck);
     }
 
     void showFeedback(String text) {

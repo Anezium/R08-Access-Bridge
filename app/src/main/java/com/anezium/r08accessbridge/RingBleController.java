@@ -37,6 +37,10 @@ import java.util.UUID;
 final class RingBleController {
     private static final String TAG = "R08Ble";
 
+    interface ConnectionListener {
+        void onConnectionStateChanged(boolean connected);
+    }
+
     private static final UUID SERVICE_UUID = UUID.fromString("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID WRITE_CHAR_UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
     private static final UUID NOTIFY_CHAR_UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
@@ -53,6 +57,7 @@ final class RingBleController {
     private static final long ACTIVITY_BATTERY_REFRESH_MS = 4 * 60_000L;
 
     private final Context context;
+    private final ConnectionListener connectionListener;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Queue<byte[]> writes = new ArrayDeque<>();
 
@@ -68,6 +73,7 @@ final class RingBleController {
     private boolean writing;
     private boolean descriptorWriting;
     private boolean notificationsEnabled;
+    private volatile boolean connected;
     private long lastBatteryRequestAt;
 
     private final Runnable scanTimeout = () -> {
@@ -123,6 +129,7 @@ final class RingBleController {
             Log.d(TAG, "GATT state=" + newState + " status=" + status);
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 gatt = bluetoothGatt;
+                setConnected(true);
                 writeCharacteristic = null;
                 writes.clear();
                 writing = false;
@@ -190,7 +197,12 @@ final class RingBleController {
     };
 
     RingBleController(Context context) {
+        this(context, null);
+    }
+
+    RingBleController(Context context, ConnectionListener connectionListener) {
         this.context = context.getApplicationContext();
+        this.connectionListener = connectionListener;
     }
 
     void setTouchMode(boolean enabled) {
@@ -436,6 +448,7 @@ final class RingBleController {
     }
 
     private void closeGatt() {
+        setConnected(false);
         writeCharacteristic = null;
         descriptorWriting = false;
         notificationsEnabled = false;
@@ -444,6 +457,16 @@ final class RingBleController {
             gatt.close();
         }
         gatt = null;
+    }
+
+    private void setConnected(boolean connected) {
+        if (this.connected == connected) {
+            return;
+        }
+        this.connected = connected;
+        if (connectionListener != null) {
+            handler.post(() -> connectionListener.onConnectionStateChanged(connected));
+        }
     }
 
     private void scheduleReconnect() {

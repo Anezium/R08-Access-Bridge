@@ -32,6 +32,7 @@
     <string name="status_system">%1$s - Permissions and reset</string>
     <string name="status_forget_confirm">This only removes the saved bond</string>
     <string name="status_probe_app_type">%1$s - Test R08 key output</string>
+    <string name="status_ring_no_input">Ring not sending input — Forget R08, then re-pair</string>
 
     <string name="action_pair_reconnect">Pair / Reconnect</string>
     <string name="detail_pair_reconnect">Scan for R08, then connect or pair</string>

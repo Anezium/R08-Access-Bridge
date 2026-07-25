@@ -2,6 +2,7 @@ package com.anezium.r08accessbridge
 
 import android.content.Context
 import android.content.Intent
+import android.provider.Settings
 import com.anezium.r08bridgeprotocol.BridgeProtocol
 
 object LocalSelfArmStatus {
@@ -11,6 +12,7 @@ object LocalSelfArmStatus {
     private const val KEY_MESSAGE = "local_self_arm_message"
     private const val KEY_ERROR = "local_self_arm_error"
     private const val KEY_UPDATED_AT = "local_self_arm_updated_at"
+    private const val STALE_AFTER_MS = 24L * 60L * 60L * 1000L
 
     @JvmStatic
     fun reportSimple(context: Context, setupState: String) {
@@ -53,11 +55,43 @@ object LocalSelfArmStatus {
     }
 
     @JvmStatic
-    fun summary(context: Context): String =
-        context.applicationContext
-            .getSharedPreferences(BridgeProtocol.PREFS_BRIDGE, Context.MODE_PRIVATE)
-            .getString(KEY_MESSAGE, "")
-            .orEmpty()
+    fun summary(context: Context): String {
+        val applicationContext = context.applicationContext
+        val preferences =
+            applicationContext.getSharedPreferences(BridgeProtocol.PREFS_BRIDGE, Context.MODE_PRIVATE)
+        val state = preferences.getString(KEY_STATE, "").orEmpty()
+        val message = preferences.getString(KEY_MESSAGE, "").orEmpty()
+        val updatedAtMs = preferences.getLong(KEY_UPDATED_AT, 0L)
+        val enabledServices =
+            Settings.Secure.getString(
+                applicationContext.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            )
+        val accessibilityEnabledNow =
+            SelfArmController.containsOwnService(enabledServices, applicationContext.packageName)
+        return if (
+            shouldSuppress(
+                state,
+                updatedAtMs,
+                System.currentTimeMillis(),
+                accessibilityEnabledNow,
+            )
+        ) {
+            ""
+        } else {
+            message
+        }
+    }
+
+    @JvmStatic
+    fun shouldSuppress(
+        state: String,
+        updatedAtMs: Long,
+        nowMs: Long,
+        accessibilityEnabledNow: Boolean,
+    ): Boolean =
+        (state == "accessibility_service_needed" && accessibilityEnabledNow) ||
+            (updatedAtMs > 0L && nowMs - updatedAtMs > STALE_AFTER_MS)
 
     @JvmStatic
     fun state(context: Context): String =
