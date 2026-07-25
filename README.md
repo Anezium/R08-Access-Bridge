@@ -187,10 +187,12 @@ Before pairing the ring with R08 Access Bridge, connect it to the official R08 R
 
 This matters for Stable mode / R08 `appType 1`: before the firmware update, `appType 1` may only emit swipe / previous / next input, and tap and double-tap Back may not work at all. After updating the ring in the official app, **disconnect it there**, then reconnect it in R08 Access Bridge. If the ring stays connected to the phone, the glasses may only see normal media-key behavior and R08 Access Bridge may not take over. Thanks to Reddit user `u/Rare_Wheel1907` for finding and confirming this fix.
 
+If the ring then connects and shows its battery on the glasses but no gesture ever works, the Bluetooth bond may have come out half-completed — see [Troubleshooting](#troubleshooting).
+
 ### Set up on the glasses
 
 ```powershell
-adb install -r R08-Access-Bridge-v1.6.0.apk
+adb install -r R08-Access-Bridge-v1.7.0.apk
 ```
 
 1. Open `R08 Access Bridge` and grant Bluetooth permissions if Android asks.
@@ -200,6 +202,18 @@ adb install -r R08-Access-Bridge-v1.6.0.apk
 5. Tap **`Self-arm (no phone)`** and wait for `Self-arm complete`. This one step arms the Hi Rokid shortcut and installs the accessibility watchdog, so ring control survives the firmware force-stops. Do it once — it persists across reboots.
 
 Stay in `Stable mode` for the safest launcher behavior, or switch to `Fast mode` from `Ring modes` if you want launcher acceleration.
+
+## Troubleshooting
+
+### The ring connects and shows battery, but no gesture does anything
+
+Everything can look healthy — ring connected, battery correct, bridge armed — while taps and swipes do nothing at all. Battery and gestures travel over two different Bluetooth channels, so one can work without the other.
+
+Quick self-test first: open R08 Access Bridge and tap or swipe the ring. The app reacts to ring keys directly while it is open, so if the highlighted card moves, ring input reaches the glasses and the problem is on the service side. If nothing moves, ring input never arrives.
+
+- **Ring input never arrives — half-completed bond.** Battery is read over BLE GATT, which works even when the Bluetooth bond is incomplete; taps and swipes are HID input events, which need a fully established bond. This typically happens when the ring was paired to a phone (the official QRing app) and unpaired shortly before pairing with the glasses. Fix: `System` → `Forget R08` → confirm, then `Pair / Reconnect` to rebuild the bond from scratch. Found and confirmed with a field tester on a fresh, just-updated R08.
+- **Ring input arrives, gestures still dead — the Accessibility service is enabled but not running.** After a firmware force-stop, Android Settings can keep showing the service as ON while it is actually dead, and every gesture rides that service. Fix: `System` → `Accessibility`, toggle `R08 Access Bridge` OFF, wait a few seconds, toggle it back ON. The settings change is what forces Android to restart the service — restarting the app alone never does. Starting with v1.7.1-preview, the home status line exposes this state as `Service STUCK` and the app and watchdog repair it automatically.
+- **Stale status message.** The home status line can keep showing the last Self-arm message — for example `Enable accessibility first` from an early setup attempt — long after it stopped being true. It reflects the last self-arm run, not the live service state; the `Service ON/OFF` part at the start of the line is what to trust.
 
 ## Build From Source
 
