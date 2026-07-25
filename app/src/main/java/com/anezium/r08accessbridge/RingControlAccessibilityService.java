@@ -84,6 +84,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private static final String SELF_ARM_NOTIFICATION_CHANNEL = "r08_self_arm";
 
     private static RingControlAccessibilityService activeService;
+    private static volatile RingControlAccessibilityService liveInstance;
 
     private AccessibilityNavigator navigator;
     private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
@@ -298,12 +299,16 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         bleController.start();
         Log.d(TAG, "Accessibility service connected touchMode=" + touchMode
                 + " fastNavigationMode=" + fastNavigationMode);
+        liveInstance = this;
     }
 
     @Override
     public void onDestroy() {
         if (selfArmDiagnostics != null) {
             selfArmDiagnostics.log("SERVICE onDestroy");
+        }
+        if (liveInstance == this) {
+            liveInstance = null;
         }
         if (activeService == this) {
             activeService = null;
@@ -347,6 +352,9 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public boolean onUnbind(Intent intent) {
         if (selfArmDiagnostics != null) {
             selfArmDiagnostics.log("SERVICE onUnbind");
+        }
+        if (liveInstance == this) {
+            liveInstance = null;
         }
         return super.onUnbind(intent);
     }
@@ -470,6 +478,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     static boolean isServiceActive() {
         return activeService != null;
+    }
+
+    public static boolean isServiceLive() {
+        return liveInstance != null;
     }
 
     static boolean requestWirelessDebugSetup(Context context) {

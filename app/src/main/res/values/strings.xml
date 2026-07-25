@@ -22,6 +22,8 @@
 
     <string name="status_service_on">Service ON</string>
     <string name="status_service_off">Service OFF</string>
+    <string name="status_service_stuck">Service STUCK — restarting…</string>
+    <string name="status_service_stuck_manual">Service stuck — toggle Accessibility OFF/ON</string>
     <string name="status_home">%1$s - Pairing and setup</string>
     <string name="status_modes">%1$s - Input behavior</string>
     <string name="status_mapping">%1$s - Tap actions</string>
@@ -105,6 +107,7 @@
     <string name="detail_confirm_forget">Remove R08, then pair again</string>
 
     <string name="toast_pair_reconnect_started">Pair / reconnect started</string>
+    <string name="toast_service_healed">Accessibility restarted — ring active</string>
     <string name="toast_self_arm_started">Self-arm started</string>
     <string name="toast_self_arm_accessibility_needed">Enable R08 Accessibility first</string>
     <string name="toast_self_arm_api_30_required">Self-arm needs Android 11 or newer</string>

@@ -5,7 +5,6 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.ContentValues;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -60,10 +59,16 @@ public final class MainActivity extends Activity {
     private static final long SELECT_BOUNCE_IGNORE_MS = 120L;
     private static final long DOUBLE_SELECT_MAX_MS = 650L;
     private static final long SINGLE_SELECT_DELAY_MS = DOUBLE_SELECT_MAX_MS + 50L;
+    private static final long ACCESSIBILITY_HEAL_DETECT_DELAY_MS = 2500L;
+    private static final long ACCESSIBILITY_HEAL_READD_DELAY_MS = 500L;
+    private static final long ACCESSIBILITY_HEAL_VERIFY_DELAY_MS = 4000L;
 
     private final List<View> actionViews = new ArrayList<>();
     private final ArrayDeque<Screen> backStack = new ArrayDeque<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable accessibilityHealStartRunnable = this::startAccessibilityHeal;
+    private final Runnable accessibilityHealReaddRunnable = this::readdAccessibilityService;
+    private final Runnable accessibilityHealVerifyRunnable = this::verifyAccessibilityHeal;
     private RingBleController activityBleController;
     private LinearLayout content;
     private ScrollView scrollView;
@@ -78,6 +83,8 @@ public final class MainActivity extends Activity {
     private SelfArmDiagnosticsShareServer diagnosticsShareServer;
     private String diagnosticsShareStatus = "";
     private int diagnosticsShareGeneration;
+    private AccessibilityHealState accessibilityHealState = AccessibilityHealState.IDLE;
+    private boolean accessibilityHealRunning;
 
     private final BroadcastReceiver localSelfArmStatusReceiver = new BroadcastReceiver() {
         @Override
@@ -112,6 +119,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         requestRingBatteryRefresh();
+        scheduleAccessibilityHeal();
         render();
     }
 
@@ -123,10 +131,11 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (activityBleController != null) {
-            activityBleController.stop();
-            activityBleController = null;
-        }
+        mainHandler.removeCallbacks(accessibilityHealStartRunnable);
+        mainHandler.removeCallbacks(accessibilityHealReaddRunnable);
+        mainHandler.removeCallbacks(accessibilityHealVerifyRunnable);
+        accessibilityHealRunning = false;
+        releaseActivityBleController();
         clearPendingSelect();
         stopDiagnosticsSharing(false);
         super.onDestroy();
@@ -460,7 +469,17 @@ public final class MainActivity extends Activity {
         if (screen == Screen.FORGET_CONFIRM) {
             return getString(R.string.status_forget_confirm);
         }
-        String service = getString(isAccessibilityEnabled() ? R.string.status_service_on : R.string.status_service_off);
+        boolean accessibilityEnabled = isAccessibilityEnabled();
+        String service;
+        if (!accessibilityEnabled) {
+            service = getString(R.string.status_service_off);
+        } else if (RingControlAccessibilityService.isServiceLive()) {
+            service = getString(R.string.status_service_on);
+        } else if (accessibilityHealState == AccessibilityHealState.MANUAL) {
+            service = getString(R.string.status_service_stuck_manual);
+        } else {
+            service = getString(R.string.status_service_stuck);
+        }
         String localSelfArm = LocalSelfArmStatus.summary(this);
         if (!TextUtils.isEmpty(localSelfArm) && (screen == Screen.HOME || screen == Screen.SYSTEM)) {
             return service + " - " + localSelfArm;
@@ -1008,20 +1027,88 @@ public final class MainActivity extends Activity {
     }
 
     private boolean isAccessibilityEnabled() {
-        ComponentName component = new ComponentName(this, RingControlAccessibilityService.class);
-        String flat = component.flattenToString();
         String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-        if (TextUtils.isEmpty(enabled)) {
-            return false;
+        return SelfArmController.containsOwnService(enabled, getPackageName());
+    }
+
+    private void scheduleAccessibilityHeal() {
+        if (accessibilityHealRunning) {
+            return;
         }
-        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
-        splitter.setString(enabled);
-        while (splitter.hasNext()) {
-            if (flat.equalsIgnoreCase(splitter.next())) {
-                return true;
-            }
+        if (!isAccessibilityEnabled() || RingControlAccessibilityService.isServiceLive()) {
+            accessibilityHealState = AccessibilityHealState.IDLE;
+            return;
         }
-        return false;
+        accessibilityHealRunning = true;
+        accessibilityHealState = AccessibilityHealState.PENDING;
+        mainHandler.postDelayed(
+                accessibilityHealStartRunnable,
+                ACCESSIBILITY_HEAL_DETECT_DELAY_MS);
+    }
+
+    private void startAccessibilityHeal() {
+        if (isFinishing() || isDestroyed()) {
+            accessibilityHealRunning = false;
+            return;
+        }
+        if (!isAccessibilityEnabled() || RingControlAccessibilityService.isServiceLive()) {
+            accessibilityHealRunning = false;
+            accessibilityHealState = AccessibilityHealState.IDLE;
+            render();
+            return;
+        }
+        accessibilityHealState = AccessibilityHealState.IN_FLIGHT;
+        render();
+        if (!SelfArmController.stripOwnServiceEntries(this)) {
+            accessibilityHealRunning = false;
+            accessibilityHealState = AccessibilityHealState.MANUAL;
+            render();
+            return;
+        }
+        mainHandler.postDelayed(
+                accessibilityHealReaddRunnable,
+                ACCESSIBILITY_HEAL_READD_DELAY_MS);
+        mainHandler.postDelayed(
+                accessibilityHealVerifyRunnable,
+                ACCESSIBILITY_HEAL_VERIFY_DELAY_MS);
+    }
+
+    private void readdAccessibilityService() {
+        if (isFinishing() || isDestroyed()) {
+            accessibilityHealRunning = false;
+            return;
+        }
+        if (!accessibilityHealRunning) {
+            return;
+        }
+        SelfArmController.repairAccessibilityFromApp(this);
+    }
+
+    private void verifyAccessibilityHeal() {
+        if (isFinishing() || isDestroyed()) {
+            accessibilityHealRunning = false;
+            return;
+        }
+        if (!accessibilityHealRunning) {
+            return;
+        }
+        accessibilityHealRunning = false;
+        if (RingControlAccessibilityService.isServiceLive()) {
+            accessibilityHealState = AccessibilityHealState.IDLE;
+            Toast.makeText(this, R.string.toast_service_healed, Toast.LENGTH_SHORT).show();
+            releaseActivityBleController();
+            sendServiceCommand(RingControlAccessibilityService.COMMAND_RECONNECT);
+        } else {
+            accessibilityHealState = AccessibilityHealState.MANUAL;
+        }
+        render();
+    }
+
+    private void releaseActivityBleController() {
+        if (activityBleController != null) {
+            activityBleController.stop();
+            activityBleController = null;
+        }
     }
 
     private void requestRuntimePermissions() {
@@ -1444,6 +1531,13 @@ public final class MainActivity extends Activity {
         ONE_TAP_SWIPE_DOWN,
         TWO_TAP_SWIPE_UP,
         TWO_TAP_SWIPE_DOWN
+    }
+
+    private enum AccessibilityHealState {
+        IDLE,
+        PENDING,
+        IN_FLIGHT,
+        MANUAL
     }
 
     private enum Screen {

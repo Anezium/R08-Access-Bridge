@@ -43,6 +43,7 @@ public final class PhoneCompanionActivity extends Activity {
     private static final String PREF_WIFI_OFF_AFTER_ARM = "wifi_off_after_arm";
     private static final String PREF_WATCHDOG_STATUS = "watchdog_status";
     private static final String PREF_WATCHDOG_CHECKED_AT = "watchdog_checked_at";
+    private static final String PREF_ARMED_CHECKED_AT = "armed_checked_at";
     private static final String DEFAULT_HOST = "";
     private static final String EXTRA_HOST = "host";
     private static final String EXTRA_PORT = "port";
@@ -235,6 +236,7 @@ public final class PhoneCompanionActivity extends Activity {
         statusPanel.addView(sectionTitle("Status"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         bridgeStatusText = prominentStatusRow(statusPanel, "Bridge", "Not armed");
         bridgeStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
+        renderStoredBridgeStatus();
         watchdogStatusText = prominentStatusRow(statusPanel, "Watchdog", "Unknown");
         watchdogStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
         renderStoredWatchdogStatus();
@@ -523,7 +525,10 @@ public final class PhoneCompanionActivity extends Activity {
         toolsRow2.addView(test, weightButton());
         addGapHorizontal(toolsRow2, 10);
         Button status = button("Read bridge", false);
-        status.setOnClickListener(v -> runAdbTask("Reading bridge", adbBridgeClient::readStatus));
+        status.setOnClickListener(v -> runAdbTask(
+                "Reading bridge",
+                adbBridgeClient::readStatus,
+                true));
         toolsRow2.addView(status, weightButton());
 
         addGap(inner, 10);
@@ -1159,7 +1164,8 @@ public final class PhoneCompanionActivity extends Activity {
             setStatusLine(ipStatusText, "Glasses IP",
                     state.wifiConnected ? "No IP yet" : "Wi-Fi off after arm", MUTED);
         }
-        setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
+        long checkedAt = recordBridgeArmedCheck();
+        renderBridgeArmedStatus(checkedAt);
         setStatusLine(adbStatusText, "ADB",
                 state.wifiConnected ? "Bridge already armed" : "Armed, glasses Wi-Fi off", ACCENT);
         renderStoredWatchdogStatus();
@@ -1390,6 +1396,10 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private void runAdbTask(String label, AdbWork work) {
+        runAdbTask(label, work, false);
+    }
+
+    private void runAdbTask(String label, AdbWork work, boolean confirmsBridgeArmed) {
         summary(label, MUTED);
         setDetail(label + "...");
         String host = hostField.getText().toString().trim();
@@ -1400,6 +1410,12 @@ public final class PhoneCompanionActivity extends Activity {
                 BridgeOperationResult result = work.run(adb);
                 runOnUiThread(() -> {
                     setStatusLine(adbStatusText, "ADB", "Connected to " + host, ACCENT);
+                    if (confirmsBridgeArmed) {
+                        setupCoordinator.markArmed();
+                        saveArmedEndpoint(host, port);
+                        updatePrimaryButtonForState(true);
+                        renderBridgeArmedStatus(recordBridgeArmedCheck());
+                    }
                     applyBridgeResult(host, result);
                 });
             } catch (Throwable throwable) {
@@ -1455,9 +1471,10 @@ public final class PhoneCompanionActivity extends Activity {
                 setupCoordinator.markArmed();
                 saveArmedEndpoint(host, parsePort());
                 updatePrimaryButtonForState(true);
+                long checkedAt = recordBridgeArmedCheck();
                 setStatusLine(adbStatusText, "ADB",
                         result.wifiOffAfterArm() ? "Armed, Wi-Fi off scheduled" : "Connected to " + host, ACCENT);
-                setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
+                renderBridgeArmedStatus(checkedAt);
                 summary("Setup complete", ACCENT);
                 setDetail(armedDetail(result.output()));
                 break;
@@ -1498,7 +1515,33 @@ public final class PhoneCompanionActivity extends Activity {
     private void clearArmedEndpoint() {
         prefs().edit()
                 .putBoolean(BridgeProtocol.PREF_ARMED, false)
+                .remove(PREF_ARMED_CHECKED_AT)
                 .apply();
+    }
+
+    private long recordBridgeArmedCheck() {
+        long checkedAt = System.currentTimeMillis();
+        prefs().edit()
+                .putLong(PREF_ARMED_CHECKED_AT, checkedAt)
+                .apply();
+        return checkedAt;
+    }
+
+    private void renderStoredBridgeStatus() {
+        if (bridgeStatusText == null || !isArmedBefore()) {
+            return;
+        }
+        renderBridgeArmedStatus(prefs().getLong(PREF_ARMED_CHECKED_AT, 0L));
+    }
+
+    private void renderBridgeArmedStatus(long checkedAt) {
+        if (bridgeStatusText == null) {
+            return;
+        }
+        String label = checkedAt > 0L
+                ? "Armed · checked " + formatRelativeAge(checkedAt)
+                : "Armed";
+        setStatusLine(bridgeStatusText, "Bridge", label, ACCENT);
     }
 
     // -------------------------------------------------------------------------
@@ -1680,7 +1723,7 @@ public final class PhoneCompanionActivity extends Activity {
             return;
         }
         setStatusLine(watchdogStatusText, "Watchdog",
-                watchdogStateLabel(status) + " (last checked " + formatTimestamp(checkedAt) + ")",
+                watchdogStateLabel(status) + " · checked " + formatRelativeAge(checkedAt),
                 watchdogStatusColor(status, false));
     }
 
@@ -1767,6 +1810,25 @@ public final class PhoneCompanionActivity extends Activity {
         }
         return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
                 .format(new Date(timestamp));
+    }
+
+    private String formatRelativeAge(long timestamp) {
+        if (timestamp <= 0L) {
+            return "unknown";
+        }
+        long ageSeconds = Math.max(0L, (System.currentTimeMillis() - timestamp) / 1000L);
+        if (ageSeconds < 60L) {
+            return "just now";
+        }
+        long ageMinutes = ageSeconds / 60L;
+        if (ageMinutes < 60L) {
+            return ageMinutes + "m ago";
+        }
+        long ageHours = ageMinutes / 60L;
+        if (ageHours < 24L) {
+            return ageHours + "h ago";
+        }
+        return (ageHours / 24L) + "d ago";
     }
 
     // -------------------------------------------------------------------------

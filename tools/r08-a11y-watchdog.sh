@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-VERSION="1"
+VERSION="2"
 PKG="${R08_PACKAGE:-com.anezium.r08accessbridge}"
 SVC="${R08_A11Y_SERVICE:-com.anezium.r08accessbridge/com.anezium.r08accessbridge.RingControlAccessibilityService}"
 SCRIPT_NAME="r08-a11y-watchdog.sh"
@@ -9,6 +9,7 @@ VERSIONFILE="${R08_A11Y_VERSIONFILE:-/data/local/tmp/r08-a11y-watchdog.version}"
 LOGFILE="${R08_A11Y_LOGFILE:-/data/local/tmp/r08-a11y-watchdog.log}"
 HEARTBEAT="${R08_A11Y_HEARTBEAT:-/data/local/tmp/r08-a11y-watchdog.heartbeat}"
 POLL_SECONDS="${R08_A11Y_POLL_SECONDS:-1}"
+BOUND_CHECK_EVERY="${R08_A11Y_BOUND_CHECK_EVERY:-5}"
 LOG_HEALTHY_EVERY="${R08_A11Y_LOG_HEALTHY_EVERY:-30}"
 MAX_LOG_BYTES="${R08_A11Y_MAX_LOG_BYTES:-65536}"
 
@@ -57,6 +58,10 @@ app_pid() {
     echo "${pids%% *}"
 }
 
+service_bound() {
+    dumpsys activity services "$PKG" 2>/dev/null | grep -q "RingControlAccessibilityService"
+}
+
 repair_accessibility() {
     cur="$(settings get secure enabled_accessibility_services 2>/dev/null)"
     [ "$cur" = "null" ] && cur=""
@@ -79,6 +84,44 @@ repair_accessibility() {
     log_msg "repaired cur='$cur' new='$new' pid=$(app_pid)"
 }
 
+repair_zombie() {
+    cur="$(settings get secure enabled_accessibility_services 2>/dev/null)"
+    [ "$cur" = "null" ] && cur=""
+    log_msg "zombie_detected svcs='$cur'"
+
+    # Starting the activity clears Android's force-stopped flag; Home keeps the HUD unobtrusive.
+    am start -n "$PKG/.MainActivity" --activity-clear-top >/dev/null 2>&1 || true
+
+    stripped=""
+    old_ifs="$IFS"
+    IFS=':'
+    for entry in $cur; do
+        entry_pkg="${entry%%/*}"
+        if [ "$entry_pkg" = "$PKG" ]; then
+            continue
+        fi
+        if [ -z "$stripped" ]; then
+            stripped="$entry"
+        else
+            stripped="$stripped:$entry"
+        fi
+    done
+    IFS="$old_ifs"
+
+    settings put secure enabled_accessibility_services "$stripped" >/dev/null 2>&1
+    sleep 1
+    input keyevent 3 >/dev/null 2>&1 || true
+
+    if [ -z "$stripped" ]; then
+        new="$SVC"
+    else
+        new="$stripped:$SVC"
+    fi
+    settings put secure enabled_accessibility_services "$new" >/dev/null 2>&1
+    settings put secure accessibility_enabled 1 >/dev/null 2>&1
+    log_msg "rebind_forced new='$new'"
+}
+
 state_ok() {
     a11y_enabled="$(settings get secure accessibility_enabled 2>/dev/null)"
     enabled_services="$(settings get secure enabled_accessibility_services 2>/dev/null)"
@@ -95,16 +138,32 @@ run_loop() {
     echo "$VERSION" > "$VERSIONFILE"
     log_msg "start pid=$$ version=$VERSION service=$SVC"
     tick=0
+    bound_failures=0
     while true; do
         tick=$((tick + 1))
         now="$(date +%s)"
         echo "$now" > "$HEARTBEAT"
         if state_ok; then
-            if [ "$LOG_HEALTHY_EVERY" -gt 0 ] && [ $((tick % LOG_HEALTHY_EVERY)) -eq 0 ]; then
+            bound_check_failed=0
+            if [ "$BOUND_CHECK_EVERY" -gt 0 ] && [ $((tick % BOUND_CHECK_EVERY)) -eq 0 ]; then
+                if service_bound; then
+                    bound_failures=0
+                else
+                    bound_check_failed=1
+                    bound_failures=$((bound_failures + 1))
+                    if [ "$bound_failures" -ge 2 ]; then
+                        repair_zombie
+                        bound_failures=0
+                        rotate_log
+                    fi
+                fi
+            fi
+            if [ "$bound_check_failed" -eq 0 ] && [ "$LOG_HEALTHY_EVERY" -gt 0 ] && [ $((tick % LOG_HEALTHY_EVERY)) -eq 0 ]; then
                 log_msg "healthy tick=$tick pid=$pid"
                 rotate_log
             fi
         else
+            bound_failures=0
             log_msg "repair_needed tick=$tick reason='$reason' a11y='$a11y_enabled' pid='$pid' svcs='$enabled_services'"
             repair_accessibility
             rotate_log

@@ -3,7 +3,6 @@ package com.anezium.r08accessbridge;
 import android.content.ComponentName;
 import android.content.Context;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
 
@@ -103,18 +102,16 @@ final class SelfArmController {
         }
     }
 
-    private static String repairAccessibilityFromApp(Context context) {
+    static String repairAccessibilityFromApp(Context context) {
         try {
             ComponentName component = new ComponentName(context, RingControlAccessibilityService.class);
             String service = component.flattenToString();
             String current = Settings.Secure.getString(
                     context.getContentResolver(),
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (current == null || "null".equals(current)) {
-                current = "";
-            }
-            if (!containsService(current, service)) {
-                String updated = TextUtils.isEmpty(current) ? service : current + ":" + service;
+            current = normalizeEnabledServices(current);
+            if (!containsOwnService(current, context.getPackageName())) {
+                String updated = current.isEmpty() ? service : current + ":" + service;
                 Settings.Secure.putString(
                         context.getContentResolver(),
                         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
@@ -143,18 +140,67 @@ final class SelfArmController {
         return "";
     }
 
-    private static boolean containsService(String services, String service) {
-        if (TextUtils.isEmpty(services)) {
+    static boolean stripOwnServiceEntries(Context context) {
+        try {
+            String current = Settings.Secure.getString(
+                    context.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (!containsOwnService(current, context.getPackageName())) {
+                return false;
+            }
+            String updated = removeOwnEntries(current, context.getPackageName());
+            return Settings.Secure.putString(
+                    context.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                    updated);
+        } catch (SecurityException exception) {
+            Log.d(TAG, "WRITE_SECURE_SETTINGS not available; cannot strip accessibility service", exception);
+        } catch (RuntimeException exception) {
+            Log.d(TAG, "app-side accessibility strip failed", exception);
+        }
+        return false;
+    }
+
+    static boolean containsOwnService(String enabled, String packageName) {
+        String services = normalizeEnabledServices(enabled);
+        if (services.isEmpty() || packageName == null || packageName.isEmpty()) {
             return false;
         }
-        TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(':');
-        splitter.setString(services);
-        while (splitter.hasNext()) {
-            if (service.equalsIgnoreCase(splitter.next())) {
+        String[] entries = services.split(":", -1);
+        for (String entry : entries) {
+            if (isOwnEntry(entry, packageName)) {
                 return true;
             }
         }
         return false;
+    }
+
+    static String removeOwnEntries(String enabled, String packageName) {
+        String services = normalizeEnabledServices(enabled);
+        if (services.isEmpty() || packageName == null || packageName.isEmpty()) {
+            return services;
+        }
+        StringBuilder retained = new StringBuilder();
+        String[] entries = services.split(":", -1);
+        for (String entry : entries) {
+            if (entry.isEmpty() || isOwnEntry(entry, packageName)) {
+                continue;
+            }
+            if (retained.length() > 0) {
+                retained.append(':');
+            }
+            retained.append(entry);
+        }
+        return retained.toString();
+    }
+
+    private static boolean isOwnEntry(String entry, String packageName) {
+        int slash = entry.indexOf('/');
+        return slash > 0 && packageName.equals(entry.substring(0, slash));
+    }
+
+    private static String normalizeEnabledServices(String enabled) {
+        return enabled == null || "null".equals(enabled) ? "" : enabled;
     }
 
     private static synchronized void configureCert(Context context) throws Exception {
