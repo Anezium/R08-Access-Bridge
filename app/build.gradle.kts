@@ -57,6 +57,7 @@ tasks.named("preBuild") {
 
 dependencies {
     implementation(project(":bridge-protocol"))
+    implementation(project(":ring-health"))
     implementation("com.rokid.cxr:cxr-service-bridge:1.0-20260522.063600-105")
     implementation("com.flyfishxu:kadb:2.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")

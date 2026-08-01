@@ -20,7 +20,16 @@ public final class BootReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+        boolean bootCompleted = Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction());
+        boolean packageReplaced = Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction());
+        if (!bootCompleted && !packageReplaced) {
+            return;
+        }
+
+        // Restore the persisted Health alarm without opening a BLE connection at boot.
+        HealthAutosyncScheduler.restore(context);
+        if (packageReplaced) {
+            Log.d(TAG, "Package replaced: restored Health autosync alarm");
             return;
         }
 

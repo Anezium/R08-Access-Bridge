@@ -10,6 +10,7 @@ import android.graphics.Typeface;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -20,9 +21,15 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.anezium.ringhealth.HealthSample;
+import com.anezium.ringhealth.RingHealthSnapshot;
+import com.anezium.ringhealth.domain.AutoMeasurementSettings;
+import com.anezium.ringhealth.domain.HealthMetric;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 
 final class RingBatteryLauncherOverlay {
@@ -36,6 +43,13 @@ final class RingBatteryLauncherOverlay {
             ROKID_LAUNCHER_PACKAGE + ":id/activity_global_status_bar";
     private static final int OVERLAY_WIDTH_DP = 66;
     private static final int OVERLAY_HEIGHT_DP = 20;
+    private static final int HEALTH_OVERLAY_WIDTH_DP = 66;
+    private static final int HEALTH_ROW_HEIGHT_DP = 13;
+    private static final int HEALTH_OVERLAY_GAP_DP = 3;
+    private static final int HEALTH_ICON_SIZE_PX = 18;
+    private static final int GLASSES_POWER_ICON_HEIGHT_PX = 18;
+    private static final float GLASSES_POWER_TEXT_SIZE_PX = 16f;
+    private static final int HEALTH_ICON_VALUE_VISUAL_GAP_PX = 5;
     private static final int LAUNCHER_STATUS_ROW_END_RESERVED_DP = 70;
     private static final int LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP = 173;
     private static final int STATUS_ICON_GAP_DP = 4;
@@ -57,6 +71,15 @@ final class RingBatteryLauncherOverlay {
     private boolean started;
     private WindowManager.LayoutParams layoutParams;
     private OverlayPosition lastPosition;
+    private LinearLayout healthView;
+    private boolean healthAttached;
+    private WindowManager.LayoutParams healthLayoutParams;
+    private OverlayPosition lastHealthPosition;
+    private OverlayPosition resolvedHealthPosition;
+    private boolean batteryIndicatorEnabled;
+    private RingHealthSnapshot healthSnapshot;
+    private final EnumMap<HealthMetric, HealthRowViews> healthRows =
+            new EnumMap<>(HealthMetric.class);
 
     private final Runnable refreshCurrentWindow = new Runnable() {
         @Override
@@ -98,6 +121,7 @@ final class RingBatteryLauncherOverlay {
         handler.removeCallbacks(refreshCurrentWindow);
         handler.removeCallbacks(refreshLoop);
         remove();
+        removeHealth();
     }
 
     void onAccessibilityEvent(AccessibilityEvent event) {
@@ -121,10 +145,23 @@ final class RingBatteryLauncherOverlay {
     void refreshForCurrentWindow() {
         boolean active = isLauncherTopmost();
         RingBatteryStatus.State state = RingBatteryStatus.read(service);
-        if (active && state.isKnown()) {
+        if (active && ((batteryIndicatorEnabled && state.isKnown()) || hasVisibleHealthRows())) {
             updatePosition(resolveLauncherPosition());
+            updateHealthPosition(resolvedHealthPosition);
         }
         updateLauncherTopmost(active, state);
+    }
+
+    void setBatteryIndicatorEnabled(boolean enabled) {
+        batteryIndicatorEnabled = enabled;
+        if (!enabled) remove();
+        scheduleRefresh();
+    }
+
+    void onHealthChanged(RingHealthSnapshot snapshot) {
+        healthSnapshot = snapshot;
+        updateHealthContent();
+        scheduleRefresh();
     }
 
     void onBatteryChanged() {
@@ -234,11 +271,17 @@ final class RingBatteryLauncherOverlay {
     }
 
     private void updateVisibility(RingBatteryStatus.State state) {
-        if (launcherActive && state.isKnown()) {
+        if (launcherActive && batteryIndicatorEnabled && state.isKnown()) {
             ensureAttached();
             updateContent(state);
         } else {
             remove();
+        }
+        if (launcherActive && hasVisibleHealthRows()) {
+            ensureHealthAttached();
+            updateHealthContent();
+        } else {
+            removeHealth();
         }
     }
 
@@ -280,15 +323,66 @@ final class RingBatteryLauncherOverlay {
         }
     }
 
+    private void ensureHealthAttached() {
+        if (healthAttached || windowManager == null || !hasVisibleHealthRows()) return;
+        if (healthView == null) healthView = buildHealthView();
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                dp(HEALTH_OVERLAY_WIDTH_DP),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        OverlayPosition position = lastHealthPosition;
+        if (position == null) {
+            position = calculateHealthOverlayPosition(null, null, visibleHealthRowCount(),
+                    service.getResources().getDisplayMetrics().widthPixels,
+                    service.getResources().getDisplayMetrics().heightPixels,
+                    service.getResources().getDisplayMetrics().density);
+        }
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.x = position.x;
+        params.y = position.y;
+        try {
+            windowManager.addView(healthView, params);
+            healthAttached = true;
+            healthLayoutParams = params;
+            lastHealthPosition = position;
+            Log.d(TAG, "Launcher health overlay shown");
+        } catch (RuntimeException exception) {
+            healthAttached = false;
+            healthLayoutParams = null;
+            Log.w(TAG, "Launcher health overlay failed", exception);
+        }
+    }
+
+    private void removeHealth() {
+        if (!healthAttached || healthView == null) return;
+        try {
+            windowManager.removeView(healthView);
+        } catch (IllegalArgumentException ignored) {
+            // Already removed by the window manager.
+        }
+        healthAttached = false;
+        healthLayoutParams = null;
+    }
+
     private OverlayPosition resolveLauncherPosition() {
         Anchor anchor = findLauncherAnchor();
         if (anchor == null) {
             // Transient launcher windows (the double-tap exit banner) can hide
             // the status row for a moment; hold the last anchored position
             // instead of jumping to the fixed fallback mid-screen.
+            resolvedHealthPosition = lastHealthPosition;
             return lastPosition;
         }
         OverlayPosition position = calculateOverlayPosition(anchor.bounds, anchor.kind,
+                service.getResources().getDisplayMetrics().widthPixels,
+                service.getResources().getDisplayMetrics().heightPixels,
+                service.getResources().getDisplayMetrics().density);
+        resolvedHealthPosition = calculateHealthOverlayPosition(anchor.bounds, anchor.kind,
+                visibleHealthRowCount(),
                 service.getResources().getDisplayMetrics().widthPixels,
                 service.getResources().getDisplayMetrics().heightPixels,
                 service.getResources().getDisplayMetrics().density);
@@ -592,6 +686,26 @@ final class RingBatteryLauncherOverlay {
         }
     }
 
+    private void updateHealthPosition(OverlayPosition position) {
+        if (position == null || position.sameCoordinates(lastHealthPosition)) return;
+        if (!healthAttached || healthView == null || healthLayoutParams == null) {
+            lastHealthPosition = position;
+            return;
+        }
+        int previousX = healthLayoutParams.x;
+        int previousY = healthLayoutParams.y;
+        healthLayoutParams.x = position.x;
+        healthLayoutParams.y = position.y;
+        try {
+            windowManager.updateViewLayout(healthView, healthLayoutParams);
+            lastHealthPosition = position;
+        } catch (RuntimeException exception) {
+            healthLayoutParams.x = previousX;
+            healthLayoutParams.y = previousY;
+            Log.w(TAG, "Launcher health overlay reposition failed", exception);
+        }
+    }
+
     static OverlayPosition calculateOverlayPosition(
             Rect anchorBounds,
             AnchorKind anchorKind,
@@ -618,6 +732,39 @@ final class RingBatteryLauncherOverlay {
         int centerY = (anchorBounds.top + anchorBounds.bottom) / 2;
         int x = right - overlayWidth;
         return new OverlayPosition(x < 0 ? fallbackX : x, centerY - overlayHeight / 2);
+    }
+
+    static OverlayPosition calculateHealthOverlayPosition(
+            Rect anchorBounds,
+            AnchorKind anchorKind,
+            int rowCount,
+            int screenWidth,
+            int screenHeight,
+            float density) {
+        int width = pixels(HEALTH_OVERLAY_WIDTH_DP, density);
+        int height = pixels(Math.max(1, rowCount) * HEALTH_ROW_HEIGHT_DP, density);
+        int gap = pixels(HEALTH_OVERLAY_GAP_DP, density);
+        // The glasses battery percentage is flush with the display's right edge.
+        // Keep every health value on that same right edge while retaining the
+        // launcher's status cluster solely as the vertical anchor.
+        int rightAlignedX = Math.max(0, screenWidth - width);
+        int fallbackRowCenter = screenHeight
+                - pixels(LAUNCHER_STATUS_ROW_BOTTOM_OFFSET_DP, density)
+                + pixels(OVERLAY_HEIGHT_DP, density) / 2;
+        int fallbackY = fallbackRowCenter - pixels(OVERLAY_HEIGHT_DP, density) / 2 - gap - height;
+        if (anchorBounds == null || anchorKind == null
+                || anchorBounds.right <= anchorBounds.left
+                || anchorBounds.bottom <= anchorBounds.top) {
+            return new OverlayPosition(rightAlignedX, fallbackY);
+        }
+        if (anchorKind == AnchorKind.STATUS_BAR_CONTAINER) {
+            int rowCenter = anchorBounds.bottom
+                    - pixels(STATUS_BAR_ROW_CENTER_FROM_BOTTOM_DP, density);
+            return new OverlayPosition(rightAlignedX,
+                    rowCenter - pixels(OVERLAY_HEIGHT_DP, density) / 2 - gap - height);
+        }
+        int y = anchorBounds.top - gap - height;
+        return new OverlayPosition(rightAlignedX, Math.max(0, y));
     }
 
     private static int pixels(int dp, float density) {
@@ -680,8 +827,8 @@ final class RingBatteryLauncherOverlay {
         root.addView(icon, iconParams);
 
         label = new TextView(service);
-        label.setTextSize(10);
-        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_PX, GLASSES_POWER_TEXT_SIZE_PX);
+        label.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
         label.setSingleLine(true);
         label.setIncludeFontPadding(false);
         label.setGravity(Gravity.CENTER_VERTICAL);
@@ -716,6 +863,133 @@ final class RingBatteryLauncherOverlay {
 
     private String labelFor(RingBatteryStatus.State state) {
         return state.percent + (state.charging ? "+" : "");
+    }
+
+    private LinearLayout buildHealthView() {
+        LinearLayout root = new LinearLayout(service);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.END);
+        root.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        addHealthRow(root, HealthMetric.HEART_RATE, R.drawable.ic_health_heart_rate);
+        addHealthRow(root, HealthMetric.SPO2, R.drawable.ic_health_spo2);
+        addHealthRow(root, HealthMetric.TEMPERATURE, R.drawable.ic_health_temperature);
+        updateHealthContent();
+        return root;
+    }
+
+    private void addHealthRow(LinearLayout root, HealthMetric metric, int iconResource) {
+        LinearLayout row = new LinearLayout(service);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        row.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+
+        ImageView rowIcon = new ImageView(service);
+        rowIcon.setImageResource(iconResource);
+        rowIcon.setImageTintList(ColorStateList.valueOf(Color.rgb(0, 255, 64)));
+        rowIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
+                HEALTH_ICON_SIZE_PX, GLASSES_POWER_ICON_HEIGHT_PX);
+        iconParams.setMargins(0, 0, healthIconTextMarginPx(metric), 0);
+        row.addView(rowIcon, iconParams);
+
+        TextView value = new TextView(service);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_PX, GLASSES_POWER_TEXT_SIZE_PX);
+        value.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+        value.setTextColor(Color.rgb(0, 255, 64));
+        value.setSingleLine(true);
+        value.setIncludeFontPadding(false);
+        value.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT);
+        row.addView(value, valueParams);
+
+        root.addView(row, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(HEALTH_ROW_HEIGHT_DP)));
+        healthRows.put(metric, new HealthRowViews(row, value));
+    }
+
+    static int healthIconTextMarginPx(HealthMetric metric) {
+        return Math.max(0, HEALTH_ICON_VALUE_VISUAL_GAP_PX - healthIconOpticalRightInsetPx(metric));
+    }
+
+    static int calculateHealthIconLeft(int screenRight, int valueWidthPx, HealthMetric metric) {
+        return screenRight - valueWidthPx - healthIconTextMarginPx(metric) - HEALTH_ICON_SIZE_PX;
+    }
+
+    private static int healthIconOpticalRightInsetPx(HealthMetric metric) {
+        switch (metric) {
+            case HEART_RATE:
+                return 1;
+            case TEMPERATURE:
+                return 5;
+            case SPO2:
+            default:
+                return 0;
+        }
+    }
+
+    private void updateHealthContent() {
+        if (healthView == null) return;
+        long now = System.currentTimeMillis();
+        for (HealthMetric metric : new HealthMetric[]{
+                HealthMetric.HEART_RATE, HealthMetric.SPO2, HealthMetric.TEMPERATURE}) {
+            HealthRowViews views = healthRows.get(metric);
+            AutoMeasurementSettings.MetricSetting auto = healthSnapshot == null ? null
+                    : healthSnapshot.autoMeasurementSettings.forMetric(metric);
+            boolean visible = HealthHudSettings.isEffective(service, metric, auto);
+            views.row.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (!visible) continue;
+            if (healthSnapshot == null) {
+                views.value.setText(HealthValueFormatter.hudPlaceholder(metric));
+                continue;
+            }
+            HealthSample sample = healthSnapshot.latest.get(metric);
+            int intervalMinutes = HealthHudSettings.effectiveIntervalMinutes(service, metric, auto,
+                    healthSnapshot.periodicSyncIntervalMinutes);
+            long staleAfter = healthStaleAfterMs(metric, intervalMinutes);
+            boolean stale = sample == null || now - sample.observedAtEpochMs() > staleAfter;
+            views.value.setText(HealthValueFormatter.hud(service, metric, sample, stale));
+        }
+    }
+
+    static long healthStaleAfterMs(HealthMetric metric, int heartRateIntervalMinutes) {
+        switch (metric) {
+            case SPO2:
+                return 120L * 60_000L;
+            case TEMPERATURE:
+                return 60L * 60_000L;
+            case HEART_RATE:
+            default:
+                return Math.max(1, heartRateIntervalMinutes) * 2L * 60_000L;
+        }
+    }
+
+    private boolean hasVisibleHealthRows() {
+        return visibleHealthRowCount() > 0;
+    }
+
+    private int visibleHealthRowCount() {
+        int count = 0;
+        for (HealthMetric metric : new HealthMetric[]{
+                HealthMetric.HEART_RATE, HealthMetric.SPO2, HealthMetric.TEMPERATURE}) {
+            AutoMeasurementSettings.MetricSetting auto = healthSnapshot == null ? null
+                    : healthSnapshot.autoMeasurementSettings.forMetric(metric);
+            if (HealthHudSettings.isEffective(service, metric, auto)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static final class HealthRowViews {
+        final View row;
+        final TextView value;
+
+        HealthRowViews(View row, TextView value) {
+            this.row = row;
+            this.value = value;
+        }
     }
 
     private int dp(int value) {

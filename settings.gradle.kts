@@ -20,3 +20,5 @@ rootProject.name = "R08AccessBridge"
 include(":bridge-protocol")
 include(":app")
 include(":phone")
+include(":ring-health")
+include(":health-test")

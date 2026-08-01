@@ -26,11 +26,14 @@ import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
+import com.anezium.ringhealth.RingHealthBackend;
+import com.anezium.ringhealth.RingHealthSnapshot;
 
 import java.util.List;
 import java.util.Locale;
 
-public final class RingControlAccessibilityService extends AccessibilityService {
+public final class RingControlAccessibilityService extends AccessibilityService
+        implements RingHealthBackend.Listener {
     public static final String ACTION_COMMAND = "com.anezium.r08accessbridge.COMMAND";
     public static final String COMMAND_PERMISSION = "com.anezium.r08accessbridge.permission.INTERNAL_COMMAND";
     public static final String EXTRA_COMMAND = "command";
@@ -43,6 +46,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_SET_RING_BATTERY_INDICATOR = "set_ring_battery_indicator";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_REQUEST_BATTERY = "request_battery";
+    public static final String COMMAND_REFRESH_HEALTH_HUD = "refresh_health_hud";
     public static final String COMMAND_FORWARD = "forward";
     public static final String COMMAND_BACKWARD = "backward";
     public static final String COMMAND_ACTIVATE = "activate";
@@ -87,7 +91,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     private SelfArmWirelessDebuggingAutomator selfArmWirelessDebuggingAutomator;
     private WifiEnableAutomator wifiEnableAutomator;
     private RingBatteryLauncherOverlay batteryLauncherOverlay;
-    private RingBleController bleController;
+    private AccessBridgeHealthBackend bleController;
     private MediaKeyGuard mediaKeyGuard;
     private PowerManager powerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -147,12 +151,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 Log.d(TAG, "Manual reconnect requested");
                 showFeedback("Pair / reconnect started");
                 if (bleController != null) {
-                    bleController.restart();
+                    bleController.reconnect();
                 }
             } else if (COMMAND_FORGET_R08.equals(command)) {
                 if (bleController != null) {
-                    boolean submitted = bleController.forgetBondedR08();
-                    showFeedback(submitted ? "R08 forget requested" : "No bonded R08 found");
+                    bleController.forgetBondedR08(submitted -> mainHandler.post(() ->
+                            showFeedback(submitted ? "R08 forget requested" : "No bonded R08 found")));
                 }
             } else if (COMMAND_CONFIGURE_TOUCH.equals(command)) {
                 setTouchMode(true);
@@ -174,6 +178,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             } else if (COMMAND_REQUEST_BATTERY.equals(command)) {
                 if (bleController != null) {
                     bleController.requestBatteryNow();
+                }
+            } else if (COMMAND_REFRESH_HEALTH_HUD.equals(command)) {
+                if (batteryLauncherOverlay != null) {
+                    batteryLauncherOverlay.onHealthChanged(AccessBridgeHealthRuntime.snapshot());
                 }
             } else if (COMMAND_FORWARD.equals(command)) {
                 executeDebounced(RingCommand.FORWARD, "adb", 0L, 0L);
@@ -283,19 +291,12 @@ public final class RingControlAccessibilityService extends AccessibilityService 
 
     private void setRingBatteryIndicatorEnabled(boolean enabled) {
         RingModeSettings.setRingBatteryIndicatorEnabled(this, enabled);
-        if (enabled) {
-            if (batteryLauncherOverlay == null) {
-                batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
-            }
-            registerBatteryReceiver();
+        if (batteryLauncherOverlay == null) {
+            batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
             batteryLauncherOverlay.start();
-        } else {
-            unregisterBatteryReceiver();
-            if (batteryLauncherOverlay != null) {
-                batteryLauncherOverlay.stop();
-                batteryLauncherOverlay = null;
-            }
         }
+        registerBatteryReceiver();
+        batteryLauncherOverlay.setBatteryIndicatorEnabled(enabled);
         Log.d(TAG, "Ring battery indicator enabled=" + enabled);
     }
 
@@ -317,18 +318,19 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         registerCommandReceiver();
         registerNexusRingFocusReceiver();
         registerScreenStateReceiver();
-        if (RingModeSettings.isRingBatteryIndicatorEnabled(this)) {
-            batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
-            registerBatteryReceiver();
-            batteryLauncherOverlay.start();
-        }
+        batteryLauncherOverlay = new RingBatteryLauncherOverlay(this);
+        batteryLauncherOverlay.setBatteryIndicatorEnabled(
+                RingModeSettings.isRingBatteryIndicatorEnabled(this));
+        registerBatteryReceiver();
+        batteryLauncherOverlay.start();
         int mediaGuardMode = RingModeSettings.getMediaGuardMode(this);
         if (mediaGuardMode != RingModeSettings.MEDIA_GUARD_OFF) {
             mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
             mediaKeyGuard.setAlwaysOn(mediaGuardMode == RingModeSettings.MEDIA_GUARD_ALWAYS);
             mediaKeyGuard.start();
         }
-        bleController = new RingBleController(this);
+        bleController = AccessBridgeHealthRuntime.repository(this);
+        bleController.addListener(this);
         bleController.setTouchMode(touchMode);
         bleController.start();
         Log.d(TAG, "Accessibility service connected touchMode=" + touchMode
@@ -341,6 +343,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             activeService = null;
         }
         if (bleController != null) {
+            bleController.removeListener(this);
             bleController.stop();
             bleController = null;
         }
@@ -384,6 +387,13 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         }
         if (batteryLauncherOverlay != null) {
             batteryLauncherOverlay.onAccessibilityEvent(event);
+        }
+    }
+
+    @Override
+    public void onSnapshot(RingHealthSnapshot snapshot) {
+        if (batteryLauncherOverlay != null) {
+            batteryLauncherOverlay.onHealthChanged(snapshot);
         }
     }
 

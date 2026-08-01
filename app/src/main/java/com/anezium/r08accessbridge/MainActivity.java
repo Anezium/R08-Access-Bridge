@@ -27,18 +27,31 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.anezium.ringhealth.HealthSample;
+import com.anezium.ringhealth.HealthBackupResult;
+import com.anezium.ringhealth.PeriodicSyncPolicy;
+import com.anezium.ringhealth.RingHealthBackend;
+import com.anezium.ringhealth.RingHealthSnapshot;
+import com.anezium.ringhealth.SleepSession;
+import com.anezium.ringhealth.domain.AutoMeasurementSettings;
+import com.anezium.ringhealth.domain.ConnectionState;
+import com.anezium.ringhealth.domain.HealthMetric;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
-public final class MainActivity extends Activity {
+public final class MainActivity extends Activity implements RingHealthBackend.Listener {
     private static final String TAG = "R08Activity";
     private static final String EXTRA_PROBE_APP_TYPE = "probe_app_type";
     private static final String EXTRA_EXIT_AFTER_PROBE = "exit_after_probe";
@@ -48,9 +61,29 @@ public final class MainActivity extends Activity {
     private static final long SINGLE_SELECT_DELAY_MS = DOUBLE_SELECT_MAX_MS + 50L;
 
     private final List<View> actionViews = new ArrayList<>();
+    private final Set<View> passiveFocusViews = new HashSet<>();
     private final ArrayDeque<Screen> backStack = new ArrayDeque<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private RingBleController activityBleController;
+    private AccessBridgeHealthBackend activityBleController;
+    private RingHealthSnapshot healthSnapshot;
+    private HealthMetric selectedHealthMetric;
+    private long selectedSleepSessionId = -1L;
+    private HealthChartRange healthChartRange = HealthChartRange.LAST_12_HOURS;
+    private boolean healthListenerRegistered;
+    private boolean syncAttemptedThisVisit;
+    private boolean syncSeenRunning;
+    private String syncSessionResult;
+    private boolean healthBackupBusy;
+    private String healthBackupStatus = "Ready";
+    private final Runnable healthProgressTick = new Runnable() {
+        @Override public void run() {
+            if (screen == Screen.HEALTH_METRIC && healthSnapshot != null
+                    && healthSnapshot.activeMeasurement == selectedHealthMetric) {
+                render();
+                mainHandler.postDelayed(this, 500L);
+            }
+        }
+    };
     private LinearLayout content;
     private ScrollView scrollView;
     private Screen screen = Screen.HOME;
@@ -89,6 +122,12 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         registerLocalSelfArmStatusReceiver();
+        if (!healthListenerRegistered) {
+            activityBleController = AccessBridgeHealthRuntime.repository(this);
+            activityBleController.addListener(this);
+            activityBleController.start();
+            healthListenerRegistered = true;
+        }
     }
 
     @Override
@@ -101,15 +140,17 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         unregisterLocalSelfArmStatusReceiver();
+        if (activityBleController != null && healthListenerRegistered) {
+            activityBleController.removeListener(this);
+            healthListenerRegistered = false;
+        }
+        mainHandler.removeCallbacks(healthProgressTick);
         super.onStop();
     }
 
     @Override
     protected void onDestroy() {
-        if (activityBleController != null) {
-            activityBleController.stop();
-            activityBleController = null;
-        }
+        activityBleController = null;
         clearPendingSelect();
         super.onDestroy();
     }
@@ -119,6 +160,34 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleLaunchIntent(intent);
+    }
+
+    @Override
+    public void onSnapshot(RingHealthSnapshot snapshot) {
+        healthSnapshot = snapshot;
+        if (syncAttemptedThisVisit) {
+            if (snapshot.syncing) {
+                syncSeenRunning = true;
+            } else if (syncSessionResult == null
+                    && (syncSeenRunning || snapshot.syncStatus.startsWith("Manual:"))
+                    && !snapshot.syncStatus.contains("starting")) {
+                syncSessionResult = snapshot.syncStatus.contains("Success") ? "SUCCESS" : "ERROR";
+            }
+        }
+        if (screen == Screen.HEALTH || screen == Screen.HEALTH_METRIC
+                || screen == Screen.HEALTH_INTERVAL || screen == Screen.HEALTH_AUTOSYNC
+                || screen == Screen.HEALTH_SLEEP || screen == Screen.HEALTH_SLEEP_DETAIL
+                || screen == Screen.HEALTH_BACKUP) {
+            render();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 42 && activityBleController != null) {
+            activityBleController.onPermissionsChanged();
+        }
     }
 
     @Override
@@ -239,6 +308,40 @@ public final class MainActivity extends Activity {
         navigateTo(Screen.SYSTEM);
     }
 
+    private void showHealth() {
+        syncAttemptedThisVisit = false;
+        syncSeenRunning = false;
+        syncSessionResult = null;
+        navigateTo(Screen.HEALTH);
+    }
+
+    private void showHealthMetric(HealthMetric metric) {
+        selectedHealthMetric = metric;
+        healthChartRange = HealthChartRange.LAST_12_HOURS;
+        navigateTo(Screen.HEALTH_METRIC);
+    }
+
+    private void showHealthInterval() {
+        navigateTo(Screen.HEALTH_INTERVAL);
+    }
+
+    private void showHealthAutosync() {
+        navigateTo(Screen.HEALTH_AUTOSYNC);
+    }
+
+    private void showHealthSleep() {
+        navigateTo(Screen.HEALTH_SLEEP);
+    }
+
+    private void showHealthSleepDetail(SleepSession session) {
+        selectedSleepSessionId = session.id();
+        navigateTo(Screen.HEALTH_SLEEP_DETAIL);
+    }
+
+    private void showHealthBackup() {
+        navigateTo(Screen.HEALTH_BACKUP);
+    }
+
     private void showForgetConfirm() {
         navigateTo(Screen.FORGET_CONFIRM);
     }
@@ -266,6 +369,7 @@ public final class MainActivity extends Activity {
         }
         content.removeAllViews();
         actionViews.clear();
+        passiveFocusViews.clear();
         addHeader();
 
         switch (screen) {
@@ -277,6 +381,8 @@ public final class MainActivity extends Activity {
                 action(R.string.action_modes, R.string.detail_modes, v -> showModes());
                 action(R.string.action_mapping, R.string.detail_mapping, v -> showMapping());
                 action(R.string.action_system, R.string.detail_system, v -> showSystem());
+                action("Health", "Measurements, sleep, history, auto measurement, and HUD",
+                        v -> showHealth());
                 break;
             case MODES:
                 action(getString(R.string.action_stable_mode), modeDetail(
@@ -356,6 +462,27 @@ public final class MainActivity extends Activity {
                             v -> probeAppType(value));
                 }
                 break;
+            case HEALTH:
+                renderHealthOverview();
+                break;
+            case HEALTH_METRIC:
+                renderHealthMetric();
+                break;
+            case HEALTH_INTERVAL:
+                renderHealthIntervals();
+                break;
+            case HEALTH_AUTOSYNC:
+                renderHealthAutosync();
+                break;
+            case HEALTH_SLEEP:
+                renderHealthSleep();
+                break;
+            case HEALTH_SLEEP_DETAIL:
+                renderHealthSleepDetail();
+                break;
+            case HEALTH_BACKUP:
+                renderHealthBackup();
+                break;
             default:
                 break;
         }
@@ -423,6 +550,20 @@ public final class MainActivity extends Activity {
                 return getString(R.string.title_forget_confirm);
             case PROBE:
                 return getString(R.string.title_probe_app_type);
+            case HEALTH:
+                return "Health";
+            case HEALTH_METRIC:
+                return selectedHealthMetric == null ? "Health" : healthMetricTitle(selectedHealthMetric);
+            case HEALTH_INTERVAL:
+                return "Measurement period";
+            case HEALTH_AUTOSYNC:
+                return "Autosync";
+            case HEALTH_SLEEP:
+                return "Sleep";
+            case HEALTH_SLEEP_DETAIL:
+                return "Sleep details";
+            case HEALTH_BACKUP:
+                return "Backup";
             case HOME:
             default:
                 return getString(R.string.app_name);
@@ -456,10 +597,656 @@ public final class MainActivity extends Activity {
                 return getString(R.string.status_system, service);
             case PROBE:
                 return getString(R.string.status_probe_app_type, service);
+            case HEALTH:
+                return healthConnectionStatus();
+            case HEALTH_METRIC:
+                return healthChartRange.title() + " and measurement settings";
+            case HEALTH_INTERVAL:
+                return "Choose the ring auto-measurement period";
+            case HEALTH_AUTOSYNC:
+                return "Persistent, battery-aware Health history sync";
+            case HEALTH_SLEEP:
+                return "Automatic night and daytime sleep history";
+            case HEALTH_SLEEP_DETAIL:
+                return "Detailed sleep stages and timing";
+            case HEALTH_BACKUP:
+                return "Persistent Health data export and import";
             case HOME:
             default:
                 return getString(R.string.status_home, service);
         }
+    }
+
+    private void renderHealthOverview() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        boolean ready = isHealthReady(snapshot);
+        long lastSync = latestSyncTime(snapshot);
+        String syncDetail = snapshot != null && snapshot.syncing
+                ? snapshot.syncStatus
+                : "Last sync: " + (lastSync > 0L
+                        ? HealthValueFormatter.timestamp(lastSync) : "never");
+        if (syncSessionResult != null && (snapshot == null || !snapshot.syncing)) {
+            syncDetail += " · " + syncSessionResult;
+        }
+        if (!ready && (snapshot == null || !snapshot.syncing)) {
+            syncDetail += " · Ring " + (snapshot == null
+                    ? "STARTING" : snapshot.connectionState.name());
+        }
+        boolean syncEnabled = ready && snapshot != null && !snapshot.syncing
+                && snapshot.activeMeasurement == null;
+        healthAction("Sync all", syncDetail,
+                snapshot != null && snapshot.syncing ? "…" : "",
+                v -> {
+                    syncAttemptedThisVisit = true;
+                    syncSeenRunning = false;
+                    syncSessionResult = null;
+                    activityBleController.synchronizeToday();
+                    render();
+                }, syncEnabled);
+
+        addHealthMetricAction(HealthMetric.HEART_RATE);
+        addHealthMetricAction(HealthMetric.SPO2);
+        addHealthMetricAction(HealthMetric.TEMPERATURE);
+        addHealthMetricAction(HealthMetric.HRV);
+        addHealthMetricAction(HealthMetric.STRESS);
+
+        SleepSession latestSleep = snapshot == null ? null : snapshot.latestSleep;
+        String sleepDetail = latestSleep == null ? "No sleep sessions yet"
+                : SleepUiFormatter.sessionDetail(latestSleep);
+        healthAction("Sleep", sleepDetail,
+                latestSleep == null ? "--"
+                        : SleepUiFormatter.duration(latestSleep.totalSleepMinutes()),
+                v -> showHealthSleep(), true);
+
+        boolean autosyncEnabled = snapshot != null
+                ? snapshot.periodicSyncEnabled
+                : RingHealthBackend.savedPeriodicSyncEnabled(this);
+        long lastAutosync = snapshot != null
+                ? snapshot.lastPeriodicSyncAt
+                : RingHealthBackend.savedLastPeriodicSyncAt(this);
+        healthAction("Autosync",
+                "Last autosync: " + (lastAutosync > 0L
+                        ? HealthValueFormatter.timestamp(lastAutosync) : "never"),
+                autosyncEnabled ? "ON" : "OFF",
+                v -> showHealthAutosync(), true);
+        healthAction("Backup", "Export or import persistent Health history", "",
+                v -> showHealthBackup(), true);
+    }
+
+    private void addHealthMetricAction(HealthMetric metric) {
+        HealthSample sample = healthSnapshot == null ? null : healthSnapshot.latest.get(metric);
+        String detail = sample == null ? "No measurements yet"
+                : "Last measured " + HealthValueFormatter.timestamp(sample.observedAtEpochMs());
+        healthAction(healthMetricTitle(metric), detail,
+                HealthValueFormatter.menu(this, metric, sample),
+                v -> showHealthMetric(metric), true);
+    }
+
+    private void renderHealthMetric() {
+        HealthMetric metric = selectedHealthMetric;
+        if (metric == null) {
+            navigateBack();
+            return;
+        }
+        RingHealthSnapshot snapshot = healthSnapshot;
+        boolean active = snapshot != null && snapshot.activeMeasurement == metric;
+        boolean ready = isHealthReady(snapshot);
+        boolean supported = snapshot == null || snapshot.capabilities.supportsManual(metric);
+        boolean measureEnabled = active || (ready && supported && !snapshot.syncing
+                && snapshot.activeMeasurement == null);
+        String measureTitle = active ? "Hold Still" : "Measure Now";
+        String measureDetail = active ? measurementRemaining(snapshot)
+                : supported ? "Start a new " + healthMetricTitle(metric) + " measurement"
+                : "Not supported by the connected ring";
+        healthAction(measureTitle, measureDetail,
+                active ? measurementTimer(snapshot) : "",
+                v -> {
+                    if (healthSnapshot != null && healthSnapshot.activeMeasurement == metric) {
+                        activityBleController.cancelMeasurement("Cancelled");
+                    } else {
+                        activityBleController.measure(metric);
+                    }
+                }, measureEnabled);
+        if (active) addMeasurementProgress(snapshot);
+
+        HealthSample latest = snapshot == null ? null : snapshot.latest.get(metric);
+        String latestDetail = latest == null ? "No historical or manual measurement"
+                : HealthValueFormatter.timestamp(latest.observedAtEpochMs())
+                        + " · " + (latest.source() == HealthSample.Source.MANUAL ? "Manual" : "History");
+        healthInfoRow("Latest measurement", latestDetail,
+                HealthValueFormatter.menu(this, metric, latest));
+
+        TextView chartTitle = new TextView(this);
+        chartTitle.setText(healthChartRange.title());
+        chartTitle.setTextColor(Color.rgb(248, 250, 249));
+        chartTitle.setTextSize(14);
+        chartTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        chartTitle.setPadding(dp(8), dp(8), 0, dp(4));
+        content.addView(chartTitle, fullWidth(dp(34)));
+        HealthHistoryChartView chart = new HealthHistoryChartView(this);
+        chart.setRange(healthChartRange);
+        chart.setData(snapshot == null ? List.of() : snapshot.history, metric,
+                TemperatureUnitSettings.isFahrenheit(this));
+        registerHealthAction(chart, v -> {
+            healthChartRange = healthChartRange.next();
+            render();
+        });
+        LinearLayout.LayoutParams chartParams = fullWidth(dp(158));
+        chartParams.setMargins(0, 0, 0, dp(4));
+        content.addView(chart, chartParams);
+
+        if (metric == HealthMetric.TEMPERATURE) {
+            boolean fahrenheit = TemperatureUnitSettings.isFahrenheit(this);
+            healthAction("Temperature units",
+                    "Used in this menu, graph, and HUD", fahrenheit ? "°F" : "°C",
+                    v -> {
+                        TemperatureUnitSettings.setFahrenheit(this, !fahrenheit);
+                        refreshHealthHud();
+                        render();
+                    }, true);
+        }
+
+        if (metric.hasAutoSettings()) {
+            renderAutoMeasurementSettings(metric, snapshot, ready);
+        }
+    }
+
+    private void renderAutoMeasurementSettings(HealthMetric metric,
+                                               RingHealthSnapshot snapshot,
+                                               boolean ready) {
+        AutoMeasurementSettings.MetricSetting auto = snapshot == null
+                ? AutoMeasurementSettings.UNKNOWN
+                : snapshot.autoMeasurementSettings.forMetric(metric);
+        boolean settingsBusy = snapshot != null && snapshot.autoMeasurementSettings.updating;
+        String autoDetail = !auto.loaded() ? "Reading setting from the ring"
+                : auto.enabled() ? "Automatic measurement is enabled"
+                : "Automatic measurement is disabled";
+        healthAction("Auto measurement", autoDetail,
+                auto.loaded() && auto.enabled() ? "ON" : "OFF",
+                v -> activityBleController.setAutoMeasurement(metric, !auto.enabled()),
+                ready && auto.loaded() && !settingsBusy && snapshot != null
+                        && !snapshot.syncing && snapshot.activeMeasurement == null);
+
+        if (metric == HealthMetric.HEART_RATE && auto.loaded()) {
+            healthAction("Measurement period",
+                    "Choose the ring auto-measurement interval",
+                    auto.intervalMinutes() > 0 ? auto.intervalMinutes() + " min" : "--",
+                    v -> showHealthInterval(), ready && !settingsBusy);
+        }
+
+        boolean storedHud = HealthHudSettings.isStoredEnabled(this, metric);
+        boolean effectiveHud = HealthHudSettings.isEffective(this, metric, auto);
+        String hudDetail;
+        if (!auto.loaded()) {
+            hudDetail = "Waiting for the auto-measurement setting";
+        } else if (!auto.enabled()) {
+            hudDetail = "Blocked while auto measurement is off · saved "
+                    + (storedHud ? "ON" : "OFF");
+        } else {
+            hudDetail = "Show [icon] [value] above the glasses battery";
+        }
+        healthAction("Show on HUD", hudDetail,
+                effectiveHud ? "ON" : "OFF",
+                v -> {
+                    HealthHudSettings.setStoredEnabled(this, metric, !storedHud);
+                    refreshHealthHud();
+                    render();
+                }, auto.loaded() && auto.enabled());
+    }
+
+    private void renderHealthIntervals() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        AutoMeasurementSettings.MetricSetting auto = snapshot == null
+                ? AutoMeasurementSettings.UNKNOWN
+                : snapshot.autoMeasurementSettings.forMetric(HealthMetric.HEART_RATE);
+        if (!auto.loaded()) {
+            healthInfoRow("Measurement period",
+                    "The ring setting has not been read yet", "--");
+            return;
+        }
+        for (int interval : RingHealthBackend.supportedHeartRateIntervals(auto.minimumIntervalMinutes())) {
+            boolean selected = interval == auto.intervalMinutes();
+            healthAction(interval + " minutes",
+                    selected ? "Current period" : "Set as the auto-measurement period",
+                    selected ? "✓" : "",
+                    v -> {
+                        activityBleController.setHeartRateInterval(interval);
+                        navigateBack();
+                    }, true);
+        }
+    }
+
+    private void renderHealthAutosync() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        boolean enabled = snapshot != null
+                ? snapshot.periodicSyncEnabled
+                : RingHealthBackend.savedPeriodicSyncEnabled(this);
+        int interval = snapshot != null
+                ? snapshot.periodicSyncIntervalMinutes
+                : RingHealthBackend.savedPeriodicSyncIntervalMinutes(this);
+        long last = snapshot != null
+                ? snapshot.lastPeriodicSyncAt
+                : RingHealthBackend.savedLastPeriodicSyncAt(this);
+        healthAction("Autosync",
+                "Last autosync: " + (last > 0L
+                        ? HealthValueFormatter.timestamp(last) : "never"),
+                enabled ? "ON" : "OFF",
+                v -> activityBleController.setPeriodicSyncEnabled(!enabled),
+                activityBleController != null);
+
+        String periodDetail;
+        if (!enabled) {
+            periodDetail = "Enable autosync to change the period";
+        } else if (snapshot != null && snapshot.nextPeriodicSyncAt > 0L) {
+            periodDetail = "Next autosync: "
+                    + HealthValueFormatter.timestamp(snapshot.nextPeriodicSyncAt);
+        } else {
+            periodDetail = "Battery-aware wakeup while the glasses sleep";
+        }
+        healthAction("Autosync period", periodDetail, interval + "m",
+                v -> activityBleController.setPeriodicSyncInterval(nextAutosyncInterval(interval)),
+                enabled && activityBleController != null);
+
+        boolean backgroundAccess = HealthBackgroundAccess.isGranted(this);
+        healthAction("Background access",
+                backgroundAccess
+                        ? "Autosync may wake the app while the glasses sleep"
+                        : "Required for alarms while the app is closed or the glasses sleep",
+                backgroundAccess ? "OK" : "REQUIRED",
+                v -> HealthBackgroundAccess.request(this), !backgroundAccess);
+    }
+
+    private void renderHealthSleep() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        String lastSync = snapshot == null || snapshot.lastSleepSyncAt <= 0L
+                ? "Never synced"
+                : HealthValueFormatter.timestamp(snapshot.lastSleepSyncAt);
+
+        healthInstructionRow("Automatic sleep detection",
+                "R08 detects night and daytime sleep automatically. Sleep history is loaded by "
+                        + "Sync all and Health Autosync; ring recording needs no separate switch.");
+        healthInfoRow("Last sleep sync",
+                lastSync + " · imported by Sync all and Autosync", "");
+
+        if (snapshot == null) {
+            healthInfoRow("Sleep history", "Waiting for ring data", "--");
+            return;
+        }
+        if (!snapshot.capabilities.newSleepProtocol) {
+            healthInfoRow("Sleep history",
+                    "The connected ring does not report the new sleep protocol", "--");
+            return;
+        }
+
+        List<SleepSession> recent = SleepUiFormatter.recentSessions(snapshot.sleepHistory, 7);
+        if (recent.isEmpty()) {
+            healthInfoRow("Sleep history",
+                    "No sleep sessions yet · the ring records sleep automatically", "--");
+            return;
+        }
+        for (SleepSession session : recent) {
+            healthAction(SleepUiFormatter.listTitle(session),
+                    SleepUiFormatter.listSummary(session),
+                    SleepUiFormatter.duration(session.totalSleepMinutes()),
+                    v -> showHealthSleepDetail(session), true);
+        }
+    }
+
+    private void renderHealthSleepDetail() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        SleepSession session = snapshot == null ? null
+                : SleepUiFormatter.findById(snapshot.sleepHistory, selectedSleepSessionId);
+        if (session == null) {
+            healthFocusableInfoRow("Sleep session",
+                    "The selected session is not available", "--");
+            return;
+        }
+
+        healthFocusableInfoRow(SleepUiFormatter.kindLabel(session.kind()),
+                SleepUiFormatter.range(session),
+                SleepUiFormatter.duration(session.totalSleepMinutes()));
+
+        SleepStageChartView chart = new SleepStageChartView(this);
+        chart.setSession(session);
+        registerPassiveHealthFocus(chart);
+        LinearLayout.LayoutParams chartParams = fullWidth(dp(150));
+        chartParams.setMargins(0, dp(3), 0, dp(3));
+        content.addView(chart, chartParams);
+
+        if (session.kind() == SleepSession.Kind.NIGHT) {
+            healthFocusableInfoRow("Light sleep", "Total for this session",
+                    SleepUiFormatter.duration(session.lightMinutes()));
+            healthFocusableInfoRow("Deep sleep", "Total for this session",
+                    SleepUiFormatter.duration(session.deepMinutes()));
+            healthFocusableInfoRow("REM", "Total for this session",
+                    SleepUiFormatter.duration(session.remMinutes()));
+            healthFocusableInfoRow("Awake", "Total for this session",
+                    SleepUiFormatter.duration(session.awakeMinutes()));
+        }
+
+        if (!session.stages().isEmpty()) {
+            healthFocusableInfoRow("Stage timeline",
+                    session.stages().size() + (session.stages().size() == 1
+                            ? " segment" : " segments"), "");
+            for (SleepSession.Segment segment : session.stages()) {
+                healthFocusableInfoRow(SleepUiFormatter.stageLabel(segment.stage()),
+                        SleepUiFormatter.range(segment.startEpochMs(), segment.endEpochMs()),
+                        SleepUiFormatter.duration(segment.durationMinutes()));
+            }
+        } else if (!session.sleepIntervals().isEmpty()) {
+            int index = 1;
+            for (SleepSession.Interval interval : session.sleepIntervals()) {
+                int durationMinutes = (int) Math.max(0L,
+                        (interval.endEpochMs() - interval.startEpochMs()) / 60_000L);
+                healthFocusableInfoRow("Sleep interval " + index++,
+                        SleepUiFormatter.range(interval.startEpochMs(), interval.endEpochMs()),
+                        SleepUiFormatter.duration(durationMinutes));
+            }
+        }
+    }
+
+    private int nextAutosyncInterval(int current) {
+        int[] intervals = PeriodicSyncPolicy.supportedIntervalsMinutes();
+        for (int index = 0; index < intervals.length; index++) {
+            if (intervals[index] == current) return intervals[(index + 1) % intervals.length];
+        }
+        return intervals[0];
+    }
+
+    private void renderHealthBackup() {
+        healthInstructionRow("How import works",
+                "Import selects the backup with the newest timestamp in its filename from "
+                        + HealthBackupStorage.DISPLAY_PATH
+                        + ". It merges samples into local history and skips duplicates.");
+        String storageDetail = HealthBackupStorage.hasAccess(this)
+                ? HealthBackupStorage.DISPLAY_PATH
+                : "File access required · opens Android settings";
+        healthAction("Export health data",
+                "Write all stored samples as a timestamped JSON backup · " + storageDetail,
+                healthBackupBusy ? "…" : "",
+                v -> exportHealthData(), !healthBackupBusy);
+        healthAction("Import health data",
+                "Import the newest timestamped JSON backup · " + storageDetail,
+                healthBackupBusy ? "…" : "",
+                v -> importHealthData(), !healthBackupBusy);
+        healthInfoRow("Backup status", healthBackupStatus, "");
+    }
+
+    private void exportHealthData() {
+        if (!HealthBackupStorage.ensureAccess(this) || activityBleController == null) return;
+        healthBackupBusy = true;
+        healthBackupStatus = "Exporting all stored Health samples…";
+        render();
+        activityBleController.exportHealthData(HealthBackupStorage.directory(),
+                result -> finishHealthBackup("Export", result));
+    }
+
+    private void importHealthData() {
+        if (!HealthBackupStorage.ensureAccess(this) || activityBleController == null) return;
+        healthBackupBusy = true;
+        healthBackupStatus = "Finding the newest timestamped backup…";
+        render();
+        activityBleController.importLatestHealthData(HealthBackupStorage.directory(),
+                result -> finishHealthBackup("Import", result));
+    }
+
+    private void finishHealthBackup(String operation, HealthBackupResult result) {
+        healthBackupBusy = false;
+        healthBackupStatus = (result.success ? "SUCCESS · " : "ERROR · ")
+                + result.message
+                + (result.fileName.isEmpty() ? "" : " · " + result.fileName);
+        Toast.makeText(this, operation + (result.success ? " complete" : " failed"),
+                Toast.LENGTH_SHORT).show();
+        if (screen == Screen.HEALTH_BACKUP) render();
+    }
+
+    private void healthAction(String titleText, String detailText,
+                              String valueText, View.OnClickListener listener, boolean enabled) {
+        LinearLayout row = buildHealthRow(titleText, detailText, valueText);
+        row.setEnabled(enabled);
+        if (enabled) {
+            registerHealthAction(row, listener);
+        } else {
+            row.setBackground(inactiveOutline());
+            row.setClickable(false);
+            row.setFocusable(false);
+        }
+        LinearLayout.LayoutParams params = fullWidth(dp(48));
+        params.setMargins(0, dp(3), 0, dp(3));
+        content.addView(row, params);
+    }
+
+    private void registerHealthAction(View view, View.OnClickListener listener) {
+        int rowIndex = actionViews.size();
+        view.setBackground(outline(rowIndex == selectedActionIndex));
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setEnabled(true);
+        view.setOnFocusChangeListener((v, focused) -> {
+            if (focused) {
+                int index = actionViews.indexOf(v);
+                if (index >= 0) {
+                    selectedActionIndex = index;
+                    updateActionSelection();
+                }
+                reveal(v);
+            }
+        });
+        view.setOnClickListener(listener);
+        view.setOnKeyListener((v, keyCode, event) -> handleActionKey(v, keyCode, event));
+        actionViews.add(view);
+    }
+
+    private void healthInfoRow(String titleText, String detailText, String valueText) {
+        LinearLayout row = buildHealthRow(titleText, detailText, valueText);
+        row.setBackground(inactiveOutline());
+        LinearLayout.LayoutParams params = fullWidth(dp(48));
+        params.setMargins(0, dp(3), 0, dp(3));
+        content.addView(row, params);
+    }
+
+    private void healthFocusableInfoRow(String titleText, String detailText, String valueText) {
+        LinearLayout row = buildHealthRow(titleText, detailText, valueText);
+        registerPassiveHealthFocus(row);
+        LinearLayout.LayoutParams params = fullWidth(dp(48));
+        params.setMargins(0, dp(3), 0, dp(3));
+        content.addView(row, params);
+    }
+
+    private void registerPassiveHealthFocus(View view) {
+        int rowIndex = actionViews.size();
+        passiveFocusViews.add(view);
+        view.setBackground(rowIndex == selectedActionIndex ? outline(true) : inactiveOutline());
+        view.setClickable(true);
+        view.setFocusable(true);
+        view.setFocusableInTouchMode(true);
+        view.setEnabled(true);
+        view.setOnClickListener(v -> {
+            // Intentionally passive: this is a focus target so glasses navigation can scroll it.
+        });
+        view.setOnFocusChangeListener((v, focused) -> {
+            if (!focused) return;
+            int index = actionViews.indexOf(v);
+            if (index >= 0) {
+                selectedActionIndex = index;
+                updateActionSelection();
+            }
+            reveal(v);
+        });
+        view.setOnKeyListener((v, keyCode, event) -> handlePassiveFocusKey(keyCode, event));
+        actionViews.add(view);
+    }
+
+    private boolean handlePassiveFocusKey(int keyCode, KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+        if (event.getRepeatCount() > 0) return true;
+        if (isBackKey(keyCode)) {
+            navigateBack();
+            return true;
+        }
+        if (isNextKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(1);
+            return true;
+        }
+        if (isPreviousKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(-1);
+            return true;
+        }
+        return isSelectKey(keyCode);
+    }
+
+    private void healthInstructionRow(String titleText, String detailText) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(5), dp(14), dp(5));
+        row.setBackground(inactiveOutline());
+
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(Color.rgb(248, 250, 249));
+        title.setTextSize(15);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        row.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(22)));
+
+        TextView detail = new TextView(this);
+        detail.setText(detailText);
+        detail.setTextColor(Color.rgb(161, 183, 172));
+        detail.setTextSize(10);
+        detail.setMaxLines(4);
+        row.addView(detail, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(54)));
+
+        LinearLayout.LayoutParams params = fullWidth(dp(84));
+        params.setMargins(0, dp(3), 0, dp(3));
+        content.addView(row, params);
+    }
+
+    private LinearLayout buildHealthRow(String titleText, String detailText, String valueText) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), 0, dp(14), 0);
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = new TextView(this);
+        title.setText(titleText);
+        title.setTextColor(Color.rgb(248, 250, 249));
+        title.setTextSize(15);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setSingleLine(true);
+        labels.addView(title, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(22)));
+        TextView detail = new TextView(this);
+        detail.setText(detailText);
+        detail.setTextColor(Color.rgb(161, 183, 172));
+        detail.setTextSize(10);
+        detail.setSingleLine(true);
+        labels.addView(detail, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(18)));
+        row.addView(labels, weighted(dp(40), 1f));
+
+        TextView value = new TextView(this);
+        value.setText(valueText);
+        value.setTextColor(Color.rgb(248, 250, 249));
+        value.setTextSize(19);
+        value.setTypeface(Typeface.DEFAULT_BOLD);
+        value.setSingleLine(true);
+        value.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(40));
+        valueParams.setMargins(dp(8), 0, 0, 0);
+        row.addView(value, valueParams);
+        return row;
+    }
+
+    private boolean handleActionKey(View view, int keyCode, KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+        if (event.getRepeatCount() > 0) return true;
+        if (isBackKey(keyCode)) {
+            navigateBack();
+            return true;
+        }
+        if (isNextKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(1);
+            return true;
+        }
+        if (isPreviousKey(keyCode)) {
+            clearPendingSelect();
+            focusRelativeDebounced(-1);
+            return true;
+        }
+        if (isSelectKey(keyCode)) {
+            handleSelect(view);
+            return true;
+        }
+        return false;
+    }
+
+    private void addMeasurementProgress(RingHealthSnapshot snapshot) {
+        long total = Math.max(1L,
+                snapshot.measurementDeadlineAtEpochMs - snapshot.measurementStartedAtEpochMs);
+        long elapsed = Math.max(0L, System.currentTimeMillis() - snapshot.measurementStartedAtEpochMs);
+        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setMax(1000);
+        progress.setProgress((int) Math.min(1000L, elapsed * 1000L / total));
+        progress.setProgressTintList(android.content.res.ColorStateList.valueOf(
+                Color.rgb(102, 242, 165)));
+        LinearLayout.LayoutParams params = fullWidth(dp(5));
+        params.setMargins(dp(8), 0, dp(8), dp(3));
+        content.addView(progress, params);
+        mainHandler.removeCallbacks(healthProgressTick);
+        mainHandler.postDelayed(healthProgressTick, 500L);
+    }
+
+    private String measurementRemaining(RingHealthSnapshot snapshot) {
+        long remaining = Math.max(0L, snapshot.measurementDeadlineAtEpochMs
+                - System.currentTimeMillis());
+        return "Hold still · measurement may finish early";
+    }
+
+    private String measurementTimer(RingHealthSnapshot snapshot) {
+        long remaining = Math.max(0L, snapshot.measurementDeadlineAtEpochMs
+                - System.currentTimeMillis());
+        return String.format(Locale.US, "%d s", (remaining + 999L) / 1000L);
+    }
+
+    private String healthConnectionStatus() {
+        if (healthSnapshot == null) return "Preparing ring connection";
+        return healthSnapshot.ringName + " · " + healthSnapshot.connectionState;
+    }
+
+    private boolean isHealthReady(RingHealthSnapshot snapshot) {
+        return snapshot != null && snapshot.connectionState == ConnectionState.READY;
+    }
+
+    private long latestSyncTime(RingHealthSnapshot snapshot) {
+        if (snapshot == null) return 0L;
+        long latest = snapshot.lastSleepSyncAt;
+        for (Map.Entry<HealthMetric, Long> entry : snapshot.lastHistorySyncAt.entrySet()) {
+            latest = Math.max(latest, entry.getValue());
+        }
+        return latest;
+    }
+
+    private String healthMetricTitle(HealthMetric metric) {
+        return switch (metric) {
+            case HEART_RATE -> "Heart Rate";
+            case SPO2 -> "SpO₂";
+            case TEMPERATURE -> "Body Temperature";
+            case HRV -> "HRV";
+            case STRESS -> "Stress Score";
+        };
+    }
+
+    private void refreshHealthHud() {
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_REFRESH_HEALTH_HUD);
     }
 
     private void action(int titleRes, int detailRes, View.OnClickListener listener) {
@@ -943,7 +1730,10 @@ public final class MainActivity extends Activity {
 
     private void updateActionSelection() {
         for (int i = 0; i < actionViews.size(); i++) {
-            actionViews.get(i).setBackground(outline(i == selectedActionIndex));
+            View view = actionViews.get(i);
+            boolean focused = i == selectedActionIndex;
+            view.setBackground(focused ? outline(true)
+                    : passiveFocusViews.contains(view) ? inactiveOutline() : outline(false));
         }
     }
 
@@ -953,6 +1743,29 @@ public final class MainActivity extends Activity {
         }
         Rect rect = new Rect(0, 0, target.getWidth(), target.getHeight());
         target.requestRectangleOnScreen(rect, false);
+        if (!passiveFocusViews.contains(target)) {
+            return;
+        }
+        scrollView.post(() -> revealPassiveTarget(target));
+    }
+
+    private void revealPassiveTarget(View target) {
+        if (scrollView == null || content == null || target.getParent() == null) {
+            return;
+        }
+        Rect targetBounds = new Rect();
+        target.getDrawingRect(targetBounds);
+        content.offsetDescendantRectToMyCoords(target, targetBounds);
+        int scrollY = calculateCenteredScrollY(targetBounds.top, targetBounds.height(),
+                scrollView.getHeight(), content.getHeight());
+        scrollView.scrollTo(0, scrollY);
+    }
+
+    static int calculateCenteredScrollY(int targetTop, int targetHeight,
+                                        int viewportHeight, int contentHeight) {
+        int maxScrollY = Math.max(0, contentHeight - viewportHeight);
+        int centeredY = targetTop + targetHeight / 2 - viewportHeight / 2;
+        return Math.max(0, Math.min(centeredY, maxScrollY));
     }
 
     private GradientDrawable outline(boolean focused) {
@@ -961,6 +1774,14 @@ public final class MainActivity extends Activity {
         drawable.setCornerRadius(dp(6));
         drawable.setStroke(focused ? dp(3) : dp(1),
                 focused ? Color.rgb(102, 242, 165) : Color.rgb(117, 142, 130));
+        return drawable;
+    }
+
+    private GradientDrawable inactiveOutline() {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.TRANSPARENT);
+        drawable.setCornerRadius(dp(6));
+        drawable.setStroke(dp(1), Color.rgb(79, 96, 88));
         return drawable;
     }
 
@@ -1099,10 +1920,10 @@ public final class MainActivity extends Activity {
             sendServiceCommand(RingControlAccessibilityService.COMMAND_RECONNECT);
         } else {
             if (activityBleController == null) {
-                activityBleController = new RingBleController(this);
+                activityBleController = AccessBridgeHealthRuntime.repository(this);
                 activityBleController.start();
             } else {
-                activityBleController.restart();
+                activityBleController.reconnect();
             }
         }
         Toast.makeText(this, R.string.toast_pair_reconnect_started, Toast.LENGTH_SHORT).show();
@@ -1118,11 +1939,11 @@ public final class MainActivity extends Activity {
     }
 
     private void forgetR08() {
-        boolean submitted = new RingBleController(this).forgetBondedR08();
-        Toast.makeText(
+        AccessBridgeHealthBackend backend = AccessBridgeHealthRuntime.repository(this);
+        backend.forgetBondedR08(submitted -> mainHandler.post(() -> Toast.makeText(
                 this,
                 submitted ? R.string.toast_forget_submitted : R.string.toast_no_bonded_r08,
-                Toast.LENGTH_SHORT).show();
+                Toast.LENGTH_SHORT).show()));
     }
 
     private void openAppSettings() {
@@ -1203,6 +2024,13 @@ public final class MainActivity extends Activity {
         LAUNCH_APP_PICKER,
         SYSTEM,
         FORGET_CONFIRM,
-        PROBE
+        PROBE,
+        HEALTH,
+        HEALTH_METRIC,
+        HEALTH_INTERVAL,
+        HEALTH_AUTOSYNC,
+        HEALTH_SLEEP,
+        HEALTH_SLEEP_DETAIL,
+        HEALTH_BACKUP
     }
 }
