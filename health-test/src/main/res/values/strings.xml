@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">R08 Health Test</string>
+    <string name="accessibility_service_name">R08 Health gestures</string>
+    <string name="accessibility_service_description">Перехватывает только свайпы и тапы устройства R08.</string>
+    <string name="notification_channel_name">Подключение R08</string>
+</resources>
