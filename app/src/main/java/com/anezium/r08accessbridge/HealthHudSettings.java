@@ -8,6 +8,7 @@ import com.anezium.ringhealth.domain.HealthMetric;
 
 final class HealthHudSettings {
     private static final String PREFS = "health_hud_settings";
+    private static final String SHOW_STEPS = "show_STEPS";
 
     private HealthHudSettings() {}
 
@@ -17,6 +18,14 @@ final class HealthHudSettings {
 
     static void setStoredEnabled(Context context, HealthMetric metric, boolean enabled) {
         preferences(context).edit().putBoolean("show_" + metric.name(), enabled).apply();
+    }
+
+    static boolean isStepsEnabled(Context context) {
+        return preferences(context).getBoolean(SHOW_STEPS, false);
+    }
+
+    static void setStepsEnabled(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean(SHOW_STEPS, enabled).apply();
     }
 
     static boolean isEffective(Context context, HealthMetric metric,

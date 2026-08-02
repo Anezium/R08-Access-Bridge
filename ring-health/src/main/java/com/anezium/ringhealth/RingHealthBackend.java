@@ -35,11 +35,13 @@ import com.anezium.ringhealth.internal.protocol.ControlProtocol;
 import com.anezium.ringhealth.internal.protocol.LargeDataProtocol;
 import com.anezium.ringhealth.internal.protocol.LegacyHistoryProtocol;
 import com.anezium.ringhealth.internal.protocol.SleepProtocol;
+import com.anezium.ringhealth.internal.protocol.StepProtocol;
 import com.anezium.ringhealth.internal.storage.HealthDao;
 import com.anezium.ringhealth.internal.storage.HealthBackupCodec;
 import com.anezium.ringhealth.internal.storage.HealthDatabase;
 import com.anezium.ringhealth.internal.storage.HealthSampleEntity;
 import com.anezium.ringhealth.internal.storage.SleepSessionEntity;
+import com.anezium.ringhealth.internal.storage.StepDayEntity;
 import com.anezium.ringhealth.internal.storage.SyncRunEntity;
 import com.anezium.ringhealth.internal.transport.SerializedQueue;
 
@@ -115,6 +117,8 @@ public class RingHealthBackend {
     private static final String PREF_METRIC_SYNC_LAST_PREFIX = "metric_sync_last_epoch_ms_";
     private static final String PREF_SLEEP_SYNC_ENABLED = "sleep_sync_enabled";
     private static final String PREF_SLEEP_SYNC_LAST = "sleep_sync_last_epoch_ms";
+    private static final String PREF_STEP_SYNC_LAST = "step_sync_last_epoch_ms";
+    private static final String PREF_STEP_HISTORY_DAY = "step_history_last_epoch_day";
 
     private final Context context;
     private final HandlerThread workerThread = new HandlerThread("R08HealthTransport");
@@ -129,6 +133,7 @@ public class RingHealthBackend {
     private final EnumMap<HealthMetric, HealthSampleEntity> latest = new EnumMap<>(HealthMetric.class);
     private final ArrayList<HealthSampleEntity> history = new ArrayList<>();
     private final ArrayList<SleepSessionEntity> sleepHistory = new ArrayList<>();
+    private final ArrayList<StepDayEntity> stepHistory = new ArrayList<>();
     private final ArrayDeque<String> diagnostics = new ArrayDeque<>();
 
     private SerializedQueue<GattOperation> gattQueue;
@@ -185,6 +190,16 @@ public class RingHealthBackend {
     private final EnumSet<HealthMetric> syncFailed = EnumSet.noneOf(HealthMetric.class);
     private boolean sleepSyncEnabled;
     private long lastSleepSyncAt;
+    private long lastStepSyncAt;
+    private long lastStepHistoryEpochDay;
+    private int todaySteps;
+    private boolean stepSyncQueued;
+    private boolean stepSyncActive;
+    private boolean stepCompleted;
+    private boolean stepFailed;
+    private boolean stepPersisting;
+    private int stepHistoryDayOffset;
+    private StepProtocol.DetailAssembler stepDetailAssembler;
     private boolean sleepSyncQueued;
     private boolean sleepSyncActive;
     private boolean sleepCompleted;
@@ -235,6 +250,11 @@ public class RingHealthBackend {
     };
     private final Runnable sleepCompanionTimeout = this::completeSleepSync;
     private final Runnable periodicSyncDue = this::handlePeriodicSyncDue;
+    private final Runnable localMidnight = () -> {
+        todaySteps = 0;
+        publishSnapshot();
+        scheduleLocalMidnightReset();
+    };
 
     private final BroadcastReceiver bondReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context ignored, Intent intent) {
@@ -341,6 +361,8 @@ public class RingHealthBackend {
                 preferences.getBoolean(PREF_PERIODIC_SYNC_PENDING, false));
         sleepSyncEnabled = preferences.getBoolean(PREF_SLEEP_SYNC_ENABLED, true);
         lastSleepSyncAt = preferences.getLong(PREF_SLEEP_SYNC_LAST, 0L);
+        lastStepSyncAt = preferences.getLong(PREF_STEP_SYNC_LAST, 0L);
+        lastStepHistoryEpochDay = preferences.getLong(PREF_STEP_HISTORY_DAY, Long.MIN_VALUE);
         for (HealthMetric metric : HealthMetric.values()) {
             lastHistorySyncAt.put(metric,
                     preferences.getLong(metricSyncPreferenceKey(metric), 0L));
@@ -350,6 +372,7 @@ public class RingHealthBackend {
                 : "Waiting for scheduled sync";
         gattQueue = new SerializedQueue<>(this::startGattOperation);
         refreshStorage();
+        scheduleLocalMidnightReset();
     }
 
     public void addListener(Listener listener) {
@@ -361,6 +384,7 @@ public class RingHealthBackend {
 
     public void start() {
         worker.post(() -> {
+            scheduleLocalMidnightReset();
             if (!started) {
                 started = true;
                 initializeBluetooth();
@@ -1243,7 +1267,10 @@ public class RingHealthBackend {
         }
         sleepSyncQueued = sleepSyncEnabled && capabilities.newSleepProtocol
                 && (trigger == SyncTrigger.MANUAL || shouldPeriodicallySyncSleep(now));
-        if (syncMetrics.isEmpty() && !sleepSyncQueued) {
+        // Steps are a passive counter and require no auto-measurement switch. Read today's
+        // lightweight total on every Health sync; retained history is fetched only as needed.
+        stepSyncQueued = true;
+        if (syncMetrics.isEmpty() && !stepSyncQueued && !sleepSyncQueued) {
             if (trigger == SyncTrigger.PERIODIC) {
                 clearPendingPeriodicSync();
                 boolean anyEnabled = hasEnabledPeriodicMetric();
@@ -1265,10 +1292,14 @@ public class RingHealthBackend {
         sleepCompleted = false;
         sleepFailed = false;
         sleepSyncActive = false;
+        stepCompleted = false;
+        stepFailed = false;
+        stepSyncActive = false;
+        stepPersisting = false;
         syncStatus = trigger == SyncTrigger.PERIODIC ? "Auto: starting" : "Manual: starting";
         syncRun = new SyncRunEntity();
         syncRun.startedAtEpochMs = System.currentTimeMillis();
-        syncRun.requestedMetrics = joinSyncTargets(syncMetrics, sleepSyncQueued);
+        syncRun.requestedMetrics = joinSyncTargets(syncMetrics, stepSyncQueued, sleepSyncQueued);
         diagnostic("history sync " + trigger + " metrics=" + syncRun.requestedMetrics);
         SyncRunEntity startedRun = syncRun;
         publishSnapshot();
@@ -1294,7 +1325,7 @@ public class RingHealthBackend {
                 return true;
             }
         }
-        return sleepSyncEnabled && capabilities.newSleepProtocol;
+        return true;
     }
 
     private boolean shouldPeriodicallySyncSleep(long nowEpochMs) {
@@ -1325,7 +1356,8 @@ public class RingHealthBackend {
         if (!syncing) return;
         historyMetric = syncMetrics.poll();
         if (historyMetric == null) {
-            if (sleepSyncQueued && !sleepCompleted && !sleepFailed) startSleepSync();
+            if (stepSyncQueued && !stepCompleted && !stepFailed) startStepSync();
+            else if (sleepSyncQueued && !sleepCompleted && !sleepFailed) startSleepSync();
             else finishHistorySync();
             return;
         }
@@ -1534,6 +1566,139 @@ public class RingHealthBackend {
         syncNextMetric();
     }
 
+    private void startStepSync() {
+        historyMetric = null;
+        stepSyncActive = true;
+        stepPersisting = false;
+        stepHistoryDayOffset = 0;
+        stepDetailAssembler = null;
+        syncStatus = "Steps: today";
+        publishSnapshot();
+        enqueueControl(ControlRequest.response("steps today", StepProtocol.OPCODE_TODAY,
+                StepProtocol.todayRequest(), frame -> {
+                    StepProtocol.TodayTotal total;
+                    try {
+                        total = StepProtocol.parseToday(frame);
+                    } catch (IllegalArgumentException invalid) {
+                        worker.post(() -> failStepSync(invalid.getMessage()));
+                        return true;
+                    }
+                    LocalDate today = LocalDate.now(ZoneId.systemDefault());
+                    StepDayEntity entity = stepEntity(today, total.steps(), total.runningSteps(),
+                            total.calories(), total.distance(), total.activitySeconds());
+                    stepPersisting = true;
+                    persistStepDay(entity, () -> {
+                        if (!syncing || !stepSyncActive) return;
+                        todaySteps = today.equals(LocalDate.now(ZoneId.systemDefault()))
+                                ? total.steps() : 0;
+                        stepPersisting = false;
+                        boolean historyDue = activeSyncTrigger == SyncTrigger.MANUAL
+                                || lastStepHistoryEpochDay != today.toEpochDay();
+                        if (historyDue) {
+                            stepHistoryDayOffset = 1;
+                            requestStepHistoryDay();
+                        } else {
+                            completeStepSync(false);
+                        }
+                    });
+                    return true;
+                }, null, () -> failStepSync("today response timeout"), CONTROL_TIMEOUT_MS));
+    }
+
+    private void requestStepHistoryDay() {
+        if (!syncing || !stepSyncActive) return;
+        if (stepHistoryDayOffset > StepProtocol.QRING_HISTORY_DAYS) {
+            completeStepSync(true);
+            return;
+        }
+        int requestedDay = stepHistoryDayOffset;
+        stepDetailAssembler = new StepProtocol.DetailAssembler();
+        syncStatus = "Steps: day " + requestedDay + "/" + StepProtocol.QRING_HISTORY_DAYS;
+        publishSnapshot();
+        enqueueControl(ControlRequest.response("steps history day " + requestedDay,
+                StepProtocol.OPCODE_DETAIL, StepProtocol.detailRequest(requestedDay),
+                frame -> {
+                    try {
+                        return stepDetailAssembler.accept(frame);
+                    } catch (IllegalArgumentException | IllegalStateException invalid) {
+                        stepDetailAssembler = null;
+                        worker.post(() -> failStepSync(invalid.getMessage()));
+                        return true;
+                    }
+                }, () -> {
+                    if (!syncing || !stepSyncActive || stepDetailAssembler == null) return;
+                    StepProtocol.DetailAssembler completed = stepDetailAssembler;
+                    stepDetailAssembler = null;
+                    if (completed.isEmpty()) {
+                        stepHistoryDayOffset++;
+                        requestStepHistoryDay();
+                        return;
+                    }
+                    StepProtocol.DetailTotal total = completed.result();
+                    StepDayEntity entity = stepEntity(total.date(), total.steps(), 0,
+                            total.calories(), total.distance(), 0);
+                    stepPersisting = true;
+                    persistStepDay(entity, () -> {
+                        if (!syncing || !stepSyncActive) return;
+                        stepPersisting = false;
+                        stepHistoryDayOffset++;
+                        requestStepHistoryDay();
+                    });
+                }, () -> failStepSync("history day " + requestedDay + " timeout"),
+                CONTROL_TIMEOUT_MS));
+    }
+
+    private StepDayEntity stepEntity(LocalDate date, int steps, int runningSteps, int calories,
+                                     int distance, int activitySeconds) {
+        StepDayEntity entity = new StepDayEntity();
+        entity.ringId = ringId();
+        entity.localDate = date.toString();
+        entity.steps = Math.max(0, steps);
+        entity.runningSteps = Math.max(0, runningSteps);
+        entity.calories = Math.max(0, calories);
+        entity.distance = Math.max(0, distance);
+        entity.activitySeconds = Math.max(0, activitySeconds);
+        entity.updatedAtEpochMs = System.currentTimeMillis();
+        return entity;
+    }
+
+    private void persistStepDay(StepDayEntity entity, Runnable afterPersisted) {
+        databaseExecutor.execute(() -> {
+            dao.upsertStepDay(entity);
+            worker.post(afterPersisted);
+        });
+    }
+
+    private void completeStepSync(boolean historyRefreshed) {
+        if (!syncing || !stepSyncActive) return;
+        long completedAt = System.currentTimeMillis();
+        lastStepSyncAt = completedAt;
+        if (historyRefreshed) {
+            lastStepHistoryEpochDay = LocalDate.now(ZoneId.systemDefault()).toEpochDay();
+        }
+        preferences.edit()
+                .putLong(PREF_STEP_SYNC_LAST, completedAt)
+                .putLong(PREF_STEP_HISTORY_DAY, lastStepHistoryEpochDay)
+                .apply();
+        stepCompleted = true;
+        stepSyncActive = false;
+        stepSyncQueued = false;
+        stepPersisting = false;
+        diagnostic("history STEPS fresh at " + completedAt);
+        syncNextMetric();
+    }
+
+    private void failStepSync(String reason) {
+        if (!syncing || !stepSyncActive) return;
+        stepFailed = true;
+        stepSyncActive = false;
+        stepSyncQueued = false;
+        stepPersisting = false;
+        stepDetailAssembler = null;
+        diagnostic("history STEPS failed: " + reason);
+        syncNextMetric();
+    }
+
     private void startSleepSync() {
         historyMetric = null;
         sleepSyncActive = true;
@@ -1624,9 +1789,9 @@ public class RingHealthBackend {
     private void finishHistorySync() {
         SyncTrigger completedTrigger = activeSyncTrigger;
         syncing = false;
-        boolean hadFailures = !syncFailed.isEmpty() || sleepFailed;
+        boolean hadFailures = !syncFailed.isEmpty() || stepFailed || sleepFailed;
         String result = hadFailures ? "Partial: failed "
-                + joinSyncTargets(syncFailed, sleepFailed) : "Success";
+                + joinSyncTargets(syncFailed, stepFailed, sleepFailed) : "Success";
         syncStatus = (completedTrigger == SyncTrigger.PERIODIC ? "Auto: " : "Manual: ") + result;
         long completedAt = System.currentTimeMillis();
         if (completedTrigger == SyncTrigger.PERIODIC) {
@@ -1639,8 +1804,9 @@ public class RingHealthBackend {
         syncRun = null;
         if (completedRun != null) {
             completedRun.endedAtEpochMs = completedAt;
-            completedRun.completedMetrics = joinSyncTargets(syncCompleted, sleepCompleted);
-            completedRun.failedMetrics = joinSyncTargets(syncFailed, sleepFailed);
+            completedRun.completedMetrics = joinSyncTargets(
+                    syncCompleted, stepCompleted, sleepCompleted);
+            completedRun.failedMetrics = joinSyncTargets(syncFailed, stepFailed, sleepFailed);
             completedRun.status = hadFailures ? "PARTIAL" : "SUCCESS";
             databaseExecutor.execute(() -> dao.updateSyncRun(completedRun));
         }
@@ -1662,7 +1828,7 @@ public class RingHealthBackend {
                 return true;
             }
         }
-        return sleepFailed && sleepSyncEnabled && capabilities.newSleepProtocol;
+        return stepFailed || (sleepFailed && sleepSyncEnabled && capabilities.newSleepProtocol);
     }
 
     private void configurePeriodicSync(boolean enabled, int intervalMinutes) {
@@ -1794,6 +1960,9 @@ public class RingHealthBackend {
                     sleepInterval);
             earliest = Math.min(earliest, candidate);
         }
+        long stepCandidate = PeriodicSyncPolicy.nextMetricDeadline(lastStepSyncAt, nowEpochMs,
+                periodicSyncIntervalMinutes);
+        earliest = Math.min(earliest, stepCandidate);
         if (earliest == Long.MAX_VALUE) {
             earliest = PeriodicSyncPolicy.deadlineAfter(nowEpochMs,
                     periodicSyncIntervalMinutes);
@@ -1873,6 +2042,10 @@ public class RingHealthBackend {
         if (syncing) {
             syncFailed.addAll(syncMetrics);
             if (historyMetric != null) syncFailed.add(historyMetric);
+            if (stepSyncQueued || stepSyncActive) stepFailed = true;
+            stepSyncActive = false;
+            stepSyncQueued = false;
+            stepDetailAssembler = null;
             if (sleepSyncQueued || sleepSyncActive) sleepFailed = true;
             sleepSyncActive = false;
             sleepSyncQueued = false;
@@ -1974,11 +2147,23 @@ public class RingHealthBackend {
         return PREF_METRIC_SYNC_LAST_PREFIX + metric.name();
     }
 
+    private void scheduleLocalMidnightReset() {
+        worker.removeCallbacks(localMidnight);
+        ZoneId zone = ZoneId.systemDefault();
+        long now = System.currentTimeMillis();
+        long nextMidnight = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(1)
+                .atStartOfDay(zone).toInstant().toEpochMilli();
+        worker.postDelayed(localMidnight, Math.max(1L, nextMidnight - now));
+    }
+
     private void refreshStorage() {
         databaseExecutor.execute(() -> {
             List<HealthSampleEntity> recent = dao.samplesSince(
                     System.currentTimeMillis() - CHART_HISTORY_WINDOW_MS);
             List<SleepSessionEntity> recentSleep = dao.recentSleepSessions(30);
+            List<StepDayEntity> recentSteps = dao.recentStepDays(30);
+            String todayDate = LocalDate.now(ZoneId.systemDefault()).toString();
+            StepDayEntity storedToday = dao.stepDay(todayDate);
             SleepSessionEntity nextLatestSleep = dao.latestSleepSession();
             EnumMap<HealthMetric, HealthSampleEntity> nextLatest = new EnumMap<>(HealthMetric.class);
             for (HealthMetric metric : HealthMetric.values()) {
@@ -1992,6 +2177,9 @@ public class RingHealthBackend {
                 latest.putAll(nextLatest);
                 sleepHistory.clear();
                 sleepHistory.addAll(recentSleep);
+                stepHistory.clear();
+                stepHistory.addAll(recentSteps);
+                todaySteps = storedToday == null ? 0 : storedToday.steps;
                 latestSleep = nextLatestSleep;
                 publishSnapshot();
             });
@@ -2031,7 +2219,8 @@ public class RingHealthBackend {
                 syncing, syncStatus,
                 periodicSyncEnabled, periodicSyncIntervalMinutes, periodicSyncStatus,
                 lastPeriodicSyncAt, nextPeriodicSyncAt, lastHistorySyncAt,
-                sleepSyncEnabled, lastSleepSyncAt, latestSleep, sleepHistory,
+                sleepSyncEnabled, lastSleepSyncAt,
+                lastStepSyncAt, todaySteps, stepHistory, latestSleep, sleepHistory,
                 latest, history, new ArrayList<>(diagnostics));
         main.post(() -> {
             for (Listener listener : listeners) listener.onSnapshot(snapshot);
@@ -2047,8 +2236,13 @@ public class RingHealthBackend {
         return result.toString();
     }
 
-    private static String joinSyncTargets(Iterable<HealthMetric> metrics, boolean includeSleep) {
+    private static String joinSyncTargets(Iterable<HealthMetric> metrics, boolean includeSteps,
+                                          boolean includeSleep) {
         StringBuilder result = new StringBuilder(joinMetrics(metrics));
+        if (includeSteps) {
+            if (result.length() > 0) result.append(',');
+            result.append("STEPS");
+        }
         if (includeSleep) {
             if (result.length() > 0) result.append(',');
             result.append("SLEEP");

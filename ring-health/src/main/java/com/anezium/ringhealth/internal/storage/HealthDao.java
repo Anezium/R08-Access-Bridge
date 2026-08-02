@@ -38,6 +38,16 @@ public interface HealthDao {
     @Query("SELECT * FROM sleep_sessions ORDER BY startEpochMs DESC LIMIT 1")
     SleepSessionEntity latestSleepSession();
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    long upsertStepDay(StepDayEntity day);
+
+    @Query("SELECT * FROM step_days ORDER BY localDate DESC LIMIT :limit")
+    List<StepDayEntity> recentStepDays(int limit);
+
+    @Query("SELECT * FROM step_days WHERE localDate = :localDate "
+            + "ORDER BY updatedAtEpochMs DESC LIMIT 1")
+    StepDayEntity stepDay(String localDate);
+
     @Insert
     long insertSyncRun(SyncRunEntity run);
 

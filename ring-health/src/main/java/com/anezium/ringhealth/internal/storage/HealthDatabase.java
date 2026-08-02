@@ -8,8 +8,8 @@ import androidx.room.RoomDatabase;
 import androidx.room.migration.Migration;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 
-@Database(entities = {HealthSampleEntity.class, SyncRunEntity.class, SleepSessionEntity.class},
-        version = 2, exportSchema = true)
+@Database(entities = {HealthSampleEntity.class, SyncRunEntity.class, SleepSessionEntity.class,
+        StepDayEntity.class}, version = 3, exportSchema = true)
 public abstract class HealthDatabase extends RoomDatabase {
     private static volatile HealthDatabase instance;
 
@@ -29,6 +29,21 @@ public abstract class HealthDatabase extends RoomDatabase {
         }
     };
 
+    public static final Migration MIGRATION_2_3 = new Migration(2, 3) {
+        @Override public void migrate(SupportSQLiteDatabase database) {
+            database.execSQL("CREATE TABLE IF NOT EXISTS `step_days` ("
+                    + "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
+                    + "`ringId` TEXT NOT NULL, `localDate` TEXT NOT NULL, "
+                    + "`steps` INTEGER NOT NULL, `runningSteps` INTEGER NOT NULL, "
+                    + "`calories` INTEGER NOT NULL, `distance` INTEGER NOT NULL, "
+                    + "`activitySeconds` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL)");
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS "
+                    + "`index_step_days_ringId_localDate` ON `step_days` (`ringId`, `localDate`)");
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_step_days_localDate` "
+                    + "ON `step_days` (`localDate`)");
+        }
+    };
+
     public abstract HealthDao healthDao();
 
     public static HealthDatabase get(Context context) {
@@ -37,7 +52,7 @@ public abstract class HealthDatabase extends RoomDatabase {
                 if (instance == null) {
                     instance = Room.databaseBuilder(context.getApplicationContext(),
                             HealthDatabase.class, "r08-health-test.db")
-                            .addMigrations(MIGRATION_1_2)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                             .build();
                 }
             }

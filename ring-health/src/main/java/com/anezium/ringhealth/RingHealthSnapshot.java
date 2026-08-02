@@ -6,6 +6,7 @@ import com.anezium.ringhealth.domain.ConnectionState;
 import com.anezium.ringhealth.domain.HealthMetric;
 import com.anezium.ringhealth.internal.storage.HealthSampleEntity;
 import com.anezium.ringhealth.internal.storage.SleepSessionEntity;
+import com.anezium.ringhealth.internal.storage.StepDayEntity;
 
 import java.util.Collections;
 import java.util.ArrayList;
@@ -39,6 +40,9 @@ public final class RingHealthSnapshot {
     /** Controls importing automatic sleep history; it does not enable/disable ring recording. */
     public final boolean sleepSyncEnabled;
     public final long lastSleepSyncAt;
+    public final long lastStepSyncAt;
+    public final int todaySteps;
+    public final List<StepDay> stepHistory;
     public final SleepSession latestSleep;
     public final List<SleepSession> sleepHistory;
     public final Map<HealthMetric, HealthSample> latest;
@@ -56,6 +60,8 @@ public final class RingHealthSnapshot {
                               String periodicSyncStatus, long lastPeriodicSyncAt,
                               long nextPeriodicSyncAt, Map<HealthMetric, Long> lastHistorySyncAt,
                               boolean sleepSyncEnabled, long lastSleepSyncAt,
+                              long lastStepSyncAt, int todaySteps,
+                              List<StepDayEntity> stepHistory,
                               SleepSessionEntity latestSleep, List<SleepSessionEntity> sleepHistory,
                               Map<HealthMetric, HealthSampleEntity> latest,
                               List<HealthSampleEntity> history, List<String> diagnostics) {
@@ -83,6 +89,11 @@ public final class RingHealthSnapshot {
         this.lastHistorySyncAt = Collections.unmodifiableMap(new EnumMap<>(lastHistorySyncAt));
         this.sleepSyncEnabled = sleepSyncEnabled;
         this.lastSleepSyncAt = lastSleepSyncAt;
+        this.lastStepSyncAt = lastStepSyncAt;
+        this.todaySteps = todaySteps;
+        ArrayList<StepDay> publicStepHistory = new ArrayList<>(stepHistory.size());
+        for (StepDayEntity entity : stepHistory) publicStepHistory.add(entity.toPublic());
+        this.stepHistory = List.copyOf(publicStepHistory);
         this.latestSleep = latestSleep == null ? null : latestSleep.toPublic();
         ArrayList<SleepSession> publicSleepHistory = new ArrayList<>(sleepHistory.size());
         for (SleepSessionEntity entity : sleepHistory) publicSleepHistory.add(entity.toPublic());

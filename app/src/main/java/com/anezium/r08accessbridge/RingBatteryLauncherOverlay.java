@@ -80,6 +80,7 @@ final class RingBatteryLauncherOverlay {
     private RingHealthSnapshot healthSnapshot;
     private final EnumMap<HealthMetric, HealthRowViews> healthRows =
             new EnumMap<>(HealthMetric.class);
+    private HealthRowViews stepRow;
 
     private final Runnable refreshCurrentWindow = new Runnable() {
         @Override
@@ -873,11 +874,19 @@ final class RingBatteryLauncherOverlay {
         addHealthRow(root, HealthMetric.HEART_RATE, R.drawable.ic_health_heart_rate);
         addHealthRow(root, HealthMetric.SPO2, R.drawable.ic_health_spo2);
         addHealthRow(root, HealthMetric.TEMPERATURE, R.drawable.ic_health_temperature);
+        stepRow = createHealthRow(root, R.drawable.ic_health_steps,
+                HEALTH_ICON_VALUE_VISUAL_GAP_PX);
         updateHealthContent();
         return root;
     }
 
     private void addHealthRow(LinearLayout root, HealthMetric metric, int iconResource) {
+        healthRows.put(metric, createHealthRow(root, iconResource,
+                healthIconTextMarginPx(metric)));
+    }
+
+    private HealthRowViews createHealthRow(LinearLayout root, int iconResource,
+                                           int iconTextMarginPx) {
         LinearLayout row = new LinearLayout(service);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
@@ -889,7 +898,7 @@ final class RingBatteryLauncherOverlay {
         rowIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
                 HEALTH_ICON_SIZE_PX, GLASSES_POWER_ICON_HEIGHT_PX);
-        iconParams.setMargins(0, 0, healthIconTextMarginPx(metric), 0);
+        iconParams.setMargins(0, 0, iconTextMarginPx, 0);
         row.addView(rowIcon, iconParams);
 
         TextView value = new TextView(service);
@@ -906,7 +915,7 @@ final class RingBatteryLauncherOverlay {
 
         root.addView(row, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(HEALTH_ROW_HEIGHT_DP)));
-        healthRows.put(metric, new HealthRowViews(row, value));
+        return new HealthRowViews(row, value);
     }
 
     static int healthIconTextMarginPx(HealthMetric metric) {
@@ -951,6 +960,14 @@ final class RingBatteryLauncherOverlay {
             boolean stale = sample == null || now - sample.observedAtEpochMs() > staleAfter;
             views.value.setText(HealthValueFormatter.hud(service, metric, sample, stale));
         }
+        if (stepRow != null) {
+            boolean visible = HealthHudSettings.isStepsEnabled(service);
+            stepRow.row.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (visible) {
+                stepRow.value.setText(healthSnapshot == null
+                        ? "--" : Integer.toString(healthSnapshot.todaySteps));
+            }
+        }
     }
 
     static long healthStaleAfterMs(HealthMetric metric, int heartRateIntervalMinutes) {
@@ -978,6 +995,9 @@ final class RingBatteryLauncherOverlay {
             if (HealthHudSettings.isEffective(service, metric, auto)) {
                 count++;
             }
+        }
+        if (HealthHudSettings.isStepsEnabled(service)) {
+            count++;
         }
         return count;
     }
