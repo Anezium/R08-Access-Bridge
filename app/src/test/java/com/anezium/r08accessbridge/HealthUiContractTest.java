@@ -52,6 +52,16 @@ public final class HealthUiContractTest {
         assertTrue(HealthHudSettings.isEffective(context, HealthMetric.HEART_RATE, on));
     }
 
+    @Test public void stepsHudIsOffByDefaultAndPersistsIndependently() {
+        Context context = RuntimeEnvironment.getApplication();
+        context.getSharedPreferences("health_hud_settings", Context.MODE_PRIVATE)
+                .edit().clear().commit();
+
+        assertFalse(HealthHudSettings.isStepsEnabled(context));
+        HealthHudSettings.setStepsEnabled(context, true);
+        assertTrue(HealthHudSettings.isStepsEnabled(context));
+    }
+
     @Test public void hudKeepsConfiguredRowsAsPlaceholdersWithoutALiveSnapshot() {
         Context context = RuntimeEnvironment.getApplication();
         HealthHudSettings.setStoredEnabled(context, HealthMetric.HEART_RATE, true);

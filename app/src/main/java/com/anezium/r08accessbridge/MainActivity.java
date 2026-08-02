@@ -69,6 +69,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     private HealthMetric selectedHealthMetric;
     private long selectedSleepSessionId = -1L;
     private HealthChartRange healthChartRange = HealthChartRange.LAST_12_HOURS;
+    private int stepChartDays = 7;
     private boolean healthListenerRegistered;
     private boolean syncAttemptedThisVisit;
     private boolean syncSeenRunning;
@@ -176,6 +177,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         }
         if (screen == Screen.HEALTH || screen == Screen.HEALTH_METRIC
                 || screen == Screen.HEALTH_INTERVAL || screen == Screen.HEALTH_AUTOSYNC
+                || screen == Screen.HEALTH_STEPS
                 || screen == Screen.HEALTH_SLEEP || screen == Screen.HEALTH_SLEEP_DETAIL
                 || screen == Screen.HEALTH_BACKUP) {
             render();
@@ -329,6 +331,11 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         navigateTo(Screen.HEALTH_AUTOSYNC);
     }
 
+    private void showHealthSteps() {
+        stepChartDays = 7;
+        navigateTo(Screen.HEALTH_STEPS);
+    }
+
     private void showHealthSleep() {
         navigateTo(Screen.HEALTH_SLEEP);
     }
@@ -474,6 +481,9 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
             case HEALTH_AUTOSYNC:
                 renderHealthAutosync();
                 break;
+            case HEALTH_STEPS:
+                renderHealthSteps();
+                break;
             case HEALTH_SLEEP:
                 renderHealthSleep();
                 break;
@@ -558,6 +568,8 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                 return "Measurement period";
             case HEALTH_AUTOSYNC:
                 return "Autosync";
+            case HEALTH_STEPS:
+                return "Steps";
             case HEALTH_SLEEP:
                 return "Sleep";
             case HEALTH_SLEEP_DETAIL:
@@ -605,6 +617,8 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                 return "Choose the ring auto-measurement period";
             case HEALTH_AUTOSYNC:
                 return "Persistent, battery-aware Health history sync";
+            case HEALTH_STEPS:
+                return "Daily totals · select graph to switch 7/30 days";
             case HEALTH_SLEEP:
                 return "Automatic night and daytime sleep history";
             case HEALTH_SLEEP_DETAIL:
@@ -649,6 +663,12 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         addHealthMetricAction(HealthMetric.TEMPERATURE);
         addHealthMetricAction(HealthMetric.HRV);
         addHealthMetricAction(HealthMetric.STRESS);
+
+        int todaySteps = snapshot == null ? 0 : snapshot.todaySteps;
+        String stepSync = snapshot == null || snapshot.lastStepSyncAt <= 0L
+                ? "never" : HealthValueFormatter.timestamp(snapshot.lastStepSyncAt);
+        healthAction("Steps", "Today · Last sync: " + stepSync + " · resets at midnight",
+                Integer.toString(todaySteps), v -> showHealthSteps(), true);
 
         SleepSession latestSleep = snapshot == null ? null : snapshot.latestSleep;
         String sleepDetail = latestSleep == null ? "No sleep sessions yet"
@@ -890,6 +910,35 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                     SleepUiFormatter.duration(session.totalSleepMinutes()),
                     v -> showHealthSleepDetail(session), true);
         }
+    }
+
+    private void renderHealthSteps() {
+        RingHealthSnapshot snapshot = healthSnapshot;
+        int today = snapshot == null ? 0 : snapshot.todaySteps;
+        String lastSync = snapshot == null || snapshot.lastStepSyncAt <= 0L
+                ? "Never synced" : HealthValueFormatter.timestamp(snapshot.lastStepSyncAt);
+        healthInfoRow("Today", "Resets automatically at local midnight · Last sync: " + lastSync,
+                Integer.toString(today));
+
+        StepHistoryChartView chart = new StepHistoryChartView(this);
+        chart.setData(snapshot == null ? List.of() : snapshot.stepHistory, stepChartDays);
+        registerHealthAction(chart, v -> {
+            stepChartDays = stepChartDays == 7 ? 30 : 7;
+            render();
+        });
+        LinearLayout.LayoutParams chartParams = fullWidth(dp(170));
+        chartParams.setMargins(0, dp(3), 0, dp(3));
+        content.addView(chart, chartParams);
+
+        boolean showOnHud = HealthHudSettings.isStepsEnabled(this);
+        healthAction("Show on HUD",
+                "Show today's step count above the glasses battery",
+                showOnHud ? "ON" : "OFF",
+                v -> {
+                    HealthHudSettings.setStepsEnabled(this, !showOnHud);
+                    refreshHealthHud();
+                    render();
+                }, true);
     }
 
     private void renderHealthSleepDetail() {
@@ -1228,7 +1277,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
 
     private long latestSyncTime(RingHealthSnapshot snapshot) {
         if (snapshot == null) return 0L;
-        long latest = snapshot.lastSleepSyncAt;
+        long latest = Math.max(snapshot.lastSleepSyncAt, snapshot.lastStepSyncAt);
         for (Map.Entry<HealthMetric, Long> entry : snapshot.lastHistorySyncAt.entrySet()) {
             latest = Math.max(latest, entry.getValue());
         }
@@ -2029,6 +2078,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         HEALTH_METRIC,
         HEALTH_INTERVAL,
         HEALTH_AUTOSYNC,
+        HEALTH_STEPS,
         HEALTH_SLEEP,
         HEALTH_SLEEP_DETAIL,
         HEALTH_BACKUP

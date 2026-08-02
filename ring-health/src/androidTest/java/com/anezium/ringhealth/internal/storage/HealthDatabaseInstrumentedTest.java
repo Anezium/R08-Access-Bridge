@@ -61,4 +61,23 @@ public class HealthDatabaseInstrumentedTest {
 
         assertEquals(1, dao.recentSleepSessions(10).size());
     }
+
+    @Test public void newerStepTotalReplacesTheSameLocalDay() {
+        StepDayEntity first = new StepDayEntity();
+        first.ringId = "R08_B902";
+        first.localDate = "2026-08-02";
+        first.steps = 1_234;
+        first.updatedAtEpochMs = 1L;
+        StepDayEntity newer = new StepDayEntity();
+        newer.ringId = "R08_B902";
+        newer.localDate = "2026-08-02";
+        newer.steps = 5_678;
+        newer.updatedAtEpochMs = 2L;
+
+        dao.upsertStepDay(first);
+        dao.upsertStepDay(newer);
+
+        assertEquals(1, dao.recentStepDays(30).size());
+        assertEquals(5_678, dao.stepDay("2026-08-02").steps);
+    }
 }
