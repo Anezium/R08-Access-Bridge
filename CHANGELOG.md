@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.8.0 - 2026-08-03
 
 ### BLE reconnect reliability
 
@@ -9,6 +9,13 @@
 ### Ring media key guard
 
 - Replaced the opt-in screen-off media guard toggle with `Off`, `Screen-off only`, and `Always` modes. `Always` keeps ring media keys away from media targets even while audio is playing or the display is on; the concept is credited to [hacha's fork](https://github.com/hacha/R08-Access-Bridge).
+
+## v1.7.0 - 2026-07-23
+
+### Nexus launcher ring integration
+
+- The R08 ring now navigates the Rokid Nexus app launcher, not just the triple-tap launcher: the ring drives selection and the launcher/plugin surfaces respond to the focus handoff. The bridge stands down while the Nexus launcher owns the ring so the two don't fight over ring input. Requires Rokid Nexus 1.0.41+ on the glasses.
+- The status icon cluster grows from its seed instead of a blind union, and the battery chip anchors to the left of the full cluster.
 
 ## v1.6.4 - 2026-07-15
 
