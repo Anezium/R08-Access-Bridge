@@ -49,7 +49,10 @@ final class RingBleController {
     private static final int FLAG_MASK_ERROR = 0x80;
     private static final int PACKET_SIZE = 16;
     private static final long SCAN_TIMEOUT_MS = 25_000L;
-    private static final long RECONNECT_MS = 5_000L;
+    private static final long[] RECONNECT_BACKOFF_MS = {3_000L, 5_000L, 8_000L, 12_000L};
+    private static final long SETUP_TIMEOUT_MS = 20_000L;
+    private static final long GATT_OP_TIMEOUT_MS = 8_000L;
+    private static final long BOND_TIMEOUT_MS = 30_000L;
     private static final long ACTIVITY_BATTERY_REFRESH_MS = 4 * 60_000L;
 
     private final Context context;
@@ -68,6 +71,7 @@ final class RingBleController {
     private boolean writing;
     private boolean descriptorWriting;
     private boolean notificationsEnabled;
+    private int reconnectAttempts;
     private long lastBatteryRequestAt;
 
     private final Runnable scanTimeout = () -> {
@@ -76,6 +80,35 @@ final class RingBleController {
             Log.d(TAG, "R08 scan timed out");
             scheduleReconnect();
         }
+    };
+
+    private final Runnable reconnectRunnable = () -> {
+        if (!started) {
+            return;
+        }
+        ensureAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.d(TAG, "R08 waiting for Bluetooth");
+            return;
+        }
+        connectToKnownOrScan();
+    };
+
+    private final Runnable setupTimeout = () -> {
+        Log.w(TAG, "GATT setup timed out");
+        closeGatt();
+        scheduleReconnect();
+    };
+
+    private final Runnable gattOpTimeout = () -> {
+        Log.w(TAG, "GATT operation timed out");
+        closeGatt();
+        scheduleReconnect();
+    };
+
+    private final Runnable bondTimeout = () -> {
+        Log.w(TAG, "R08 bond timed out");
+        scheduleReconnect();
     };
 
     private final BroadcastReceiver bondReceiver = new BroadcastReceiver() {
@@ -91,7 +124,34 @@ final class RingBleController {
             int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
             Log.d(TAG, "R08 bond state=" + state);
             if (state == BluetoothDevice.BOND_BONDED) {
+                handler.removeCallbacks(bondTimeout);
                 connect(device);
+            } else if (state == BluetoothDevice.BOND_NONE) {
+                handler.removeCallbacks(bondTimeout);
+                scheduleReconnect();
+            }
+        }
+    };
+
+    private final BroadcastReceiver adapterStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction())) {
+                return;
+            }
+            int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+            Log.d(TAG, "Bluetooth state=" + state);
+            if (state == BluetoothAdapter.STATE_ON) {
+                ensureAdapter();
+                cancelReconnectAndWatchdogs();
+                reconnectAttempts = 0;
+                connectToKnownOrScan();
+            } else if (state == BluetoothAdapter.STATE_TURNING_OFF
+                    || state == BluetoothAdapter.STATE_OFF) {
+                stopScan();
+                closeGatt();
+                cancelReconnectAndWatchdogs();
+                Log.d(TAG, "R08 waiting for Bluetooth");
             }
         }
     };
@@ -120,72 +180,112 @@ final class RingBleController {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt bluetoothGatt, int status, int newState) {
-            Log.d(TAG, "GATT state=" + newState + " status=" + status);
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                gatt = bluetoothGatt;
-                writeCharacteristic = null;
-                writes.clear();
-                writing = false;
-                descriptorWriting = false;
-                notificationsEnabled = false;
-                bluetoothGatt.discoverServices();
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                closeGatt();
-                scheduleReconnect();
-            }
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale GATT state callback state=" + newState
+                            + " status=" + status);
+                    bluetoothGatt.close();
+                    return;
+                }
+                Log.d(TAG, "GATT state=" + newState + " status=" + status);
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    writeCharacteristic = null;
+                    writes.clear();
+                    writing = false;
+                    descriptorWriting = false;
+                    notificationsEnabled = false;
+                    bluetoothGatt.discoverServices();
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    closeGatt();
+                    scheduleReconnect();
+                }
+            });
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt bluetoothGatt, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.w(TAG, "Service discovery failed status=" + status);
-                scheduleReconnect();
-                return;
-            }
-            BluetoothGattService service = bluetoothGatt.getService(SERVICE_UUID);
-            if (service == null) {
-                Log.w(TAG, "R08 custom service missing");
-                scheduleReconnect();
-                return;
-            }
-            writeCharacteristic = service.getCharacteristic(WRITE_CHAR_UUID);
-            if (writeCharacteristic == null) {
-                Log.w(TAG, "R08 write characteristic missing");
-                scheduleReconnect();
-                return;
-            }
-            BluetoothGattCharacteristic notifyCharacteristic = service.getCharacteristic(NOTIFY_CHAR_UUID);
-            if (!enableNotifications(notifyCharacteristic)) {
-                Log.w(TAG, "R08 notifications unavailable; battery status disabled");
-                onGattReady(false);
-            }
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale services callback status=" + status);
+                    return;
+                }
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.w(TAG, "Service discovery failed status=" + status);
+                    scheduleReconnect();
+                    return;
+                }
+                BluetoothGattService service = bluetoothGatt.getService(SERVICE_UUID);
+                if (service == null) {
+                    Log.w(TAG, "R08 custom service missing");
+                    scheduleReconnect();
+                    return;
+                }
+                writeCharacteristic = service.getCharacteristic(WRITE_CHAR_UUID);
+                if (writeCharacteristic == null) {
+                    Log.w(TAG, "R08 write characteristic missing");
+                    scheduleReconnect();
+                    return;
+                }
+                BluetoothGattCharacteristic notifyCharacteristic = service.getCharacteristic(NOTIFY_CHAR_UUID);
+                if (!enableNotifications(notifyCharacteristic)) {
+                    Log.w(TAG, "R08 notifications unavailable; battery status disabled");
+                    onGattReady(false);
+                }
+            });
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic characteristic, int status) {
-            Log.d(TAG, "GATT write status=" + status);
-            writing = false;
-            handler.postDelayed(RingBleController.this::drainWrites, 90);
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale characteristic write callback status=" + status);
+                    return;
+                }
+                handler.removeCallbacks(gattOpTimeout);
+                Log.d(TAG, "GATT write status=" + status);
+                writing = false;
+                handler.postDelayed(RingBleController.this::drainWrites, 90);
+            });
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic characteristic) {
-            handleNotification(characteristic, characteristic.getValue());
+            byte[] value = characteristic.getValue();
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale characteristic changed callback");
+                    return;
+                }
+                handleNotification(characteristic, value);
+            });
         }
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt bluetoothGatt, BluetoothGattCharacteristic characteristic, byte[] value) {
-            handleNotification(characteristic, value);
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale characteristic changed callback");
+                    return;
+                }
+                handleNotification(characteristic, value);
+            });
         }
 
         @Override
         public void onDescriptorWrite(BluetoothGatt bluetoothGatt, BluetoothGattDescriptor descriptor, int status) {
-            descriptorWriting = false;
-            boolean success = status == BluetoothGatt.GATT_SUCCESS;
-            notificationsEnabled = success;
-            Log.d(TAG, "R08 notifications enabled=" + success + " status=" + status);
-            onGattReady(success);
-            drainWrites();
+            handler.post(() -> {
+                if (bluetoothGatt != gatt) {
+                    Log.d(TAG, "Ignoring stale descriptor write callback status=" + status);
+                    return;
+                }
+                handler.removeCallbacks(gattOpTimeout);
+                descriptorWriting = false;
+                boolean success = status == BluetoothGatt.GATT_SUCCESS;
+                notificationsEnabled = success;
+                Log.d(TAG, "R08 notifications enabled=" + success + " status=" + status);
+                onGattReady(success);
+                drainWrites();
+            });
         }
     };
 
@@ -202,25 +302,21 @@ final class RingBleController {
             return;
         }
         started = true;
-        BluetoothManager manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        adapter = manager == null ? null : manager.getAdapter();
+        IntentFilter bondFilter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        IntentFilter adapterFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(bondReceiver, bondFilter, Context.RECEIVER_EXPORTED);
+            context.registerReceiver(adapterStateReceiver, adapterFilter, Context.RECEIVER_EXPORTED);
+        } else {
+            context.registerReceiver(bondReceiver, bondFilter);
+            context.registerReceiver(adapterStateReceiver, adapterFilter);
+        }
+        ensureAdapter();
         if (adapter == null) {
             Log.w(TAG, "Bluetooth adapter missing");
             return;
         }
-        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(bondReceiver, filter, Context.RECEIVER_EXPORTED);
-        } else {
-            context.registerReceiver(bondReceiver, filter);
-        }
-        BluetoothDevice bonded = findBondedR08();
-        if (bonded != null) {
-            targetDevice = bonded;
-            connect(bonded);
-        } else {
-            startScan();
-        }
+        connectToKnownOrScan();
     }
 
     void stop() {
@@ -233,6 +329,11 @@ final class RingBleController {
         } catch (IllegalArgumentException ignored) {
             // Receiver was not registered.
         }
+        try {
+            context.unregisterReceiver(adapterStateReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
+        }
     }
 
     void restart() {
@@ -240,6 +341,15 @@ final class RingBleController {
         closeGatt();
         writes.clear();
         writing = false;
+        connectToKnownOrScan();
+    }
+
+    private void connectToKnownOrScan() {
+        ensureAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.d(TAG, "R08 waiting for Bluetooth");
+            return;
+        }
         if (targetDevice != null) {
             bondOrConnect(targetDevice);
         } else {
@@ -344,6 +454,8 @@ final class RingBleController {
     }
 
     private void onGattReady(boolean canReadBattery) {
+        handler.removeCallbacks(setupTimeout);
+        reconnectAttempts = 0;
         Log.d(TAG, "R08 GATT ready notifications=" + canReadBattery);
         configureCurrentMode();
         if (canReadBattery) {
@@ -381,13 +493,18 @@ final class RingBleController {
         if (!started || scanning) {
             return;
         }
+        ensureAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.d(TAG, "R08 waiting for Bluetooth");
+            return;
+        }
         if (!hasScanPermission()) {
             Log.w(TAG, "Missing BLUETOOTH_SCAN permission");
             return;
         }
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
-            Log.w(TAG, "BLE scanner missing");
+            Log.d(TAG, "R08 waiting for Bluetooth");
             return;
         }
         ScanSettings settings = new ScanSettings.Builder()
@@ -417,7 +534,10 @@ final class RingBleController {
         }
         if (device.getBondState() == BluetoothDevice.BOND_NONE) {
             Log.d(TAG, "Creating R08 bond");
-            if (!device.createBond()) {
+            if (device.createBond()) {
+                handler.removeCallbacks(bondTimeout);
+                handler.postDelayed(bondTimeout, BOND_TIMEOUT_MS);
+            } else {
                 connect(device);
             }
         } else {
@@ -429,13 +549,22 @@ final class RingBleController {
         if (!started || !hasConnectPermission()) {
             return;
         }
+        ensureAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.d(TAG, "R08 waiting for Bluetooth");
+            return;
+        }
         closeGatt();
         targetDevice = device;
         Log.d(TAG, "Connecting GATT to name=" + safeName(device));
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+        handler.removeCallbacks(setupTimeout);
+        handler.postDelayed(setupTimeout, SETUP_TIMEOUT_MS);
     }
 
     private void closeGatt() {
+        handler.removeCallbacks(setupTimeout);
+        handler.removeCallbacks(gattOpTimeout);
         writeCharacteristic = null;
         descriptorWriting = false;
         notificationsEnabled = false;
@@ -450,13 +579,24 @@ final class RingBleController {
         if (!started) {
             return;
         }
-        handler.postDelayed(() -> {
-            if (targetDevice != null) {
-                bondOrConnect(targetDevice);
-            } else {
-                startScan();
-            }
-        }, RECONNECT_MS);
+        ensureAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+            Log.d(TAG, "R08 waiting for Bluetooth");
+            return;
+        }
+        handler.removeCallbacks(reconnectRunnable);
+        long delay = RECONNECT_BACKOFF_MS[Math.min(
+                reconnectAttempts, RECONNECT_BACKOFF_MS.length - 1)];
+        reconnectAttempts++;
+        Log.d(TAG, "Reconnect scheduled delay=" + delay + " attempt=" + reconnectAttempts);
+        handler.postDelayed(reconnectRunnable, delay);
+    }
+
+    private void cancelReconnectAndWatchdogs() {
+        handler.removeCallbacks(reconnectRunnable);
+        handler.removeCallbacks(setupTimeout);
+        handler.removeCallbacks(gattOpTimeout);
+        handler.removeCallbacks(bondTimeout);
     }
 
     private boolean enableNotifications(BluetoothGattCharacteristic notifyCharacteristic) {
@@ -473,6 +613,8 @@ final class RingBleController {
             return false;
         }
         descriptorWriting = true;
+        handler.removeCallbacks(gattOpTimeout);
+        handler.postDelayed(gattOpTimeout, GATT_OP_TIMEOUT_MS);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             int result = gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
             if (result == BluetoothGatt.GATT_SUCCESS) {
@@ -486,6 +628,7 @@ final class RingBleController {
             }
             Log.w(TAG, "R08 notify descriptor write submit failed");
         }
+        handler.removeCallbacks(gattOpTimeout);
         descriptorWriting = false;
         return false;
     }
@@ -504,11 +647,14 @@ final class RingBleController {
         }
         byte[] packet = writes.poll();
         writing = true;
+        handler.removeCallbacks(gattOpTimeout);
+        handler.postDelayed(gattOpTimeout, GATT_OP_TIMEOUT_MS);
         writeCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             int result = gatt.writeCharacteristic(writeCharacteristic, packet, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             if (result != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "GATT write returned=" + result);
+                handler.removeCallbacks(gattOpTimeout);
                 writing = false;
                 handler.postDelayed(this::drainWrites, 160);
             }
@@ -516,6 +662,7 @@ final class RingBleController {
             writeCharacteristic.setValue(packet);
             if (!gatt.writeCharacteristic(writeCharacteristic)) {
                 Log.w(TAG, "GATT write submit failed");
+                handler.removeCallbacks(gattOpTimeout);
                 writing = false;
                 handler.postDelayed(this::drainWrites, 160);
             }

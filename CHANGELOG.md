@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### BLE reconnect reliability
+
+- Hardened R08 reconnection with main-thread GATT callback handling, stale-connection rejection, deduplicated 3/5/8/12-second backoff, setup and operation watchdogs, bond timeout recovery, and automatic reconnect when Bluetooth turns back on.
+
 ## v1.6.4 - 2026-07-15
 
 ### Launcher battery indicator
