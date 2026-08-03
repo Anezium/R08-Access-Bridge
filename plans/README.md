@@ -10,6 +10,7 @@ done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001 | Add QRing-derived ring battery status and sleep-safe touch handling | P1 | M | - | DONE |
+| 002 | BLE reconnect hardening (JSOS-inspired) and tri-state media key guard (hacha-inspired) | P1 | L | - | IN PROGRESS (implemented; build + device matrices pending) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED
 
@@ -18,6 +19,9 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED
 - `001` stands alone. It documents the QRing APK reverse-engineering findings
   and gives the implementation path for battery reporting plus safer ring
   power behavior.
+- `002` stands alone. Part A (reconnect hardening) and Part B (tri-state
+  media guard) are independent of each other and may be executed or shipped
+  separately, in that order of priority.
 
 ## Findings considered and rejected
 
