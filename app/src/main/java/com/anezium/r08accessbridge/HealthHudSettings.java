@@ -3,12 +3,15 @@ package com.anezium.r08accessbridge;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.anezium.ringhealth.HealthSample;
 import com.anezium.ringhealth.domain.AutoMeasurementSettings;
 import com.anezium.ringhealth.domain.HealthMetric;
 
 final class HealthHudSettings {
     private static final String PREFS = "health_hud_settings";
     private static final String SHOW_STEPS = "show_STEPS";
+    private static final String TEMPERATURE_HIGH_ONLY = "temperature_high_only";
+    static final double TEMPERATURE_HIGH_THRESHOLD_CELSIUS = 37.1;
 
     private HealthHudSettings() {}
 
@@ -26,6 +29,19 @@ final class HealthHudSettings {
 
     static void setStepsEnabled(Context context, boolean enabled) {
         preferences(context).edit().putBoolean(SHOW_STEPS, enabled).apply();
+    }
+
+    static boolean isTemperatureHighOnly(Context context) {
+        return preferences(context).getBoolean(TEMPERATURE_HIGH_ONLY, false);
+    }
+
+    static void setTemperatureHighOnly(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean(TEMPERATURE_HIGH_ONLY, enabled).apply();
+    }
+
+    static boolean shouldDisplayTemperature(Context context, HealthSample sample) {
+        return !isTemperatureHighOnly(context) || sample != null
+                && sample.value() >= TEMPERATURE_HIGH_THRESHOLD_CELSIUS;
     }
 
     static boolean isEffective(Context context, HealthMetric metric,

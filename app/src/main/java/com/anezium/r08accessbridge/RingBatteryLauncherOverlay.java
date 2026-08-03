@@ -946,7 +946,7 @@ final class RingBatteryLauncherOverlay {
             HealthRowViews views = healthRows.get(metric);
             AutoMeasurementSettings.MetricSetting auto = healthSnapshot == null ? null
                     : healthSnapshot.autoMeasurementSettings.forMetric(metric);
-            boolean visible = HealthHudSettings.isEffective(service, metric, auto);
+            boolean visible = isHealthRowVisible(metric, auto);
             views.row.setVisibility(visible ? View.VISIBLE : View.GONE);
             if (!visible) continue;
             if (healthSnapshot == null) {
@@ -968,6 +968,15 @@ final class RingBatteryLauncherOverlay {
                         ? "--" : Integer.toString(healthSnapshot.todaySteps));
             }
         }
+    }
+
+    private boolean isHealthRowVisible(HealthMetric metric,
+                                       AutoMeasurementSettings.MetricSetting auto) {
+        if (!HealthHudSettings.isEffective(service, metric, auto)) return false;
+        if (metric != HealthMetric.TEMPERATURE) return true;
+        HealthSample sample = healthSnapshot == null ? null
+                : healthSnapshot.latest.get(HealthMetric.TEMPERATURE);
+        return HealthHudSettings.shouldDisplayTemperature(service, sample);
     }
 
     static long healthStaleAfterMs(HealthMetric metric, int heartRateIntervalMinutes) {
@@ -992,7 +1001,7 @@ final class RingBatteryLauncherOverlay {
                 HealthMetric.HEART_RATE, HealthMetric.SPO2, HealthMetric.TEMPERATURE}) {
             AutoMeasurementSettings.MetricSetting auto = healthSnapshot == null ? null
                     : healthSnapshot.autoMeasurementSettings.forMetric(metric);
-            if (HealthHudSettings.isEffective(service, metric, auto)) {
+            if (isHealthRowVisible(metric, auto)) {
                 count++;
             }
         }

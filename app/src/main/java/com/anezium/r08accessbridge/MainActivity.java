@@ -26,6 +26,7 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
@@ -72,7 +73,6 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     private int stepChartDays = 7;
     private boolean healthListenerRegistered;
     private boolean syncAttemptedThisVisit;
-    private boolean syncSeenRunning;
     private String syncSessionResult;
     private boolean healthBackupBusy;
     private String healthBackupStatus = "Ready";
@@ -134,12 +134,14 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     @Override
     protected void onResume() {
         super.onResume();
+        syncMeasurementScreenAwake();
         requestRingBatteryRefresh();
         render();
     }
 
     @Override
     protected void onStop() {
+        applyMeasurementScreenAwake(this, false);
         unregisterLocalSelfArmStatusReceiver();
         if (activityBleController != null && healthListenerRegistered) {
             activityBleController.removeListener(this);
@@ -166,12 +168,10 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     @Override
     public void onSnapshot(RingHealthSnapshot snapshot) {
         healthSnapshot = snapshot;
+        syncMeasurementScreenAwake();
         if (syncAttemptedThisVisit) {
-            if (snapshot.syncing) {
-                syncSeenRunning = true;
-            } else if (syncSessionResult == null
-                    && (syncSeenRunning || snapshot.syncStatus.startsWith("Manual:"))
-                    && !snapshot.syncStatus.contains("starting")) {
+            if (!snapshot.syncing && syncSessionResult == null
+                    && isManualSyncTerminal(snapshot.syncStatus)) {
                 syncSessionResult = snapshot.syncStatus.contains("Success") ? "SUCCESS" : "ERROR";
             }
         }
@@ -312,7 +312,6 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
 
     private void showHealth() {
         syncAttemptedThisVisit = false;
-        syncSeenRunning = false;
         syncSessionResult = null;
         navigateTo(Screen.HEALTH);
     }
@@ -635,7 +634,8 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         RingHealthSnapshot snapshot = healthSnapshot;
         boolean ready = isHealthReady(snapshot);
         long lastSync = latestSyncTime(snapshot);
-        String syncDetail = snapshot != null && snapshot.syncing
+        boolean manualSyncQueued = snapshot != null && isManualSyncQueued(snapshot.syncStatus);
+        String syncDetail = snapshot != null && (snapshot.syncing || manualSyncQueued)
                 ? snapshot.syncStatus
                 : "Last sync: " + (lastSync > 0L
                         ? HealthValueFormatter.timestamp(lastSync) : "never");
@@ -646,13 +646,11 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
             syncDetail += " · Ring " + (snapshot == null
                     ? "STARTING" : snapshot.connectionState.name());
         }
-        boolean syncEnabled = ready && snapshot != null && !snapshot.syncing
-                && snapshot.activeMeasurement == null;
+        boolean syncEnabled = snapshot == null || !snapshot.syncing;
         healthAction("Sync all", syncDetail,
-                snapshot != null && snapshot.syncing ? "…" : "",
+                snapshot != null && snapshot.syncing ? "…" : manualSyncQueued ? "WAIT" : "",
                 v -> {
                     syncAttemptedThisVisit = true;
-                    syncSeenRunning = false;
                     syncSessionResult = null;
                     activityBleController.synchronizeToday();
                     render();
@@ -724,6 +722,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                     if (healthSnapshot != null && healthSnapshot.activeMeasurement == metric) {
                         activityBleController.cancelMeasurement("Cancelled");
                     } else {
+                        applyMeasurementScreenAwake(this, true);
                         activityBleController.measure(metric);
                     }
                 }, measureEnabled);
@@ -769,6 +768,26 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         if (metric.hasAutoSettings()) {
             renderAutoMeasurementSettings(metric, snapshot, ready);
         }
+        if (metric == HealthMetric.TEMPERATURE) {
+            renderTemperatureHudThreshold();
+        }
+    }
+
+    private void renderTemperatureHudThreshold() {
+        boolean enabled = HealthHudSettings.isTemperatureHighOnly(this);
+        boolean fahrenheit = TemperatureUnitSettings.isFahrenheit(this);
+        double threshold = TemperatureUnitSettings.displayValue(this,
+                HealthHudSettings.TEMPERATURE_HIGH_THRESHOLD_CELSIUS);
+        String thresholdText = String.format(Locale.US, "%.1f °%s", threshold,
+                fahrenheit ? "F" : "C");
+        healthAction("High temperature only",
+                "Show on HUD only at or above " + thresholdText,
+                enabled ? "ON" : "OFF",
+                v -> {
+                    HealthHudSettings.setTemperatureHighOnly(this, !enabled);
+                    refreshHealthHud();
+                    render();
+                }, true);
     }
 
     private void renderAutoMeasurementSettings(HealthMetric metric,
@@ -1275,6 +1294,17 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         return snapshot != null && snapshot.connectionState == ConnectionState.READY;
     }
 
+    static boolean isManualSyncQueued(String status) {
+        return status != null && status.startsWith("Manual: queued");
+    }
+
+    static boolean isManualSyncTerminal(String status) {
+        return status != null && (status.startsWith("Manual: Success")
+                || status.startsWith("Manual: Partial")
+                || status.startsWith("Manual: unsupported")
+                || status.startsWith("Manual: unavailable"));
+    }
+
     private long latestSyncTime(RingHealthSnapshot snapshot) {
         if (snapshot == null) return 0L;
         long latest = Math.max(snapshot.lastSleepSyncAt, snapshot.lastStepSyncAt);
@@ -1296,6 +1326,19 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
 
     private void refreshHealthHud() {
         sendServiceCommand(RingControlAccessibilityService.COMMAND_REFRESH_HEALTH_HUD);
+    }
+
+    private void syncMeasurementScreenAwake() {
+        applyMeasurementScreenAwake(this,
+                healthSnapshot != null && healthSnapshot.activeMeasurement != null);
+    }
+
+    static void applyMeasurementScreenAwake(Activity activity, boolean measuring) {
+        if (measuring) {
+            activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
     }
 
     private void action(int titleRes, int detailRes, View.OnClickListener listener) {

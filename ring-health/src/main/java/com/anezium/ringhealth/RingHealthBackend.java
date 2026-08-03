@@ -177,6 +177,7 @@ public class RingHealthBackend {
     private boolean syncing;
     private String syncStatus = "Idle";
     private SyncTrigger activeSyncTrigger;
+    private final PendingManualSyncQueue manualSyncQueue = new PendingManualSyncQueue();
     private boolean periodicSyncEnabled;
     private int periodicSyncIntervalMinutes;
     private String periodicSyncStatus;
@@ -439,7 +440,7 @@ public class RingHealthBackend {
         });
     }
 
-    public void synchronizeToday() { worker.post(() -> startHistorySync(SyncTrigger.MANUAL)); }
+    public void synchronizeToday() { worker.post(this::requestManualSync); }
 
     public void setPeriodicSyncEnabled(boolean enabled) {
         worker.post(() -> configurePeriodicSync(enabled, periodicSyncIntervalMinutes));
@@ -901,6 +902,7 @@ public class RingHealthBackend {
     private void drainControlQueue() {
         if (activeControl != null || !notificationsReady || !gattConnected) return;
         if (controlRequests.isEmpty()) {
+            tryStartPendingManualSync();
             tryStartPendingPeriodicSync();
             return;
         }
@@ -1244,6 +1246,41 @@ public class RingHealthBackend {
             drainControlQueue();
         }
         if (!success) diagnostic("measurement " + metric + " ended: " + status);
+    }
+
+    private void requestManualSync() {
+        if (syncing && activeSyncTrigger == SyncTrigger.MANUAL) {
+            syncStatus = "Manual: already running";
+            publishSnapshot();
+            return;
+        }
+        manualSyncQueue.enqueue();
+        syncStatus = manualSyncQueuedStatus();
+        diagnostic(syncStatus.toLowerCase(Locale.US));
+        publishSnapshot();
+        if (connectionState != ConnectionState.READY || !gattConnected || !notificationsReady) {
+            connectIfPossible();
+        }
+        tryStartPendingManualSync();
+    }
+
+    private String manualSyncQueuedStatus() {
+        if (connectionState != ConnectionState.READY || !gattConnected || !notificationsReady) {
+            return "Manual: queued until ring reconnects";
+        }
+        if (activeMeasurement != null) return "Manual: queued after measurement";
+        if (syncing) return "Manual: queued after current sync";
+        return "Manual: queued until ring is idle";
+    }
+
+    private void tryStartPendingManualSync() {
+        boolean transportIdle = connectionState == ConnectionState.READY
+                && gattConnected && notificationsReady && !syncing
+                && activeMeasurement == null && activeControl == null
+                && controlRequests.isEmpty() && !autoSettingsUpdating;
+        if (!manualSyncQueue.pollIfIdle(transportIdle)) return;
+        diagnostic("starting queued manual sync");
+        startHistorySync(SyncTrigger.MANUAL);
     }
 
     private void startHistorySync(SyncTrigger trigger) {
@@ -1812,7 +1849,10 @@ public class RingHealthBackend {
         }
         publishSnapshot();
         refreshStorage();
-        if (periodicSyncQueue.isPending()) {
+        tryStartPendingManualSync();
+        if (syncing) {
+            return;
+        } else if (periodicSyncQueue.isPending()) {
             tryStartPendingPeriodicSync();
         } else if (hadFailures && periodicSyncEnabled && hasFailedEnabledPeriodicMetric()) {
             schedulePeriodicRetry("failed metric");
