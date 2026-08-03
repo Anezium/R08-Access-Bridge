@@ -4,8 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Rect;
+import android.view.WindowManager;
 
 import com.anezium.ringhealth.HealthSample;
 import com.anezium.ringhealth.domain.AutoMeasurementSettings;
@@ -13,8 +15,11 @@ import com.anezium.ringhealth.domain.HealthMetric;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
+
+import java.util.Locale;
 
 @RunWith(RobolectricTestRunner.class)
 public final class HealthUiContractTest {
@@ -60,6 +65,31 @@ public final class HealthUiContractTest {
         assertFalse(HealthHudSettings.isStepsEnabled(context));
         HealthHudSettings.setStepsEnabled(context, true);
         assertTrue(HealthHudSettings.isStepsEnabled(context));
+    }
+
+    @Test public void highTemperatureHudFilterUsesInclusiveCelsiusThreshold() {
+        Context context = RuntimeEnvironment.getApplication();
+        context.getSharedPreferences("health_hud_settings", Context.MODE_PRIVATE)
+                .edit().clear().commit();
+        HealthSample below = new HealthSample(1L, "R08", HealthMetric.TEMPERATURE,
+                HealthSample.Source.INTERVAL, 1L, 37.0, 370, null, null);
+        HealthSample boundary = new HealthSample(2L, "R08", HealthMetric.TEMPERATURE,
+                HealthSample.Source.INTERVAL, 2L, 37.1, 371, null, null);
+
+        assertTrue(HealthHudSettings.shouldDisplayTemperature(context, below));
+        HealthHudSettings.setTemperatureHighOnly(context, true);
+        assertFalse(HealthHudSettings.shouldDisplayTemperature(context, null));
+        assertFalse(HealthHudSettings.shouldDisplayTemperature(context, below));
+        assertTrue(HealthHudSettings.shouldDisplayTemperature(context, boundary));
+    }
+
+    @Test public void highTemperatureThresholdDisplaysAsFahrenheitAlternative() {
+        Context context = RuntimeEnvironment.getApplication();
+        TemperatureUnitSettings.setFahrenheit(context, true);
+        assertEquals("98.8", String.format(Locale.US, "%.1f",
+                TemperatureUnitSettings.displayValue(context,
+                        HealthHudSettings.TEMPERATURE_HIGH_THRESHOLD_CELSIUS)));
+        TemperatureUnitSettings.setFahrenheit(context, false);
     }
 
     @Test public void hudKeepsConfiguredRowsAsPlaceholdersWithoutALiveSnapshot() {
@@ -129,6 +159,26 @@ public final class HealthUiContractTest {
                 RingBatteryLauncherOverlay.healthStaleAfterMs(HealthMetric.HEART_RATE, 10));
         assertEquals(60L * 60_000L,
                 RingBatteryLauncherOverlay.healthStaleAfterMs(HealthMetric.HEART_RATE, 30));
+    }
+
+    @Test public void manualMeasurementKeepsScreenAwakeOnlyWhileActive() {
+        Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
+
+        MainActivity.applyMeasurementScreenAwake(activity, true);
+        assertTrue((activity.getWindow().getAttributes().flags
+                & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0);
+
+        MainActivity.applyMeasurementScreenAwake(activity, false);
+        assertEquals(0, activity.getWindow().getAttributes().flags
+                & WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    @Test public void queuedManualSyncIsNotReportedAsAnError() {
+        assertTrue(MainActivity.isManualSyncQueued("Manual: queued until ring reconnects"));
+        assertFalse(MainActivity.isManualSyncTerminal("Manual: queued until ring reconnects"));
+        assertFalse(MainActivity.isManualSyncTerminal("Manual: starting"));
+        assertTrue(MainActivity.isManualSyncTerminal("Manual: Success"));
+        assertTrue(MainActivity.isManualSyncTerminal("Manual: Partial: failed SLEEP"));
     }
 
     @Test public void passiveSleepRowsAreCenteredAndClampedInTheScrollViewport() {
