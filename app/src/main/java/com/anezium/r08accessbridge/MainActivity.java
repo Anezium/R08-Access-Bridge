@@ -291,8 +291,8 @@ public final class MainActivity extends Activity {
                                 !RingModeSettings.isTouchMode(this),
                                 getString(R.string.detail_touch_fallback)),
                         v -> enableTouchFallbackMode());
-                action(getString(R.string.action_screen_off_media_guard), screenOffMediaGuardDetail(),
-                        v -> toggleScreenOffMediaGuard());
+                action(getString(R.string.action_media_guard), mediaGuardDetail(),
+                        v -> cycleMediaGuardMode());
                 action(getString(R.string.action_show_ring_battery_indicator), ringBatteryIndicatorDetail(),
                         v -> toggleRingBatteryIndicator());
                 action(R.string.action_probe_app_type, R.string.detail_probe_app_type, v -> showProbe());
@@ -470,12 +470,16 @@ public final class MainActivity extends Activity {
         return inactive ? detail : getString(R.string.detail_mode_active);
     }
 
-    private String screenOffMediaGuardDetail() {
-        String detail = getString(R.string.detail_screen_off_media_guard);
-        if (RingModeSettings.isScreenOffMediaGuardEnabled(this)) {
-            return getString(R.string.detail_screen_off_media_guard_active, detail);
+    private String mediaGuardDetail() {
+        switch (RingModeSettings.getMediaGuardMode(this)) {
+            case RingModeSettings.MEDIA_GUARD_SCREEN_OFF:
+                return getString(R.string.detail_media_guard_screen_off);
+            case RingModeSettings.MEDIA_GUARD_ALWAYS:
+                return getString(R.string.detail_media_guard_always);
+            case RingModeSettings.MEDIA_GUARD_OFF:
+            default:
+                return getString(R.string.detail_media_guard_off);
         }
-        return detail;
     }
 
     private String ringBatteryIndicatorDetail() {
@@ -513,13 +517,27 @@ public final class MainActivity extends Activity {
         render();
     }
 
-    private void toggleScreenOffMediaGuard() {
-        boolean enabled = !RingModeSettings.isScreenOffMediaGuardEnabled(this);
-        RingModeSettings.setScreenOffMediaGuardEnabled(this, enabled);
-        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_SCREEN_OFF_MEDIA_GUARD, enabled);
-        Toast.makeText(this,
-                enabled ? R.string.toast_screen_off_media_guard_on : R.string.toast_screen_off_media_guard_off,
-                Toast.LENGTH_SHORT).show();
+    private void cycleMediaGuardMode() {
+        int mode = RingModeSettings.getMediaGuardMode(this);
+        int nextMode = mode == RingModeSettings.MEDIA_GUARD_ALWAYS
+                ? RingModeSettings.MEDIA_GUARD_OFF : mode + 1;
+        RingModeSettings.setMediaGuardMode(this, nextMode);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_SET_MEDIA_GUARD_MODE,
+                RingControlAccessibilityService.EXTRA_MODE, nextMode);
+        int toast;
+        switch (nextMode) {
+            case RingModeSettings.MEDIA_GUARD_SCREEN_OFF:
+                toast = R.string.toast_media_guard_screen_off;
+                break;
+            case RingModeSettings.MEDIA_GUARD_ALWAYS:
+                toast = R.string.toast_media_guard_always;
+                break;
+            case RingModeSettings.MEDIA_GUARD_OFF:
+            default:
+                toast = R.string.toast_media_guard_off;
+                break;
+        }
+        Toast.makeText(this, toast, Toast.LENGTH_SHORT).show();
         render();
     }
 
@@ -1012,11 +1030,11 @@ public final class MainActivity extends Activity {
         sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
     }
 
-    private void sendServiceCommand(String command, int appType) {
+    private void sendServiceCommand(String command, String extra, int value) {
         Intent intent = new Intent(RingControlAccessibilityService.ACTION_COMMAND);
         intent.setPackage(getPackageName());
         intent.putExtra(RingControlAccessibilityService.EXTRA_COMMAND, command);
-        intent.putExtra(RingControlAccessibilityService.EXTRA_APP_TYPE, appType);
+        intent.putExtra(extra, value);
         sendBroadcast(intent, RingControlAccessibilityService.COMMAND_PERMISSION);
     }
 
@@ -1029,7 +1047,8 @@ public final class MainActivity extends Activity {
     }
 
     private void probeAppType(int appType) {
-        sendServiceCommand(RingControlAccessibilityService.COMMAND_PROBE_APP_TYPE, appType);
+        sendServiceCommand(RingControlAccessibilityService.COMMAND_PROBE_APP_TYPE,
+                RingControlAccessibilityService.EXTRA_APP_TYPE, appType);
         Toast.makeText(this, "Probe appType " + appType, Toast.LENGTH_SHORT).show();
     }
 

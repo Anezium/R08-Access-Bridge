@@ -7,10 +7,14 @@ import static android.content.Context.MODE_PRIVATE;
 
 final class RingModeSettings {
     static final String PREFS = "r08_bridge";
+    static final int MEDIA_GUARD_OFF = 0;
+    static final int MEDIA_GUARD_SCREEN_OFF = 1;
+    static final int MEDIA_GUARD_ALWAYS = 2;
 
     private static final String PREF_TOUCH_MODE = "touch_mode";
     private static final String PREF_FAST_NAVIGATION_MODE = "fast_navigation_mode";
     private static final String PREF_SCREEN_OFF_MEDIA_GUARD = "screen_off_media_guard";
+    private static final String PREF_MEDIA_GUARD_MODE = "media_guard_mode";
     private static final String PREF_SHOW_RING_BATTERY_INDICATOR = "show_ring_battery_indicator";
     private static final String PREF_DEFAULT_MODE_VERSION = "default_mode_version";
     private static final int DEFAULT_MODE_VERSION = 2;
@@ -47,12 +51,20 @@ final class RingModeSettings {
         prefs(context).edit().putBoolean(PREF_FAST_NAVIGATION_MODE, enabled).apply();
     }
 
-    static boolean isScreenOffMediaGuardEnabled(Context context) {
-        return prefs(context).getBoolean(PREF_SCREEN_OFF_MEDIA_GUARD, false);
+    static int getMediaGuardMode(Context context) {
+        SharedPreferences prefs = prefs(context);
+        if (!prefs.contains(PREF_MEDIA_GUARD_MODE)) {
+            int mode = prefs.getBoolean(PREF_SCREEN_OFF_MEDIA_GUARD, false)
+                    ? MEDIA_GUARD_SCREEN_OFF : MEDIA_GUARD_OFF;
+            prefs.edit().putInt(PREF_MEDIA_GUARD_MODE, mode).apply();
+            return mode;
+        }
+        return prefs.getInt(PREF_MEDIA_GUARD_MODE, MEDIA_GUARD_OFF);
     }
 
-    static void setScreenOffMediaGuardEnabled(Context context, boolean enabled) {
-        prefs(context).edit().putBoolean(PREF_SCREEN_OFF_MEDIA_GUARD, enabled).apply();
+    static void setMediaGuardMode(Context context, int mode) {
+        int clampedMode = Math.max(MEDIA_GUARD_OFF, Math.min(mode, MEDIA_GUARD_ALWAYS));
+        prefs(context).edit().putInt(PREF_MEDIA_GUARD_MODE, clampedMode).apply();
     }
 
     static boolean isRingBatteryIndicatorEnabled(Context context) {

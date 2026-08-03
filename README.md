@@ -48,7 +48,7 @@ Everything now runs on the glasses. A one-time `Self-arm (no phone)` sets up the
 - Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
 - Lets ring swipes adjust the Rokid volume screen, and a single ring tap trigger a photo from the active camera page, without the privileged bridge.
 - Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
-- Optionally keeps screen-off ring taps on the glasses: an opt-in `Keep screen-off taps on glasses` mode stops ring media keys from reaching a paired phone while the display is off, so a tap wakes the glasses instead of launching the phone's media app.
+- Offers a three-state `Ring media key guard`: `Off` preserves normal media control, `Screen-off only` keeps dark-screen taps on the glasses, and `Always` prevents ring input from controlling media even during playback.
 
 ## Screenshots
 
@@ -145,7 +145,7 @@ The Rokid launcher does not reliably respond to normal Accessibility scroll call
 
 Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts. The app now detects that state, resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen.
 
-One deliberate exception remains by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display. While the display is off, Android routes media keys to the current media button session before any accessibility filtering — and when the glasses are connected to a phone as a Bluetooth audio sink, that session is the phone-side AVRCP controller, so a screen-off tap can land on the phone and launch its media app while the glasses stay dark. If you never start music from the ring, enable `Keep screen-off taps on glasses` in `Ring modes`: the app then claims the media button session while the screen is off, consumes ring media keys, and turns taps into a display wake instead. It releases the claim on screen-on and backs off during real playback. This guard is based on [hacha](https://x.com/hacha)'s diagnosis and [pull request](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork.
+One deliberate exception remains with the guard `Off` by default: a tap on a dark screen still acts as play/pause, so music can be started without waking the display. While the display is off, Android routes media keys to the current media button session before any accessibility filtering — and when the glasses are connected to a phone as a Bluetooth audio sink, that session is the phone-side AVRCP controller, so a screen-off tap can land on the phone and launch its media app while the glasses stay dark. Set `Ring media key guard` to `Screen-off only` in `Ring modes` if you never start music from the ring: the app then claims the media button session while the screen is off, consumes ring media keys, and turns taps into a display wake instead. It releases the claim on screen-on and backs off during real playback. `Always` keeps the claim active while the screen is on and during playback, so ring input never controls media. This guard is based on [hacha](https://x.com/hacha)'s diagnosis and [pull request](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork.
 
 ## App Screens
 
@@ -168,7 +168,7 @@ One deliberate exception remains by default: a tap on a dark screen still acts a
 - `Stable mode` restores the recommended `appType 1` media-key mode with one launcher step per slide.
 - `Fast mode` keeps `appType 1` and enables launcher acceleration after repeated slides.
 - `Touch fallback` configures `appType 4` touch-style fallback mode for debugging.
-- `Keep screen-off taps on glasses` blocks ring media keys from reaching a paired phone while the display is off; taps wake the screen instead of playing music. Off by default.
+- `Ring media key guard` cycles through `Off`, `Screen-off only`, and `Always`. Screen-off only turns dark-screen taps into a display wake; Always prevents ring input from controlling media even during playback. Off by default.
 - `AppType probe` lets you test `appType 0` through `appType 7` and inspect key output in logs.
 
 ### System
@@ -249,7 +249,7 @@ R08 Access Bridge requests:
 
 ## Credits
 
-- [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work. He also diagnosed the screen-off media-key leak to paired phones and contributed the media button session guard ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork) that `Keep screen-off taps on glasses` is built on.
+- [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work. He also diagnosed the screen-off media-key leak to paired phones and contributed the media button session guard ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork) that `Ring media key guard` is built on.
 - Reddit user `u/Rare_Wheel1907` found and confirmed the "update the ring firmware, then disconnect it from the official app before pairing" fix.
 
 ## Notes

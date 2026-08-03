@@ -6,6 +6,10 @@
 
 - Hardened R08 reconnection with main-thread GATT callback handling, stale-connection rejection, deduplicated 3/5/8/12-second backoff, setup and operation watchdogs, bond timeout recovery, and automatic reconnect when Bluetooth turns back on.
 
+### Ring media key guard
+
+- Replaced the opt-in screen-off media guard toggle with `Off`, `Screen-off only`, and `Always` modes. `Always` keeps ring media keys away from media targets even while audio is playing or the display is on; the concept is credited to [hacha's fork](https://github.com/hacha/R08-Access-Bridge).
+
 ## v1.6.4 - 2026-07-15
 
 ### Launcher battery indicator

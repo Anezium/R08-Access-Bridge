@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Keeps ring media keys from reaching a paired phone while the display is off.
+ * Keeps ring media keys from reaching a paired phone in the configured scope.
  *
  * The R08 emits HID consumer-control keys (KEYCODE_MEDIA_PLAY_PAUSE for taps,
  * MEDIA_PREVIOUS/NEXT for swipes). While the display is on, the accessibility
@@ -36,10 +36,13 @@ import java.util.Locale;
  * of inaudible silence, consumes ring media keys in its session callback, and
  * turns them into a display wake.
  *
- * The claim is scoped to the moment the keys mean "wake, not media": it is
- * taken when the screen turns off and released when the screen turns on, and it
- * backs off while other audio is actually playing so play/pause during real
- * playback keeps controlling that playback.
+ * In screen-off-only scope, the claim is taken when the screen turns off and
+ * released when the screen turns on. It backs off while other audio is actually
+ * playing so play/pause during real playback keeps controlling that playback.
+ *
+ * In always-on scope, the claim stays active while the guard is running,
+ * including while the display is on or other audio is playing, so ring input
+ * never controls a media target.
  */
 final class MediaKeyGuard {
     interface WakeDelegate {
@@ -64,6 +67,7 @@ final class MediaKeyGuard {
     private AudioTrack silence;
     private long lastClaimAt;
     private boolean started;
+    private boolean alwaysOn;
 
     private final Runnable reclaimCheck = () -> claim("playback_changed", false);
     private final Runnable releaseSilenceRunnable = this::releaseSilence;
@@ -73,7 +77,7 @@ final class MediaKeyGuard {
                 @Override
                 public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
                     handler.removeCallbacks(reclaimCheck);
-                    if (isExternalMusicActive(configs)) {
+                    if (!alwaysOn && isExternalMusicActive(configs)) {
                         releaseClaim("music_active");
                     }
                     handler.postDelayed(reclaimCheck, RECLAIM_DELAY_MS);
@@ -122,8 +126,20 @@ final class MediaKeyGuard {
         if (audioManager != null) {
             audioManager.registerAudioPlaybackCallback(playbackCallback, handler);
         }
-        if (!isInteractive()) {
+        if (alwaysOn || !isInteractive()) {
             claim("start", true);
+        }
+    }
+
+    void setAlwaysOn(boolean enabled) {
+        alwaysOn = enabled;
+        if (!started) {
+            return;
+        }
+        if (enabled) {
+            claim("guard_enabled", true);
+        } else if (isInteractive()) {
+            releaseClaim("guard_disabled");
         }
     }
 
@@ -153,7 +169,7 @@ final class MediaKeyGuard {
     }
 
     void onScreenOn() {
-        if (started) {
+        if (started && !alwaysOn) {
             releaseClaim("screen_on");
         }
     }
@@ -168,11 +184,11 @@ final class MediaKeyGuard {
                     || (lastClaimAt != 0L && sinceOwnClip < SELF_PLAYBACK_SETTLE_MS)) {
                 return;
             }
-            if (isInteractive()) {
+            if (!alwaysOn && isInteractive()) {
                 return;
             }
         }
-        if (audioManager.isMusicActive()) {
+        if (!alwaysOn && audioManager.isMusicActive()) {
             Log.d(TAG, "Claim skipped, music active reason=" + reason);
             return;
         }

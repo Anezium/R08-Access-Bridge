@@ -39,7 +39,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String COMMAND_CONFIGURE_TOUCH = "configure_touch";
     public static final String COMMAND_CONFIGURE_GESTURE = "configure_gesture";
     public static final String COMMAND_SET_FAST_NAVIGATION = "set_fast_navigation";
-    public static final String COMMAND_SET_SCREEN_OFF_MEDIA_GUARD = "set_screen_off_media_guard";
+    public static final String COMMAND_SET_MEDIA_GUARD_MODE = "set_media_guard_mode";
     public static final String COMMAND_SET_RING_BATTERY_INDICATOR = "set_ring_battery_indicator";
     public static final String COMMAND_PROBE_APP_TYPE = "probe_app_type";
     public static final String COMMAND_REQUEST_BATTERY = "request_battery";
@@ -55,6 +55,7 @@ public final class RingControlAccessibilityService extends AccessibilityService 
     public static final String EXTRA_REARM_REPLY_ID = "rearm_reply_id";
     public static final String EXTRA_APP_TYPE = "app_type";
     public static final String EXTRA_ENABLED = "enabled";
+    public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_KEY_CODE = "key_code";
 
     private static final String TAG = "R08Bridge";
@@ -159,8 +160,8 @@ public final class RingControlAccessibilityService extends AccessibilityService 
                 setTouchMode(false);
             } else if (COMMAND_SET_FAST_NAVIGATION.equals(command)) {
                 setFastNavigationMode(intent.getBooleanExtra(EXTRA_ENABLED, false));
-            } else if (COMMAND_SET_SCREEN_OFF_MEDIA_GUARD.equals(command)) {
-                setScreenOffMediaGuardEnabled(intent.getBooleanExtra(EXTRA_ENABLED, false));
+            } else if (COMMAND_SET_MEDIA_GUARD_MODE.equals(command)) {
+                setMediaGuardMode(intent.getIntExtra(EXTRA_MODE, RingModeSettings.MEDIA_GUARD_OFF));
             } else if (COMMAND_SET_RING_BATTERY_INDICATOR.equals(command)) {
                 setRingBatteryIndicatorEnabled(intent.getBooleanExtra(EXTRA_ENABLED, true));
             } else if (COMMAND_PROBE_APP_TYPE.equals(command)) {
@@ -262,9 +263,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
         Log.d(TAG, "Fast navigation mode=" + enabled);
     }
 
-    private void setScreenOffMediaGuardEnabled(boolean enabled) {
-        RingModeSettings.setScreenOffMediaGuardEnabled(this, enabled);
-        if (enabled) {
+    private void setMediaGuardMode(int mode) {
+        RingModeSettings.setMediaGuardMode(this, mode);
+        mode = RingModeSettings.getMediaGuardMode(this);
+        if (mode != RingModeSettings.MEDIA_GUARD_OFF) {
             if (mediaKeyGuard == null) {
                 mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
                 mediaKeyGuard.start();
@@ -273,7 +275,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             mediaKeyGuard.stop();
             mediaKeyGuard = null;
         }
-        Log.d(TAG, "Screen-off media guard enabled=" + enabled);
+        if (mediaKeyGuard != null) {
+            mediaKeyGuard.setAlwaysOn(mode == RingModeSettings.MEDIA_GUARD_ALWAYS);
+        }
+        Log.d(TAG, "Media guard mode=" + mode);
     }
 
     private void setRingBatteryIndicatorEnabled(boolean enabled) {
@@ -317,8 +322,10 @@ public final class RingControlAccessibilityService extends AccessibilityService 
             registerBatteryReceiver();
             batteryLauncherOverlay.start();
         }
-        if (RingModeSettings.isScreenOffMediaGuardEnabled(this)) {
+        int mediaGuardMode = RingModeSettings.getMediaGuardMode(this);
+        if (mediaGuardMode != RingModeSettings.MEDIA_GUARD_OFF) {
             mediaKeyGuard = new MediaKeyGuard(this, mainHandler, this::wakeScreenForRingInput);
+            mediaKeyGuard.setAlwaysOn(mediaGuardMode == RingModeSettings.MEDIA_GUARD_ALWAYS);
             mediaKeyGuard.start();
         }
         bleController = new RingBleController(this);
