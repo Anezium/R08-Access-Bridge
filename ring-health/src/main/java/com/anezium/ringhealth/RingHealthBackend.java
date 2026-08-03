@@ -226,6 +226,13 @@ public class RingHealthBackend {
         scheduleReconnect("scan timeout");
     };
 
+    private final Runnable reconnectRunnable = () -> {
+        if (!started || adapter == null || !adapter.isEnabled() || gattConnected || scanning) return;
+        if (reconnectAttempt >= 3) startScan();
+        else if (targetDevice != null) connectGatt(targetDevice);
+        else connectIfPossible();
+    };
+
     private final Runnable gattOperationTimeout = () -> {
         GattOperation active = gattQueue.active();
         if (active == null) return;
@@ -266,6 +273,14 @@ public class RingHealthBackend {
             if (device == null || !matchesTarget(device)) return;
             int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
             worker.post(() -> onBondState(device, state));
+        }
+    };
+
+    private final BroadcastReceiver adapterStateReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context ignored, Intent intent) {
+            if (!BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction())) return;
+            int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
+            worker.post(() -> handleAdapterState(state));
         }
     };
 
@@ -404,6 +419,8 @@ public class RingHealthBackend {
             stopScan();
             if (receiverRegistered) {
                 try { context.unregisterReceiver(bondReceiver); }
+                catch (IllegalArgumentException ignored) {}
+                try { context.unregisterReceiver(adapterStateReceiver); }
                 catch (IllegalArgumentException ignored) {}
                 receiverRegistered = false;
             }
@@ -621,16 +638,16 @@ public class RingHealthBackend {
     private void initializeBluetooth() {
         BluetoothManager manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
-        if (adapter == null) {
-            setState(ConnectionState.FATAL_ERROR, "Bluetooth adapter missing");
+        registerBluetoothReceivers();
+        if (adapter == null || !adapter.isEnabled()) {
+            setState(ConnectionState.DISCONNECTED_RETRYING, "Waiting for Bluetooth");
             return;
         }
-        registerBondReceiver();
         connectIfPossible();
     }
 
     private void connectIfPossible() {
-        if (!started || adapter == null) return;
+        if (!started || adapter == null || !adapter.isEnabled()) return;
         if (!hasConnectPermission() || !hasScanPermission()) {
             setState(ConnectionState.UNPAIRED, "Bluetooth permission required");
             return;
@@ -646,12 +663,40 @@ public class RingHealthBackend {
         }
     }
 
-    private void registerBondReceiver() {
+    private void registerBluetoothReceivers() {
         if (receiverRegistered) return;
-        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
-        if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(bondReceiver, filter, Context.RECEIVER_EXPORTED);
-        else context.registerReceiver(bondReceiver, filter);
+        IntentFilter bondFilter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        IntentFilter adapterFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(bondReceiver, bondFilter, Context.RECEIVER_EXPORTED);
+            context.registerReceiver(adapterStateReceiver, adapterFilter, Context.RECEIVER_EXPORTED);
+        } else {
+            context.registerReceiver(bondReceiver, bondFilter);
+            context.registerReceiver(adapterStateReceiver, adapterFilter);
+        }
         receiverRegistered = true;
+    }
+
+    private void handleAdapterState(int state) {
+        if (!started) return;
+        diagnostic("Bluetooth state=" + state);
+        if (state == BluetoothAdapter.STATE_ON) {
+            BluetoothManager manager =
+                    (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+            adapter = manager == null ? null : manager.getAdapter();
+            reconnectAttempt = 0;
+            cancelPendingReconnect();
+            connectIfPossible();
+        } else if (state == BluetoothAdapter.STATE_TURNING_OFF
+                || state == BluetoothAdapter.STATE_OFF) {
+            stopScan();
+            if (gatt != null) {
+                try { gatt.disconnect(); } catch (RuntimeException ignored) {}
+            }
+            handleDisconnected("Bluetooth disabled");
+            cancelPendingReconnect();
+            setState(ConnectionState.DISCONNECTED_RETRYING, "Waiting for Bluetooth");
+        }
     }
 
     private BluetoothDevice findSavedOrBonded() {
@@ -672,10 +717,9 @@ public class RingHealthBackend {
     }
 
     private void startScan() {
-        if (!hasScanPermission() || scanning) return;
+        if (!started || adapter == null || !adapter.isEnabled() || !hasScanPermission() || scanning) return;
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
-            setState(ConnectionState.FATAL_ERROR, "BLE scanner missing");
             return;
         }
         ScanSettings settings = new ScanSettings.Builder()
@@ -696,7 +740,7 @@ public class RingHealthBackend {
     }
 
     private void bondOrConnect(BluetoothDevice device) {
-        if (!hasConnectPermission()) return;
+        if (adapter == null || !adapter.isEnabled() || !hasConnectPermission()) return;
         bonded = device.getBondState() == BluetoothDevice.BOND_BONDED;
         if (!bonded) {
             setState(ConnectionState.BONDING, "waiting for Android bond");
@@ -723,7 +767,7 @@ public class RingHealthBackend {
     }
 
     private void connectGatt(BluetoothDevice device) {
-        if (!started || !hasConnectPermission()) return;
+        if (!started || adapter == null || !adapter.isEnabled() || !hasConnectPermission()) return;
         stopScan();
         closeGatt();
         targetDevice = device;
@@ -741,7 +785,6 @@ public class RingHealthBackend {
                 return;
             }
             gattConnected = true;
-            reconnectAttempt = 0;
             setState(ConnectionState.DISCOVERING_SERVICES, "GATT connected");
             if (!callbackGatt.discoverServices()) disconnectAndRetry("discoverServices rejected");
             return;
@@ -2105,18 +2148,18 @@ public class RingHealthBackend {
     }
 
     private void scheduleReconnect(String reason) {
-        if (!started) return;
+        if (!started || adapter == null || !adapter.isEnabled()) return;
         int index = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
         long delay = RECONNECT_BACKOFF_MS[index];
         reconnectAttempt++;
         setState(ConnectionState.DISCONNECTED_RETRYING,
                 reason + "; retry in " + delay / 1000.0 + "s");
-        worker.postDelayed(() -> {
-            if (!started || gattConnected || scanning) return;
-            if (reconnectAttempt >= 3) startScan();
-            else if (targetDevice != null) connectGatt(targetDevice);
-            else connectIfPossible();
-        }, delay);
+        cancelPendingReconnect();
+        worker.postDelayed(reconnectRunnable, delay);
+    }
+
+    private void cancelPendingReconnect() {
+        worker.removeCallbacks(reconnectRunnable);
     }
 
     private void closeGatt() {
