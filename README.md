@@ -49,6 +49,7 @@ Everything now runs on the glasses. A one-time `Self-arm (no phone)` sets up the
 - Lets ring swipes adjust the Rokid volume screen, and a single ring tap trigger a photo from the active camera page, without the privileged bridge.
 - Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
 - Offers a three-state `Ring media key guard`: `Off` preserves normal media control, `Screen-off only` keeps dark-screen taps on the glasses, and `Always` prevents ring input from controlling media even during playback.
+- Reads the ring's health sensors from the glasses: on-demand heart rate, SpO₂, body temperature, HRV, and stress measurements with 12-hour charts, plus daily steps, sleep sessions, history sync, and backup.
 
 ## Screenshots
 
@@ -63,6 +64,12 @@ Everything now runs on the glasses. A one-time `Self-arm (no phone)` sets up the
 <p align="center">
   <img src="docs/screenshots/quadruple-tap-bridge.png" alt="Quadruple Tap mapped to the Hi Rokid Shortcut bridge" width="190">
   <img src="docs/screenshots/quadruple-tap-options.png" alt="Quadruple Tap action options" width="190">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/health.png" alt="Health screen with Sync all and the five measurement cards" width="190">
+  <img src="docs/screenshots/health-cards.png" alt="Health screen continued: steps, sleep, autosync, and backup" width="190">
+  <img src="docs/screenshots/health-heart-rate.png" alt="Heart Rate detail with Measure Now and the 12-hour chart" width="190">
 </p>
 
 ## Controls
