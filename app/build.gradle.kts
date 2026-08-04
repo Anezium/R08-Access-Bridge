@@ -11,8 +11,8 @@ android {
         applicationId = "com.anezium.r08accessbridge"
         minSdk = 28
         targetSdk = 34
-        versionCode = 34
-        versionName = "1.8.0"
+        versionCode = 35
+        versionName = "2.0.0"
     }
 
     compileOptions {

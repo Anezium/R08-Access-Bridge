@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.0 - 2026-08-04
+
+### Ring health monitoring
+
+- New Health screen, contributed by [Alexander Zhilin](https://github.com/azhilin246) ([#2](https://github.com/Anezium/R08-Access-Bridge/pull/2)): on-demand measurements for heart rate, SpO₂, body temperature, HRV, and stress score, each with a 12-hour history chart and an automatic-measurement toggle.
+- Daily step tracking with multi-day history sync, and sleep session tracking with stage breakdown.
+- Sync all pulls every metric's history from the ring in one pass; autosync keeps it fresh in the background. Health history persists on the glasses and can be exported/imported as a backup.
+- The health transport lives in a new `ring-health` library that owns the GATT link process-wide, with the same reconnect hardening as the bridge (capped backoff, adapter state stand-down/resume, reset only once the ring is fully bootstrapped).
+
+### BLE reconnect reliability
+
+- A bonded ring that returns in range reconnects HID but stops advertising, so the health transport now keeps retrying the direct GATT connection instead of falling back to scanning it can never win. Health recovers automatically after an out-of-range round trip.
+- A ring with no temperature history no longer fails Sync all: a header-only temperature reply is an empty day, not an error.
+
 ## v1.8.0 - 2026-08-03
 
 ### BLE reconnect reliability
