@@ -65,8 +65,11 @@ public final class LegacyHistoryProtocol {
             throw new IllegalArgumentException("Unexpected legacy temperature action");
         }
         byte[] payload = frame.payload();
-        if (payload.length < 3) throw new IllegalArgumentException("Legacy temperature payload is incomplete");
+        if (payload.length < 2) throw new IllegalArgumentException("Legacy temperature payload is incomplete");
         int interval = payload[1] & 0xFF;
+        // A header-only reply (day + interval, no sample bytes) is how the ring reports a day
+        // with no temperature history.
+        if (payload.length == 2) return new Decoded(List.of(), interval);
         if (interval == 0) throw new IllegalArgumentException("Legacy temperature interval is zero");
         LocalDate anchor = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate();
         long midnight = anchor.minusDays(payload[0] & 0xFF).atStartOfDay(zone).toInstant().toEpochMilli();

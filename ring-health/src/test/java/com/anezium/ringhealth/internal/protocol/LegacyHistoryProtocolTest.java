@@ -30,6 +30,15 @@ public class LegacyHistoryProtocolTest {
         assertEquals(36.6, decoded.samples().get(0).value(), 0.0);
     }
 
+    @Test public void legacyTemperatureHeaderOnlyMeansEmptyDay() {
+        long now = ZonedDateTime.of(2026, 7, 13, 12, 0, 0, 0, MOSCOW).toInstant().toEpochMilli();
+        LargeDataProtocol.Frame frame = LargeDataProtocol.parse(
+                LargeDataProtocol.frame(0x25, new byte[]{0x00, 0x1E}));
+        LegacyHistoryProtocol.Decoded decoded = LegacyHistoryProtocol.parseTemperature(frame, now, MOSCOW);
+        assertTrue(decoded.samples().isEmpty());
+        assertEquals(30, decoded.intervalMinutes());
+    }
+
     @Test public void legacySpo2KeepsBestValidHourlyValue() {
         long now = ZonedDateTime.of(2026, 7, 13, 12, 0, 0, 0, MOSCOW).toInstant().toEpochMilli();
         byte[] payload = new byte[49];
