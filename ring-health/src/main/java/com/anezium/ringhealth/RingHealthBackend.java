@@ -228,8 +228,7 @@ public class RingHealthBackend {
 
     private final Runnable reconnectRunnable = () -> {
         if (!started || adapter == null || !adapter.isEnabled() || gattConnected || scanning) return;
-        if (reconnectAttempt >= 3) startScan();
-        else if (targetDevice != null) connectGatt(targetDevice);
+        if (targetDevice != null) connectGatt(targetDevice);
         else connectIfPossible();
     };
 
