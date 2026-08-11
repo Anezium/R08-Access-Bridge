@@ -136,6 +136,9 @@ public final class RingControlAccessibilityService extends AccessibilityService
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
                 mainHandler.removeCallbacks(screenWakeGraceClear);
                 mainHandler.postDelayed(screenWakeGraceClear, SCREEN_WAKE_GRACE_MS);
+                if (bleController != null) {
+                    bleController.resumeConnectionAttempts();
+                }
                 if (mediaKeyGuard != null) {
                     mediaKeyGuard.onScreenOn();
                 }

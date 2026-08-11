@@ -25,6 +25,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.anezium.ringhealth.domain.Capabilities;
@@ -99,6 +100,8 @@ public class RingHealthBackend {
     private static final UUID CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private static final long SCAN_TIMEOUT_MS = 25_000L;
+    private static final long GATT_CONNECTION_TIMEOUT_MS = 20_000L;
+    private static final long GATT_SERVICE_DISCOVERY_TIMEOUT_MS = 12_000L;
     private static final long GATT_OPERATION_TIMEOUT_MS = 8_000L;
     private static final long CONTROL_TIMEOUT_MS = 8_000L;
     private static final long FINAL_MEASUREMENT_TIMEOUT_MS = 3_000L;
@@ -106,6 +109,7 @@ public class RingHealthBackend {
     private static final long HISTORY_TIMEOUT_MS = 15_000L;
     private static final long SLEEP_COMPANION_GRACE_MS = 5_000L;
     private static final int SLEEP_MIN_SYNC_INTERVAL_MINUTES = 120;
+    private static final long RECONNECT_WINDOW_MS = 120_000L;
     // The database is never trimmed. Only the in-memory graph window is bounded.
     private static final long CHART_HISTORY_WINDOW_MS = 31L * 24L * 60L * 60L * 1000L;
     private static final long[] RECONNECT_BACKOFF_MS = {1_000L, 2_000L, 5_000L, 10_000L, 30_000L};
@@ -151,6 +155,8 @@ public class RingHealthBackend {
     private int notificationDescriptorsRemaining;
     private int mtu = 23;
     private int reconnectAttempt;
+    private long reconnectWindowStartedAt = -1L;
+    private boolean reconnectPaused;
 
     private ConnectionState connectionState = ConnectionState.UNPAIRED;
     private String ringName = "R08";
@@ -228,8 +234,20 @@ public class RingHealthBackend {
 
     private final Runnable reconnectRunnable = () -> {
         if (!started || adapter == null || !adapter.isEnabled() || gattConnected || scanning) return;
+        if (reconnectWindowRemainingMillis() <= 0L) {
+            pauseReconnects("retry window expired");
+            return;
+        }
         if (targetDevice != null) connectGatt(targetDevice);
         else connectIfPossible();
+    };
+
+    private final Runnable gattSetupTimeout = () -> {
+        if (!started || gatt == null || gattSetupTimeoutMillis(connectionState) < 0L) return;
+        String reason = connectionState == ConnectionState.CONNECTING_GATT
+                ? "GATT connection timeout" : "GATT service discovery timeout";
+        diagnostic(reason);
+        disconnectAndRetry(reason);
     };
 
     private final Runnable gattOperationTimeout = () -> {
@@ -265,11 +283,17 @@ public class RingHealthBackend {
 
     private final BroadcastReceiver bondReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context ignored, Intent intent) {
-            if (!BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(intent.getAction())) return;
+            String action = intent.getAction();
+            if (!BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)
+                    && !BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) return;
             BluetoothDevice device = Build.VERSION.SDK_INT >= 33
                     ? intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice.class)
                     : intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
             if (device == null || !matchesTarget(device)) return;
+            if (BluetoothDevice.ACTION_ACL_CONNECTED.equals(action)) {
+                worker.post(() -> resumeConnectionAttempts("R08 link active"));
+                return;
+            }
             int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
             worker.post(() -> onBondState(device, state));
         }
@@ -402,8 +426,9 @@ public class RingHealthBackend {
             scheduleLocalMidnightReset();
             if (!started) {
                 started = true;
+                resetReconnectWindow();
                 initializeBluetooth();
-            } else {
+            } else if (!reconnectPaused) {
                 connectIfPossible();
             }
             ensurePeriodicSyncScheduled();
@@ -415,6 +440,7 @@ public class RingHealthBackend {
         worker.post(() -> {
             started = false;
             worker.removeCallbacksAndMessages(null);
+            resetReconnectWindow();
             stopScan();
             if (receiverRegistered) {
                 try { context.unregisterReceiver(bondReceiver); }
@@ -557,6 +583,7 @@ public class RingHealthBackend {
     /** Reconnects the existing process-wide transport without creating a second GATT owner. */
     public void reconnect() {
         worker.post(() -> {
+            resetReconnectWindow();
             stopScan();
             if (gatt != null) {
                 try { gatt.disconnect(); } catch (RuntimeException ignored) {}
@@ -567,6 +594,11 @@ public class RingHealthBackend {
             setState(ConnectionState.DISCONNECTED_RETRYING, "Manual reconnect");
             connectIfPossible();
         });
+    }
+
+    /** Resumes a battery-bounded reconnect burst after a real wake/link event. */
+    public void resumeConnectionAttempts() {
+        worker.post(() -> resumeConnectionAttempts("wake event"));
     }
 
     /** Requests a fresh battery frame through the same serialized R08 command queue. */
@@ -646,7 +678,7 @@ public class RingHealthBackend {
     }
 
     private void connectIfPossible() {
-        if (!started || adapter == null || !adapter.isEnabled()) return;
+        if (!started || reconnectPaused || adapter == null || !adapter.isEnabled()) return;
         if (!hasConnectPermission() || !hasScanPermission()) {
             setState(ConnectionState.UNPAIRED, "Bluetooth permission required");
             return;
@@ -665,6 +697,7 @@ public class RingHealthBackend {
     private void registerBluetoothReceivers() {
         if (receiverRegistered) return;
         IntentFilter bondFilter = new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        bondFilter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
         IntentFilter adapterFilter = new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
         if (Build.VERSION.SDK_INT >= 33) {
             context.registerReceiver(bondReceiver, bondFilter, Context.RECEIVER_EXPORTED);
@@ -683,8 +716,7 @@ public class RingHealthBackend {
             BluetoothManager manager =
                     (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
             adapter = manager == null ? null : manager.getAdapter();
-            reconnectAttempt = 0;
-            cancelPendingReconnect();
+            resetReconnectWindow();
             connectIfPossible();
         } else if (state == BluetoothAdapter.STATE_TURNING_OFF
                 || state == BluetoothAdapter.STATE_OFF) {
@@ -716,9 +748,16 @@ public class RingHealthBackend {
     }
 
     private void startScan() {
-        if (!started || adapter == null || !adapter.isEnabled() || !hasScanPermission() || scanning) return;
+        if (!started || reconnectPaused || adapter == null || !adapter.isEnabled()
+                || !hasScanPermission() || scanning) return;
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) {
+            return;
+        }
+        beginReconnectWindow();
+        long remaining = reconnectWindowRemainingMillis();
+        if (remaining <= 0L) {
+            pauseReconnects("scan retry window expired");
             return;
         }
         ScanSettings settings = new ScanSettings.Builder()
@@ -727,7 +766,7 @@ public class RingHealthBackend {
         setState(ConnectionState.SCANNING, ringAddress.isEmpty() ? "searching for R08" : "searching for saved R08");
         scanner.startScan(null, settings, scanCallback);
         worker.removeCallbacks(scanTimeout);
-        worker.postDelayed(scanTimeout, SCAN_TIMEOUT_MS);
+        worker.postDelayed(scanTimeout, Math.min(SCAN_TIMEOUT_MS, remaining));
     }
 
     private void stopScan() {
@@ -757,6 +796,7 @@ public class RingHealthBackend {
         bonded = state == BluetoothDevice.BOND_BONDED;
         publishSnapshot();
         if (bonded) {
+            resetReconnectWindow();
             rememberTarget(device);
             connectGatt(device);
         } else if (state == BluetoothDevice.BOND_NONE) {
@@ -766,14 +806,26 @@ public class RingHealthBackend {
     }
 
     private void connectGatt(BluetoothDevice device) {
-        if (!started || adapter == null || !adapter.isEnabled() || !hasConnectPermission()) return;
+        if (!started || reconnectPaused || adapter == null || !adapter.isEnabled()
+                || !hasConnectPermission()) return;
+        beginReconnectWindow();
+        if (reconnectWindowRemainingMillis() <= 0L) {
+            pauseReconnects("connection retry window expired");
+            return;
+        }
         stopScan();
         closeGatt();
         targetDevice = device;
+        gattConnected = false;
+        notificationsReady = false;
         setState(ConnectionState.CONNECTING_GATT, safeName(device));
-        diagnostic("connectGatt " + device.getAddress());
+        diagnostic("connectGatt target=R08");
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
-        if (gatt == null) scheduleReconnect("connectGatt returned null");
+        if (gatt == null) {
+            scheduleReconnect("connectGatt returned null");
+        } else {
+            armGattSetupTimeout();
+        }
     }
 
     private void handleConnectionState(BluetoothGatt callbackGatt, int status, int newState) {
@@ -785,6 +837,7 @@ public class RingHealthBackend {
             }
             gattConnected = true;
             setState(ConnectionState.DISCOVERING_SERVICES, "GATT connected");
+            armGattSetupTimeout();
             if (!callbackGatt.discoverServices()) disconnectAndRetry("discoverServices rejected");
             return;
         }
@@ -796,6 +849,7 @@ public class RingHealthBackend {
 
     private void handleServicesDiscovered(BluetoothGatt callbackGatt, int status) {
         if (callbackGatt != gatt) return;
+        cancelGattSetupTimeout();
         if (status != BluetoothGatt.GATT_SUCCESS) {
             disconnectAndRetry("service discovery status=" + status);
             return;
@@ -931,7 +985,7 @@ public class RingHealthBackend {
     }
 
     private void markReady() {
-        reconnectAttempt = 0;
+        resetReconnectWindow();
         setState(ConnectionState.READY, "bootstrap complete");
         refreshStorage();
     }
@@ -2148,8 +2202,13 @@ public class RingHealthBackend {
 
     private void scheduleReconnect(String reason) {
         if (!started || adapter == null || !adapter.isEnabled()) return;
-        int index = Math.min(reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1);
-        long delay = RECONNECT_BACKOFF_MS[index];
+        beginReconnectWindow();
+        long remaining = reconnectWindowRemainingMillis();
+        long delay = reconnectDelayMillis(reconnectAttempt, remaining);
+        if (delay < 0L) {
+            pauseReconnects(reason);
+            return;
+        }
         reconnectAttempt++;
         setState(ConnectionState.DISCONNECTED_RETRYING,
                 reason + "; retry in " + delay / 1000.0 + "s");
@@ -2161,7 +2220,72 @@ public class RingHealthBackend {
         worker.removeCallbacks(reconnectRunnable);
     }
 
+    private void armGattSetupTimeout() {
+        long delay = gattSetupTimeoutMillis(connectionState);
+        cancelGattSetupTimeout();
+        if (delay < 0L) return;
+        long remaining = reconnectWindowRemainingMillis();
+        worker.postDelayed(gattSetupTimeout, Math.max(1L, Math.min(delay, remaining)));
+    }
+
+    private void cancelGattSetupTimeout() {
+        worker.removeCallbacks(gattSetupTimeout);
+    }
+
+    static long gattSetupTimeoutMillis(ConnectionState state) {
+        if (state == ConnectionState.CONNECTING_GATT) return GATT_CONNECTION_TIMEOUT_MS;
+        if (state == ConnectionState.DISCOVERING_SERVICES) return GATT_SERVICE_DISCOVERY_TIMEOUT_MS;
+        return -1L;
+    }
+
+    static long reconnectWindowRemainingMillis(long startedAt, long now) {
+        if (startedAt < 0L || now <= startedAt) return RECONNECT_WINDOW_MS;
+        return Math.max(0L, RECONNECT_WINDOW_MS - (now - startedAt));
+    }
+
+    static long reconnectDelayMillis(int attempt, long remaining) {
+        if (remaining <= 0L) return -1L;
+        int index = Math.min(Math.max(0, attempt), RECONNECT_BACKOFF_MS.length - 1);
+        return Math.min(RECONNECT_BACKOFF_MS[index], remaining);
+    }
+
+    private void beginReconnectWindow() {
+        if (reconnectWindowStartedAt < 0L) reconnectWindowStartedAt = SystemClock.uptimeMillis();
+    }
+
+    private long reconnectWindowRemainingMillis() {
+        return reconnectWindowRemainingMillis(reconnectWindowStartedAt, SystemClock.uptimeMillis());
+    }
+
+    private void resetReconnectWindow() {
+        reconnectAttempt = 0;
+        reconnectWindowStartedAt = -1L;
+        reconnectPaused = false;
+        cancelPendingReconnect();
+    }
+
+    private void pauseReconnects(String reason) {
+        cancelPendingReconnect();
+        cancelGattSetupTimeout();
+        stopScan();
+        closeGatt();
+        gattConnected = false;
+        notificationsReady = false;
+        notificationDescriptorsRemaining = 0;
+        reconnectPaused = true;
+        setState(ConnectionState.WAITING_FOR_WAKE,
+                reason + "; retries paused after " + RECONNECT_WINDOW_MS / 1000L + "s");
+    }
+
+    private void resumeConnectionAttempts(String reason) {
+        if (!started || !reconnectPaused) return;
+        resetReconnectWindow();
+        setState(ConnectionState.DISCONNECTED_RETRYING, reason + "; resuming retries");
+        connectIfPossible();
+    }
+
     private void closeGatt() {
+        cancelGattSetupTimeout();
         BluetoothGatt old = gatt;
         gatt = null;
         controlWrite = null;

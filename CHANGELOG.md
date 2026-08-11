@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.1 - 2026-08-11
+
+### BLE reconnect reliability
+
+- Restored connection and service-discovery watchdogs in the process-wide Health transport. Silent Android GATT attempts are now closed and retried directly, so a bonded R08 can recover after idle or an out-of-range round trip without being forgotten and paired again. Retries pause after a two-minute burst to protect glasses battery, then resume only on a real wake, R08 link, Bluetooth-on, service restart, or manual reconnect event.
+
 ## v2.0.0 - 2026-08-04
 
 ### Ring health monitoring
