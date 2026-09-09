@@ -70,6 +70,46 @@ class SelfArmSettingsTextMatcherTest {
     }
 
     @Test
+    fun containsAnyMatchesChineseSettingsLabels() {
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "使用“无线调试”",
+                "使用“无线调试”",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "使用“无线调试”",
+                "无线调试",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "使用配对码配对设备",
+                "配对码",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "要允许无线调试吗？",
+                "无线调试",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "开发者选项",
+                "开发者选项",
+            ),
+        )
+        assertTrue(
+            SelfArmSettingsTextMatcher.containsAny(
+                "版本号",
+                "版本号",
+            ),
+        )
+    }
+
+    @Test
     fun containsAnyStillAsciiFoldsLatinAccents() {
         assertTrue(
             SelfArmSettingsTextMatcher.containsAny(
