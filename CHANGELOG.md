@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.2 - 2026-09-27
+
+### The Hi Rokid shortcut now survives reboots
+
+- The maintenance self-arm restarts the shortcut bridge as well as the accessibility watchdog. Until now only the watchdog came back after a reboot, so the Hi Rokid shortcut stayed dead until a manual re-arm.
+- It also runs when the Accessibility service connects (a package the firmware force-stopped never receives `BOOT_COMPLETED`) and retries over the first minutes after boot instead of giving up after one attempt four seconds in.
+- USB debugging is switched on after the on-glasses self-arm when it was off: adbd is not started at boot otherwise, so ADB loopback never came back on glasses set up from the Hi Rokid app without a cable. When the app cannot do it, the home status line says `Enable USB debugging in Hi Rokid settings`.
+- Wireless-Debugging-paired ADB keys no longer expire after 7 days without a connection (`adb_allowed_connection_time` is set to 0), so the loopback re-arm keeps authenticating after long idle periods.
+- An ADB key provisioned by the phone companion into external storage was written as the shell user with mode 600 and threw `AccessDeniedException` on every boot, before the app-private key was even considered. The app now falls back to its own key, and the companion (0.2.9) hands the key over through the command activity instead of a file.
+- Boot re-arm outcomes are shown on the home status line (`Self-arm complete (auto re-arm)`, `Self-arm needed: ...`) so a failing boot re-arm is no longer silent.
+
 ## v2.0.1 - 2026-08-11
 
 ### BLE reconnect reliability

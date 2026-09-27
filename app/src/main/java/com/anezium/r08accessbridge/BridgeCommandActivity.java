@@ -105,6 +105,11 @@ public final class BridgeCommandActivity extends Activity {
             mappingHandled = true;
         }
 
+        String selfArmKey = intent.getStringExtra(BridgeProtocol.EXTRA_SELF_ARM_ADB_KEY);
+        if (selfArmKey != null && !selfArmKey.isEmpty()) {
+            SelfArmController.importProvisionedKey(this, selfArmKey);
+            handled = true;
+        }
         if (intent.getBooleanExtra(BridgeProtocol.EXTRA_INIT_SHORTCUT_BRIDGE, false)) {
             PrivilegedShortcutBridge.ensureReady(this);
             setBridgeArmed(true);

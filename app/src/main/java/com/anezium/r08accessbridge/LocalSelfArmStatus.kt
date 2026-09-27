@@ -98,6 +98,12 @@ object LocalSelfArmStatus {
             "self_pairing_started" -> "Self-arm: pairing local ADB"
             "self_pairing_failed" -> "Self-arm failed: " + errorMessage.ifBlank { "local ADB pairing failed" }
             "wireless_bootstrap_complete" -> "Self-arm complete"
+            // Maintenance self-arm (boot / app launch / accessibility reconnect) outcomes.
+            "auto_rearm_complete" -> "Self-arm complete (auto re-arm)"
+            "usb_debugging_off" -> "Enable USB debugging in Hi Rokid settings"
+            "adb_key_missing" -> "Self-arm needed: tap Self-arm (no phone)"
+            "adb_loopback_unreachable" -> "Self-arm needed: ADB loopback unreachable"
+            "bootstrap_rearm_failed" -> "Self-arm needed: helpers stopped, tap Self-arm again"
             "pairing_code_expired" -> "Self-arm failed: pairing code expired"
             "wifi_enable_timeout" -> "Self-arm failed: Wi-Fi did not turn on"
             "wireless_setup_timeout" -> "Self-arm failed: setup timed out"

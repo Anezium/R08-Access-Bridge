@@ -309,6 +309,9 @@ public final class RingControlAccessibilityService extends AccessibilityService
         activeService = this;
         ensureFastModeDefault(this);
         PrivilegedShortcutBridge.ensureReady(this);
+        // Fallback boot trigger: a package the firmware force-stopped does not receive
+        // BOOT_COMPLETED, but Android still binds its enabled accessibility service.
+        SelfArmController.armOnServiceConnected(this);
         CxrBootstrapBridge.start(this);
         touchMode = RingModeSettings.isTouchMode(this);
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);

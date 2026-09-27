@@ -63,11 +63,17 @@ internal class SelfArmLocalAdbBootstrapper(
                 .firstOrNull { it.contains(INSTALL_SENTINEL) }
                 .orEmpty()
             markBridgeArmed()
-            PrivilegedShortcutBridge.requestWifiEnabled(appContext, false)
             // Deliberately do NOT restart adbd here. The watchdog we just started is a
             // descendant of adbd, so "ctl.restart adbd" would kill it. persist.adb.tcp.port
             // (set in the bootstrap command) makes adbd bind 5555 on the next reboot, which
             // is all the maintenance self-arm needs; the watchdog covers recovery until then.
+            // adbd only starts at boot when USB debugging is on, though; glasses set up from
+            // Hi Rokid without a cable have it off. Switch it on now (WRITE_SECURE_SETTINGS
+            // was just granted), while Wi-Fi is still up, and repair the helpers if the
+            // switch restarted adbd underneath them.
+            val postBootstrap = SelfArmController.afterLocalBootstrap(appContext)
+            Log.i(TAG, "post-bootstrap: $postBootstrap")
+            PrivilegedShortcutBridge.requestWifiEnabled(appContext, false)
             BootstrapResult(
                 pairHost = LOCALHOST,
                 pairPort = pairPort,
@@ -186,6 +192,11 @@ internal class SelfArmLocalAdbBootstrapper(
             appendLine("chmod 755 \"\$SELF_ARM_WATCHDOG\" 2>/dev/null || true")
             appendLine("pm grant \$PKG android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1 || true")
             appendLine("settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || true")
+            // Wireless-Debugging-paired keys are revoked after 7 days without a connection by
+            // default; the maintenance self-arm authenticates with this key after every reboot.
+            appendLine("settings put global ${SelfArmController.SETTING_ADB_ALLOWED_CONNECTION_TIME} 0 >/dev/null 2>&1 || true")
+            // adb_enabled is NOT set here on purpose: toggling USB debugging can restart adbd,
+            // and this script runs inside adbd's process group. The app does it afterwards.
             appendLine("setprop persist.adb.tcp.port ${BridgeProtocol.DEFAULT_ADB_PORT} >/dev/null 2>&1 || true")
             appendLine("BRIDGE_START=\"\$(sh \"\$REMOTE_SCRIPT\" start 2>&1 || true)\"")
             appendLine("BRIDGE_STATUS=\"\$(sh \"\$REMOTE_SCRIPT\" status 2>&1 || true)\"")

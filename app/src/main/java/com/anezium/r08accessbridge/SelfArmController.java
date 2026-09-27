@@ -1,6 +1,7 @@
 package com.anezium.r08accessbridge;
 
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -15,29 +16,163 @@ import com.flyfishxu.kadb.cert.OkioFilePrivateKeyStore;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Maintenance self-arm: restarts the two shell helpers (shortcut bridge + accessibility
+ * watchdog) over local ADB loopback once the glasses have been armed at least once.
+ *
+ * Shell processes do not survive a reboot, so this is the only thing that brings the
+ * Hi Rokid shortcut back after the glasses restart. It runs from the boot receiver, from the
+ * accessibility service connecting (covers boots where BOOT_COMPLETED was not delivered
+ * because the firmware had force-stopped the app), and from every app launch.
+ */
 final class SelfArmController {
     private static final String TAG = "R08SelfArm";
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int SHELL_TIMEOUT_MS = 15000;
 
+    /** Global setting (hidden in the SDK): 0 keeps Wireless-Debugging-paired ADB keys forever. */
+    static final String SETTING_ADB_ALLOWED_CONNECTION_TIME = "adb_allowed_connection_time";
+
+    /** adbd binds 127.0.0.1:5555 late at boot, and the glasses often suspend right after booting. */
+    static final long[] BOOT_RETRY_DELAYS_MS = {4_000L, 30_000L, 90_000L, 240_000L};
+    static final long[] SERVICE_CONNECTED_RETRY_DELAYS_MS = {8_000L, 60_000L};
+    private static final long[] LAUNCH_DELAYS_MS = {0L};
+    /** Time for init to start adbd after USB debugging is switched on. */
+    private static final long ADBD_START_GRACE_MS = 4_000L;
+    /** Heartbeat TTL plus margin: after that, a stale heartbeat no longer reads as "armed". */
+    private static final long HELPER_LIVENESS_SETTLE_MS = 16_000L;
+
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
     private static volatile boolean certConfigured;
 
+    enum UsbDebugging { ON, ENABLED_NOW, OFF_NO_PERMISSION }
+
+    static final class KeyMissingException extends Exception {
+        KeyMissingException(String message) {
+            super(message);
+        }
+    }
+
+    private static final class Outcome {
+        final boolean success;
+        final boolean terminal;
+        final String state;
+        final String detail;
+
+        private Outcome(boolean success, boolean terminal, String state, String detail) {
+            this.success = success;
+            this.terminal = terminal;
+            this.state = state;
+            this.detail = detail;
+        }
+
+        static Outcome success(String detail) {
+            return new Outcome(true, true, "auto_rearm_complete", detail);
+        }
+
+        static Outcome terminal(String state, String detail) {
+            return new Outcome(false, true, state, detail);
+        }
+
+        static Outcome retry(String state, String detail) {
+            return new Outcome(false, false, state, detail);
+        }
+    }
+
+    private SelfArmController() {
+    }
+
     static void armOnLaunch(Context context) {
-        armAsync(context, "launch", 0L);
+        armAsync(context, "launch", LAUNCH_DELAYS_MS, false);
     }
 
     static void armOnBoot(Context context) {
-        armAsync(context, "boot", 4000L);
+        armAsync(context, "boot", BOOT_RETRY_DELAYS_MS, false);
     }
 
-    private static void armAsync(Context context, String reason, long initialDelayMs) {
+    /**
+     * The accessibility service (re)connected. Android binds enabled services at boot even
+     * when BOOT_COMPLETED is withheld from a force-stopped package, so this is the fallback
+     * boot trigger. Only acts when the helpers look dead: a fresh heartbeat means the shell
+     * watchdog is still alive and nothing needs restarting.
+     */
+    static void armOnServiceConnected(Context context) {
+        armAsync(context, "service_connected", SERVICE_CONNECTED_RETRY_DELAYS_MS, true);
+    }
+
+    /**
+     * Stores an ADB private key handed over by the phone companion so the maintenance
+     * self-arm can authenticate on 127.0.0.1:5555 after a reboot. The key lands in app-private
+     * storage; a file dropped in external storage by the shell user is unreadable to the app.
+     */
+    static boolean importProvisionedKey(Context context, String base64Pem) {
+        try {
+            byte[] pem = Base64.decode(base64Pem, Base64.DEFAULT);
+            File key = internalKeyFile(context.getApplicationContext());
+            File dir = key.getParentFile();
+            if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
+                throw new IOException("cannot create self-arm key dir");
+            }
+            Files.write(key.toPath(), pem);
+            synchronized (SelfArmController.class) {
+                certConfigured = false;
+            }
+            Log.i(TAG, "imported provisioned adb key bytes=" + pem.length);
+            return true;
+        } catch (IOException | IllegalArgumentException exception) {
+            Log.w(TAG, "provisioned adb key import failed", exception);
+            return false;
+        }
+    }
+
+    /**
+     * Runs synchronously at the end of the on-glasses self-arm, while Wi-Fi is still on.
+     * Makes sure adbd will come back after a reboot (USB debugging on, paired key kept) and,
+     * if switching USB debugging on restarted adbd and took the fresh helpers with it,
+     * restarts them over loopback right away.
+     */
+    static String afterLocalBootstrap(Context context) {
+        Context appContext = context.getApplicationContext();
+        UsbDebugging usb = ensureUsbDebuggingEnabled(appContext);
+        keepAdbKeysForever(appContext);
+        switch (usb) {
+            case ON:
+                return "usb debugging on";
+            case OFF_NO_PERMISSION:
+                LocalSelfArmStatus.reportSimple(appContext, "usb_debugging_off");
+                return "usb debugging OFF (enable it in Hi Rokid settings)";
+            case ENABLED_NOW:
+            default:
+                break;
+        }
+        try {
+            Thread.sleep(HELPER_LIVENESS_SETTLE_MS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return "usb debugging enabled";
+        }
+        if (PrivilegedShortcutBridge.isArmed(appContext)) {
+            return "usb debugging enabled; helpers alive";
+        }
+        Log.i(TAG, "helpers died after enabling usb debugging; re-arming over loopback");
+        try {
+            configureCert(appContext);
+            return "usb debugging enabled; re-armed: " + armOverLoopback(appContext);
+        } catch (Exception exception) {
+            Log.w(TAG, "post-bootstrap loopback re-arm failed", exception);
+            LocalSelfArmStatus.reportSimple(appContext, "bootstrap_rearm_failed");
+            return "usb debugging enabled; loopback re-arm failed: " + firstLine(shortMessage(exception));
+        }
+    }
+
+    private static void armAsync(Context context, String reason, long[] delaysMs, boolean onlyWhenHelpersDown) {
         Context appContext = context.getApplicationContext();
         if (!isBridgeArmed(appContext)) {
             Log.d(TAG, "skip self-arm reason=" + reason + " bridge not armed");
@@ -47,17 +182,38 @@ final class SelfArmController {
             Log.d(TAG, "skip self-arm reason=" + reason + " no provisioned adb key");
             return;
         }
+        if (onlyWhenHelpersDown && PrivilegedShortcutBridge.isArmed(appContext)) {
+            Log.d(TAG, "skip self-arm reason=" + reason + " helpers alive");
+            return;
+        }
         if (!RUNNING.compareAndSet(false, true)) {
             Log.d(TAG, "skip self-arm reason=" + reason + " already running");
             return;
         }
         Thread thread = new Thread(() -> {
             try {
-                if (initialDelayMs > 0L) {
-                    Thread.sleep(initialDelayMs);
+                Outcome last = null;
+                for (int attempt = 1; attempt <= delaysMs.length; attempt++) {
+                    long delay = delaysMs[attempt - 1];
+                    if (delay > 0L) {
+                        Thread.sleep(delay);
+                    }
+                    last = armOnce(appContext);
+                    Log.i(TAG, "self-arm " + reason + " attempt=" + attempt + "/" + delaysMs.length
+                            + " state=" + last.state + " " + last.detail);
+                    if (last.success) {
+                        LocalSelfArmStatus.reportSimple(appContext, last.state);
+                        return;
+                    }
+                    if (last.terminal) {
+                        break;
+                    }
                 }
-                String status = arm(appContext);
-                Log.i(TAG, "self-arm " + reason + ": " + status);
+                if (last != null && !PrivilegedShortcutBridge.isArmed(appContext)) {
+                    // Only surface the failure when the helpers are really down; a fresh
+                    // heartbeat means ring control works and nothing needs the user's attention.
+                    LocalSelfArmStatus.reportSimple(appContext, last.state);
+                }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 Log.d(TAG, "self-arm interrupted reason=" + reason);
@@ -71,35 +227,117 @@ final class SelfArmController {
         thread.start();
     }
 
-    private static String arm(Context context) throws Exception {
+    private static Outcome armOnce(Context context) throws InterruptedException {
         String secureStatus = repairAccessibilityFromApp(context);
-        configureCert(context);
+        UsbDebugging usb = ensureUsbDebuggingEnabled(context);
+        if (usb == UsbDebugging.OFF_NO_PERMISSION) {
+            return Outcome.terminal("usb_debugging_off", "failed: USB debugging off and no WRITE_SECURE_SETTINGS");
+        }
+        if (usb == UsbDebugging.ENABLED_NOW) {
+            Thread.sleep(ADBD_START_GRACE_MS);
+        }
+        keepAdbKeysForever(context);
+        try {
+            configureCert(context);
+        } catch (KeyMissingException exception) {
+            return Outcome.terminal("adb_key_missing", "failed: " + exception.getMessage());
+        }
+        try {
+            return Outcome.success(secureStatus + armOverLoopback(context));
+        } catch (InterruptedException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            return Outcome.retry("adb_loopback_unreachable", "failed: " + firstLine(shortMessage(exception)));
+        }
+    }
 
-        String encodedScript = Base64.encodeToString(readRawResource(context, R.raw.r08_a11y_watchdog), Base64.NO_WRAP);
+    /**
+     * Pushes both helper scripts over 127.0.0.1:5555 and starts them. Both "start" verbs are
+     * idempotent ("already running pid=..."), so this is safe while an old instance is alive.
+     */
+    private static String armOverLoopback(Context context) throws Exception {
+        String bridgeScript = Base64.encodeToString(readRawResource(context, R.raw.r08_shortcut_bridge), Base64.NO_WRAP);
+        String watchdogScript = Base64.encodeToString(readRawResource(context, R.raw.r08_a11y_watchdog), Base64.NO_WRAP);
+        // The bridge polls the request file from its first loop; create it before starting.
+        PrivilegedShortcutBridge.ensureReady(context);
         Kadb kadb = null;
         try {
             kadb = new Kadb(BridgeProtocol.ADB_LOOPBACK_HOST, BridgeProtocol.DEFAULT_ADB_PORT,
                     CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS);
             String probe = kadb.shell("echo r08-self-arm").getOutput().trim();
             if (!probe.endsWith("r08-self-arm")) {
-                return "failed: adb probe mismatch " + firstLine(probe);
+                throw new IOException("adb probe mismatch " + firstLine(probe));
             }
-
-            kadb.shell("printf '%s' '" + encodedScript + "' | base64 -d > "
-                    + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT);
-            kadb.shell("chmod 755 " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT);
-            String status = kadb.shell("sh " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " start")
+            installScript(kadb, bridgeScript, BridgeProtocol.REMOTE_SCRIPT);
+            installScript(kadb, watchdogScript, BridgeProtocol.REMOTE_WATCHDOG_SCRIPT);
+            String bridgeStatus = firstLine(kadb.shell("sh " + BridgeProtocol.REMOTE_SCRIPT + " start")
                     .getOutput()
-                    .trim();
-            return secureStatus + "watchdog " + firstLine(status);
+                    .trim());
+            String watchdogStatus = firstLine(kadb.shell("sh " + BridgeProtocol.REMOTE_WATCHDOG_SCRIPT + " start")
+                    .getOutput()
+                    .trim());
+            if (!bridgeStatus.contains("pid=")) {
+                throw new IOException("shortcut bridge did not start: " + bridgeStatus);
+            }
+            if (!watchdogStatus.contains("pid=")) {
+                throw new IOException("watchdog did not start: " + watchdogStatus);
+            }
+            return "bridge " + bridgeStatus + "; watchdog " + watchdogStatus;
         } finally {
             if (kadb != null) {
                 try {
                     kadb.close();
                 } catch (RuntimeException ignored) {
-                    // Nothing useful to recover here; the shell command already completed.
+                    // Nothing useful to recover here; the shell commands already completed.
                 }
             }
+        }
+    }
+
+    private static void installScript(Kadb kadb, String encodedScript, String remotePath) {
+        kadb.shell("printf '%s' '" + encodedScript + "' | base64 -d > " + remotePath);
+        kadb.shell("chmod 755 " + remotePath);
+    }
+
+    /**
+     * adbd only starts at boot when USB debugging is on (or Wireless Debugging, which Android
+     * switches off with Wi-Fi). Glasses set up from the Hi Rokid app without a cable usually
+     * have it off, so 127.0.0.1:5555 never comes back after a reboot. Switching it on needs
+     * WRITE_SECURE_SETTINGS, which the self-arm bootstrap grants.
+     */
+    static UsbDebugging ensureUsbDebuggingEnabled(Context context) {
+        ContentResolver resolver = context.getContentResolver();
+        if (Settings.Global.getInt(resolver, Settings.Global.ADB_ENABLED, 0) == 1) {
+            return UsbDebugging.ON;
+        }
+        try {
+            if (Settings.Global.putInt(resolver, Settings.Global.ADB_ENABLED, 1)) {
+                Log.i(TAG, "usb debugging was off; enabled it so adbd survives reboots");
+                return UsbDebugging.ENABLED_NOW;
+            }
+            Log.w(TAG, "usb debugging is off and could not be enabled");
+        } catch (SecurityException exception) {
+            Log.w(TAG, "usb debugging is off; WRITE_SECURE_SETTINGS not granted", exception);
+        }
+        return UsbDebugging.OFF_NO_PERMISSION;
+    }
+
+    /**
+     * Keys paired through Wireless Debugging are revoked after 7 days without a connection by
+     * default. The maintenance self-arm relies on that key, so keep it indefinitely.
+     */
+    static void keepAdbKeysForever(Context context) {
+        ContentResolver resolver = context.getContentResolver();
+        try {
+            long current = Settings.Global.getLong(resolver, SETTING_ADB_ALLOWED_CONNECTION_TIME, -1L);
+            if (current == 0L) {
+                return;
+            }
+            if (Settings.Global.putLong(resolver, SETTING_ADB_ALLOWED_CONNECTION_TIME, 0L)) {
+                Log.i(TAG, "adb key expiry disabled (was " + current + " ms)");
+            }
+        } catch (SecurityException exception) {
+            Log.d(TAG, "cannot change adb key expiry; WRITE_SECURE_SETTINGS not granted");
         }
     }
 
@@ -157,23 +395,11 @@ final class SelfArmController {
         return false;
     }
 
-    private static synchronized void configureCert(Context context) throws Exception {
+    private static synchronized void configureCert(Context context) throws KeyMissingException {
         if (certConfigured) {
             return;
         }
-        File key = internalKeyFile(context);
-        File provisioned = provisionedKeyFile(context);
-        if (provisioned.isFile()) {
-            File dir = key.getParentFile();
-            if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
-                throw new IllegalStateException("cannot create self-arm key dir");
-            }
-            Files.copy(provisioned.toPath(), key.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        }
-        if (!key.isFile()) {
-            throw new IllegalStateException("self-arm adb key missing");
-        }
-
+        File key = resolveSelfArmKey(internalKeyFile(context), provisionedKeyFile(context));
         KadbCert.INSTANCE.configure(
                 new OkioFilePrivateKeyStore(
                         okio.Path.Companion.get(key.getAbsolutePath()),
@@ -181,6 +407,36 @@ final class SelfArmController {
                 new KadbCertPolicy(),
                 Collections.emptyList());
         certConfigured = true;
+    }
+
+    /**
+     * Picks the private key the maintenance self-arm authenticates with.
+     *
+     * A key provisioned into external storage is imported into app-private storage when it can
+     * be read. Older phone companions wrote it as the shell user with mode 600, which the app
+     * cannot read through FUSE; that copy must not block a key the app already holds.
+     */
+    static File resolveSelfArmKey(File internal, File provisioned) throws KeyMissingException {
+        if (provisioned.isFile()) {
+            try {
+                File dir = internal.getParentFile();
+                if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
+                    throw new IOException("cannot create self-arm key dir");
+                }
+                Files.copy(provisioned.toPath(), internal.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                Log.i(TAG, "imported provisioned adb key from external storage");
+            } catch (IOException | SecurityException exception) {
+                if (!internal.isFile()) {
+                    throw new KeyMissingException("provisioned adb key unreadable: "
+                            + firstLine(shortMessage(exception)));
+                }
+                Log.w(TAG, "provisioned adb key unreadable; using the app-private key", exception);
+            }
+        }
+        if (!internal.isFile()) {
+            throw new KeyMissingException("self-arm adb key missing");
+        }
+        return internal;
     }
 
     private static boolean isBridgeArmed(Context context) {
@@ -218,14 +474,18 @@ final class SelfArmController {
         }
     }
 
+    private static String shortMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? throwable.getClass().getSimpleName()
+                : message.trim();
+    }
+
     private static String firstLine(String value) {
         if (value == null) {
             return "";
         }
         int newline = value.indexOf('\n');
-        return newline < 0 ? value : value.substring(0, newline);
-    }
-
-    private SelfArmController() {
+        return newline >= 0 ? value.substring(0, newline).trim() : value.trim();
     }
 }

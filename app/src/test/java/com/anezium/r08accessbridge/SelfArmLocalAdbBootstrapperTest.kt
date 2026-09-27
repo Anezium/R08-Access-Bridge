@@ -24,6 +24,11 @@ class SelfArmLocalAdbBootstrapperTest {
         assertTrue(command.contains("sh \"\$REMOTE_SCRIPT\" start"))
         assertTrue(command.contains("sh \"\$REMOTE_WATCHDOG\" start"))
         assertTrue(command.contains("setprop persist.adb.tcp.port ${BridgeProtocol.DEFAULT_ADB_PORT}"))
+        // The paired key must outlive the default 7-day Wireless Debugging key expiry.
+        assertTrue(command.contains("settings put global adb_allowed_connection_time 0"))
+        // USB debugging is switched on by the app after the bootstrap, never from inside the
+        // adbd shell: toggling it can restart adbd and kill this very script and its helpers.
+        assertFalse(command.contains("adb_enabled"))
         assertTrue(command.contains(BridgeProtocol.EXTRA_INIT_SHORTCUT_BRIDGE))
         assertTrue(command.contains(BridgeProtocol.ACTION_HI_ROKID_SHORTCUT))
         assertTrue(command.contains(BridgeProtocol.COMMAND_WIFI_DISABLE))

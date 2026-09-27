@@ -66,6 +66,12 @@ public final class BridgeProtocol {
     public static final String EXTRA_SET_BRIDGE_ARMED = "set_bridge_armed";
     /** Debug extra: --ez run_enable_wifi_flow true → runs the re-arm enable-Wi-Fi+adb flow standalone. */
     public static final String EXTRA_RUN_ENABLE_WIFI_FLOW = "run_enable_wifi_flow";
+    /**
+     * Base64 PEM of the ADB private key the phone companion is trusted with. The glasses app
+     * stores it in app-private storage for the maintenance self-arm; a file written into
+     * external storage by the shell user is unreadable to the app.
+     */
+    public static final String EXTRA_SELF_ARM_ADB_KEY = "self_arm_adb_key";
 
     public static final String ACTION_HI_ROKID_SHORTCUT = "hi_rokid_shortcut";
     public static final String BRIDGE_DIR_NAME = "shortcut_bridge";

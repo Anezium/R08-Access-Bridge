@@ -444,9 +444,17 @@ final class AdbBridgeClient {
             if (!privateKey.isFile()) {
                 return "\nSelf-arm: skipped; pair Wireless Debugging once so the phone has a trusted ADB key.";
             }
+            // Hand the key to the app through its command activity so it lands in app-private
+            // storage. Writing it into external storage from this shell session left a
+            // shell-owned, mode-600 file the app could never read, which broke every re-arm
+            // after a reboot.
+            String encodedKey = Base64.encodeToString(Files.readAllBytes(privateKey.toPath()), Base64.NO_WRAP);
+            runChecked(adb, commandActivityStart()
+                    + " --es " + BridgeProtocol.EXTRA_SELF_ARM_ADB_KEY + " " + encodedKey
+                    + " --ez " + BridgeProtocol.EXTRA_EXIT_AFTER_COMMAND + " true");
+            Thread.sleep(600L);
+            runChecked(adb, "rm -f " + BridgeProtocol.selfArmAdbKeyPath() + " 2>/dev/null || true");
             runChecked(adb, "mkdir -p " + BridgeProtocol.selfArmDir());
-            writeRemoteBytes(adb, Files.readAllBytes(privateKey.toPath()),
-                    BridgeProtocol.selfArmAdbKeyPath(), "600");
             installRawResourceScript(adb, R.raw.r08_a11y_watchdog, BridgeProtocol.selfArmWatchdogScriptPath());
             return "\nSelf-arm: app-open re-arm provisioned.";
         } catch (Throwable throwable) {
@@ -454,17 +462,31 @@ final class AdbBridgeClient {
         }
     }
 
+    /**
+     * What the glasses need so 127.0.0.1:5555 comes back after a reboot: USB debugging on
+     * (adbd is not started at boot otherwise), the port pinned, and the paired key kept past
+     * Android's default 7-day Wireless Debugging key expiry. Toggling USB debugging can
+     * restart adbd, so it is done last, together with the restart this method may request.
+     */
     private String ensureLoopbackAdb(AdbSession adb) {
         try {
             runChecked(adb, "setprop persist.adb.tcp.port "
                     + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
             runChecked(adb, "setprop service.adb.tcp.port "
                     + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
+            runChecked(adb, "settings put global adb_allowed_connection_time 0 >/dev/null 2>&1 || true");
+            String usbStatus = "";
+            if (!isUsbDebuggingEnabled(adb)) {
+                runChecked(adb, "settings put global adb_enabled 1 >/dev/null 2>&1 || true");
+                usbStatus = isUsbDebuggingEnabled(adb)
+                        ? "\nUSB debugging: was off, now on (needed so the bridge survives reboots)."
+                        : USB_DEBUGGING_OFF_HINT;
+            }
             String listening = runChecked(adb,
                     "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -i ':15B3 ' | grep -i ' 0A ' || true")
                     .trim();
             if (!listening.isEmpty()) {
-                return "\nADB loopback: active on 127.0.0.1:" + BridgeProtocol.DEFAULT_ADB_PORT + ".";
+                return "\nADB loopback: active on 127.0.0.1:" + BridgeProtocol.DEFAULT_ADB_PORT + "." + usbStatus;
             }
             try {
                 adb.shell("(setprop ctl.restart adbd >/dev/null 2>&1 || true) &");
@@ -473,21 +495,30 @@ final class AdbBridgeClient {
             }
             return "\nADB loopback: configured on 127.0.0.1:"
                     + BridgeProtocol.DEFAULT_ADB_PORT
-                    + " (adbd restart requested).";
+                    + " (adbd restart requested)." + usbStatus;
         } catch (Throwable throwable) {
             return "\nADB loopback setup failed: " + shortMessage(throwable);
         }
     }
 
+    private static final String USB_DEBUGGING_OFF_HINT =
+            "\nUSB debugging is OFF on the glasses. Without it the bridge cannot re-arm itself after a "
+                    + "reboot: enable USB debugging in the Hi Rokid app (glasses settings → Developer options), "
+                    + "then re-arm once.";
+
+    private boolean isUsbDebuggingEnabled(AdbSession adb) throws IOException {
+        return "1".equals(adb.runChecked("settings get global adb_enabled 2>/dev/null").trim());
+    }
+
     private String readSelfArmStatus(AdbSession adb) {
         try {
-            String keyStatus = adb.runChecked("[ -f " + BridgeProtocol.selfArmAdbKeyPath()
-                    + " ] && echo key=present || echo key=missing").trim();
+            String usb = isUsbDebuggingEnabled(adb) ? "usb_debugging=on" : "usb_debugging=off";
             String loopback = adb.runChecked(
                     "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -i ':15B3 ' | grep -i ' 0A ' >/dev/null "
                             + "&& echo loopback=active || echo loopback=inactive")
                     .trim();
-            return "\nSelf-arm: " + keyStatus + " " + loopback;
+            String status = "\nSelf-arm: " + usb + " " + loopback;
+            return usb.endsWith("=off") ? status + USB_DEBUGGING_OFF_HINT : status;
         } catch (IOException exception) {
             return "\nSelf-arm: status unavailable";
         }
