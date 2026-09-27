@@ -9,6 +9,7 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.text.InputType;
+import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -24,8 +25,6 @@ import android.widget.TextView;
 
 import com.anezium.r08bridgeprotocol.BridgeProtocol;
 
-import java.text.DateFormat;
-import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -1252,7 +1251,7 @@ public final class PhoneCompanionActivity extends Activity {
             return;
         }
         setStatusLine(watchdogStatusText, "Watchdog",
-                watchdogStateLabel(status) + " (last checked " + formatTimestamp(checkedAt) + ")",
+                watchdogStateLabel(status) + " · checked " + formatTimestamp(checkedAt),
                 watchdogStatusColor(status, false));
     }
 
@@ -1275,9 +1274,8 @@ public final class PhoneCompanionActivity extends Activity {
         if (watchdogStatusText == null) {
             return;
         }
-        String suffix = live ? "checked " : "last checked ";
         setStatusLine(watchdogStatusText, "Watchdog",
-                watchdogStateLabel(status) + " (" + suffix + formatTimestamp(checkedAt) + ")",
+                watchdogStateLabel(status) + " · checked " + formatTimestamp(checkedAt),
                 watchdogStatusColor(status, live));
     }
 
@@ -1337,8 +1335,19 @@ public final class PhoneCompanionActivity extends Activity {
         if (timestamp <= 0L) {
             return "unknown time";
         }
-        return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                .format(new Date(timestamp));
+        // Relative age ("2 months ago") makes a stale check obvious at a glance.
+        long age = Math.max(0L, System.currentTimeMillis() - timestamp);
+        if (age < DateUtils.MINUTE_IN_MILLIS) {
+            return "just now";
+        }
+        if (age < DateUtils.HOUR_IN_MILLIS) {
+            return (age / DateUtils.MINUTE_IN_MILLIS) + " min ago";
+        }
+        if (age < DateUtils.DAY_IN_MILLIS) {
+            return (age / DateUtils.HOUR_IN_MILLIS) + " h ago";
+        }
+        long days = age / DateUtils.DAY_IN_MILLIS;
+        return days == 1 ? "1 day ago" : days + " days ago";
     }
 
     // -------------------------------------------------------------------------
