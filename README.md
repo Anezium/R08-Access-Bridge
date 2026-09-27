@@ -201,7 +201,7 @@ If the ring then connects and shows its battery on the glasses but no gesture ev
 ### Set up on the glasses
 
 ```powershell
-adb install -r R08-Access-Bridge-v2.0.1.apk
+adb install -r R08-Access-Bridge-v2.0.2.apk
 ```
 
 1. Open `R08 Access Bridge` and grant Bluetooth permissions if Android asks.

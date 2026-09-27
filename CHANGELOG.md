@@ -14,6 +14,7 @@
 - Boot re-arm outcomes are shown on the home status line (`Self-arm complete (auto re-arm)`, `Self-arm needed: ...`) so a failing boot re-arm is no longer silent.
 - Stage external ADB key imports before replacing the private key: Android can otherwise delete the fallback key before discovering that the shell-owned source is unreadable.
 - Verify the shortcut helper's command before trusting a saved PID, so a PID reused after reboot cannot falsely report that the shortcut is already running.
+- Legacy phone companion (0.2.9): the screen was redesigned for readability. It keeps its headline in step with the arming state, explains what the glasses need (including USB debugging from the Hi Rokid app), and shows how old the last watchdog check is.
 
 ## v2.0.1 - 2026-08-11
 
