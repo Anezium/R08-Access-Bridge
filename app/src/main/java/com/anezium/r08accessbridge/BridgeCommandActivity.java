@@ -152,5 +152,6 @@ public final class BridgeCommandActivity extends Activity {
     private void setBridgeArmed(boolean armed) {
         SharedPreferences prefs = getSharedPreferences(BridgeProtocol.PREFS_BRIDGE, MODE_PRIVATE);
         prefs.edit().putBoolean(BridgeProtocol.PREF_BRIDGE_ARMED, armed).apply();
+        NexusCoexistence.setArmed(this, armed);
     }
 }

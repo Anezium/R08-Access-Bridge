@@ -4,6 +4,8 @@
 
 ### The Hi Rokid shortcut now survives reboots
 
+- Cooperate with Nexus's updated accessibility watchdog: it can restore both previously provisioned R08 helpers without opening port 5555. R08 waits for a live Nexus watchdog and confirms recovery from its bridge heartbeat; the companion and local setup preserve Nexus's ADB port policy. Requires the Nexus watchdog version `2026-09-27.1` or newer and one R08 arm to register recovery. Disarming R08 disables this recovery.
+
 - The maintenance self-arm restarts the shortcut bridge as well as the accessibility watchdog. Until now only the watchdog came back after a reboot, so the Hi Rokid shortcut stayed dead until a manual re-arm.
 - It also runs when the Accessibility service connects (a package the firmware force-stopped never receives `BOOT_COMPLETED`) and retries over the first minutes after boot instead of giving up after one attempt four seconds in.
 - USB debugging is switched on after the on-glasses self-arm when it was off: adbd is not started at boot otherwise, so ADB loopback never came back on glasses set up from the Hi Rokid app without a cable. When the app cannot do it, the home status line says `Enable USB debugging in Hi Rokid settings`.

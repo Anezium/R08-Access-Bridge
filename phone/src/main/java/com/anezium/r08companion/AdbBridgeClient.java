@@ -341,6 +341,7 @@ final class AdbBridgeClient {
     }
 
     BridgeOperationResult disable(AdbSession adb) throws IOException {
+        runChecked(adb, "settings put global " + BridgeProtocol.NEXUS_ARMED_SETTING + " 0");
         try {
             runChecked(adb, commandActivityStart()
                     + " --ez " + BridgeProtocol.EXTRA_SET_BRIDGE_ARMED + " false"
@@ -470,6 +471,13 @@ final class AdbBridgeClient {
      */
     private String ensureLoopbackAdb(AdbSession adb) {
         try {
+            runChecked(adb, "settings put global " + BridgeProtocol.NEXUS_ARMED_SETTING + " 1");
+            String nexus = runChecked(adb, "if " + BridgeProtocol.nexusWatchdogPresentCommand()
+                    + "; then echo nexus; fi").trim();
+            if ("nexus".equals(nexus)) {
+                return "\nNexus watchdog detected: keeping its ADB configuration."
+                        + " Update Nexus for automatic R08 recovery.";
+            }
             runChecked(adb, "setprop persist.adb.tcp.port "
                     + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
             runChecked(adb, "setprop service.adb.tcp.port "

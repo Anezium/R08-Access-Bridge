@@ -197,7 +197,10 @@ internal class SelfArmLocalAdbBootstrapper(
             appendLine("settings put global ${SelfArmController.SETTING_ADB_ALLOWED_CONNECTION_TIME} 0 >/dev/null 2>&1 || true")
             // adb_enabled is NOT set here on purpose: toggling USB debugging can restart adbd,
             // and this script runs inside adbd's process group. The app does it afterwards.
-            appendLine("setprop persist.adb.tcp.port ${BridgeProtocol.DEFAULT_ADB_PORT} >/dev/null 2>&1 || true")
+            appendLine("settings put global ${BridgeProtocol.NEXUS_ARMED_SETTING} 1")
+            appendLine("if ! ( ${BridgeProtocol.nexusWatchdogPresentCommand()} ); then")
+            appendLine("  setprop persist.adb.tcp.port ${BridgeProtocol.DEFAULT_ADB_PORT} >/dev/null 2>&1 || true")
+            appendLine("fi")
             appendLine("BRIDGE_START=\"\$(sh \"\$REMOTE_SCRIPT\" start 2>&1 || true)\"")
             appendLine("BRIDGE_STATUS=\"\$(sh \"\$REMOTE_SCRIPT\" status 2>&1 || true)\"")
             appendLine("WATCHDOG_START=\"\$(sh \"\$REMOTE_WATCHDOG\" start 2>&1 || true)\"")

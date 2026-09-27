@@ -12,6 +12,14 @@ public final class BridgeProtocol {
     public static final int CXR_PROTOCOL_VERSION = 1;
     public static final int DEFAULT_ADB_PORT = 5555;
     public static final String ADB_LOOPBACK_HOST = "127.0.0.1";
+    public static final String NEXUS_ARMED_SETTING = "r08_access_bridge_armed";
+
+    /** Shell-side detection also works while Nexus is still starting after a reboot. */
+    public static String nexusWatchdogPresentCommand() {
+        return "[ -f /data/local/tmp/rokid-nexus-a11y-watchdog.sh ]"
+                + " && pm list packages -e com.anezium.rokidbus.glasses"
+                + " | grep -qx 'package:com.anezium.rokidbus.glasses'";
+    }
 
     public static final String TYPE_BOOTSTRAP = "bootstrap";
     public static final String TYPE_REFRESH_IP = "refresh_ip";

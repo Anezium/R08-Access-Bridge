@@ -24,6 +24,8 @@ class SelfArmLocalAdbBootstrapperTest {
         assertTrue(command.contains("sh \"\$REMOTE_SCRIPT\" start"))
         assertTrue(command.contains("sh \"\$REMOTE_WATCHDOG\" start"))
         assertTrue(command.contains("setprop persist.adb.tcp.port ${BridgeProtocol.DEFAULT_ADB_PORT}"))
+        assertTrue(command.contains("if ! ( ${BridgeProtocol.nexusWatchdogPresentCommand()} ); then"))
+        assertTrue(command.contains("settings put global ${BridgeProtocol.NEXUS_ARMED_SETTING} 1"))
         // The paired key must outlive the default 7-day Wireless Debugging key expiry.
         assertTrue(command.contains("settings put global adb_allowed_connection_time 0"))
         // USB debugging is switched on by the app after the bootstrap, never from inside the

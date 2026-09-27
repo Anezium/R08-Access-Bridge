@@ -25,13 +25,12 @@ import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Maintenance self-arm: restarts the two shell helpers (shortcut bridge + accessibility
- * watchdog) over local ADB loopback once the glasses have been armed at least once.
+ * Maintenance self-arm: restores the two shell helpers over local ADB, or waits for
+ * Nexus's cooperating watchdog when Nexus owns ADB, after the first successful setup.
  *
- * Shell processes do not survive a reboot, so this is the only thing that brings the
- * Hi Rokid shortcut back after the glasses restart. It runs from the boot receiver, from the
- * accessibility service connecting (covers boots where BOOT_COMPLETED was not delivered
- * because the firmware had force-stopped the app), and from every app launch.
+ * Shell processes do not survive a reboot. Recovery runs from the boot receiver,
+ * accessibility service connection, and app launch. Some firmware withholds both boot
+ * delivery and the accessibility binding after a force-stop; opening the app then recovers it.
  */
 final class SelfArmController {
     private static final String TAG = "R08SelfArm";
@@ -43,7 +42,7 @@ final class SelfArmController {
 
     /** adbd binds 127.0.0.1:5555 late at boot, and the glasses often suspend right after booting. */
     static final long[] BOOT_RETRY_DELAYS_MS = {4_000L, 30_000L, 90_000L, 240_000L};
-    static final long[] SERVICE_CONNECTED_RETRY_DELAYS_MS = {8_000L, 60_000L};
+    static final long[] SERVICE_CONNECTED_RETRY_DELAYS_MS = {8_000L, 30_000L, 90_000L, 240_000L};
     private static final long[] LAUNCH_DELAYS_MS = {0L};
     /** Time for init to start adbd after USB debugging is switched on. */
     private static final long ADBD_START_GRACE_MS = 4_000L;
@@ -61,7 +60,7 @@ final class SelfArmController {
         }
     }
 
-    private static final class Outcome {
+    static final class Outcome {
         final boolean success;
         final boolean terminal;
         final String state;
@@ -99,9 +98,8 @@ final class SelfArmController {
     }
 
     /**
-     * The accessibility service (re)connected. Android binds enabled services at boot even
-     * when BOOT_COMPLETED is withheld from a force-stopped package, so this is the fallback
-     * boot trigger. Only acts when the helpers look dead: a fresh heartbeat means the shell
+     * The accessibility service (re)connected, providing another boot trigger when the
+     * firmware permits the binding. Only acts when the helpers look dead: a fresh heartbeat means the shell
      * watchdog is still alive and nothing needs restarting.
      */
     static void armOnServiceConnected(Context context) {
@@ -141,6 +139,10 @@ final class SelfArmController {
      */
     static String afterLocalBootstrap(Context context) {
         Context appContext = context.getApplicationContext();
+        NexusCoexistence.setArmed(appContext, true);
+        if (NexusCoexistence.isAvailable(appContext) || NexusCoexistence.isConfigured(appContext)) {
+            return "Nexus manages ADB; recovery requires its updated watchdog";
+        }
         UsbDebugging usb = ensureUsbDebuggingEnabled(appContext);
         keepAdbKeysForever(appContext);
         switch (usb) {
@@ -176,13 +178,11 @@ final class SelfArmController {
     private static void armAsync(Context context, String reason, long[] delaysMs, boolean onlyWhenHelpersDown) {
         Context appContext = context.getApplicationContext();
         if (!isBridgeArmed(appContext)) {
+            NexusCoexistence.setArmed(appContext, false);
             Log.d(TAG, "skip self-arm reason=" + reason + " bridge not armed");
             return;
         }
-        if (!hasProvisionedKey(appContext)) {
-            Log.d(TAG, "skip self-arm reason=" + reason + " no provisioned adb key");
-            return;
-        }
+        NexusCoexistence.setArmed(appContext, true);
         if (onlyWhenHelpersDown && PrivilegedShortcutBridge.isArmed(appContext)) {
             Log.d(TAG, "skip self-arm reason=" + reason + " helpers alive");
             return;
@@ -199,6 +199,7 @@ final class SelfArmController {
                     if (delay > 0L) {
                         Thread.sleep(delay);
                     }
+                    if (!isBridgeArmed(appContext)) return;
                     last = armOnce(appContext);
                     Log.i(TAG, "self-arm " + reason + " attempt=" + attempt + "/" + delaysMs.length
                             + " state=" + last.state + " " + last.detail);
@@ -228,8 +229,16 @@ final class SelfArmController {
         thread.start();
     }
 
-    private static Outcome armOnce(Context context) throws InterruptedException {
+    static Outcome armOnce(Context context) throws InterruptedException {
         String secureStatus = repairAccessibilityFromApp(context);
+        if (PrivilegedShortcutBridge.isArmed(context)) {
+            return Outcome.success(secureStatus + "helpers alive");
+        }
+        if (NexusCoexistence.isAvailable(context) || NexusCoexistence.isConfigured(context)) {
+            // Nexus may still be bootstrapping. Enabling USB here can restart its adbd
+            // session and kill its newly started helpers, so leave its transport alone.
+            return Outcome.retry("nexus_rearm_pending", "waiting for Nexus watchdog; update/self-arm Nexus if needed");
+        }
         UsbDebugging usb = ensureUsbDebuggingEnabled(context);
         if (usb == UsbDebugging.OFF_NO_PERMISSION) {
             return Outcome.terminal("usb_debugging_off", "failed: USB debugging off and no WRITE_SECURE_SETTINGS");
@@ -452,10 +461,6 @@ final class SelfArmController {
     private static boolean isBridgeArmed(Context context) {
         return context.getSharedPreferences(BridgeProtocol.PREFS_BRIDGE, Context.MODE_PRIVATE)
                 .getBoolean(BridgeProtocol.PREF_BRIDGE_ARMED, false);
-    }
-
-    private static boolean hasProvisionedKey(Context context) {
-        return internalKeyFile(context).isFile() || provisionedKeyFile(context).isFile();
     }
 
     private static File internalKeyFile(Context context) {
