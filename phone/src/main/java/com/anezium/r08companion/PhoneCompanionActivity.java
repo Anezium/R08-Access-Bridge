@@ -43,20 +43,19 @@ public final class PhoneCompanionActivity extends Activity {
     private static final String EXTRA_HOST = "host";
     private static final String EXTRA_PORT = "port";
 
-    // Phosphor-green dark palette — unchanged from original.
-    private static final int SURFACE = Color.rgb(2, 10, 5);
-    private static final int PANEL = Color.rgb(5, 22, 11);
-    private static final int PANEL_STRONG = Color.rgb(8, 35, 16);
-    private static final int PANEL_RAISED = Color.rgb(4, 17, 9);
-    private static final int FIELD_SURFACE = Color.rgb(1, 14, 7);
-    private static final int INK = Color.rgb(205, 255, 213);
-    private static final int MUTED = Color.rgb(100, 176, 113);
-    private static final int STROKE = Color.rgb(28, 103, 43);
-    private static final int STROKE_ACTIVE = Color.rgb(58, 219, 91);
-    private static final int ACCENT = Color.rgb(72, 255, 113);
-    private static final int ACCENT_DARK = Color.rgb(9, 39, 18);
-    private static final int WARN = Color.rgb(185, 255, 116);
-    private static final int ERROR = Color.rgb(224, 255, 170);
+    // Dark neutral palette with a green accent. Warnings and errors use distinct hues so a
+    // failed state never reads like a healthy one.
+    private static final int SURFACE = Color.rgb(11, 15, 13);
+    private static final int PANEL = Color.rgb(20, 26, 23);
+    private static final int PANEL_STRONG = Color.rgb(24, 33, 28);
+    private static final int FIELD_SURFACE = Color.rgb(15, 21, 18);
+    private static final int INK = Color.rgb(232, 242, 236);
+    private static final int MUTED = Color.rgb(147, 166, 154);
+    private static final int STROKE = Color.rgb(38, 51, 43);
+    private static final int ACCENT = Color.rgb(74, 222, 128);
+    private static final int ACCENT_DARK = Color.rgb(6, 36, 15);
+    private static final int WARN = Color.rgb(251, 191, 36);
+    private static final int ERROR = Color.rgb(248, 113, 113);
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private EditText hostField;
@@ -133,41 +132,46 @@ public final class PhoneCompanionActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(24));
+        root.setPadding(dp(20), dp(28), dp(20), dp(32));
         scroll.addView(root, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
-        // ── Title ────────────────────────────────────────────────────────────
-        TextView title = label("R08 companion", 28, INK, Typeface.BOLD);
-        title.setLetterSpacing(0f);
-        title.setShadowLayer(dp(6), 0, 0, Color.rgb(17, 112, 38));
-        root.addView(title, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        // ── Header ───────────────────────────────────────────────────────────
+        TextView eyebrow = label("R08 ACCESS BRIDGE", 12, ACCENT, Typeface.BOLD);
+        eyebrow.setLetterSpacing(0.08f);
+        root.addView(eyebrow, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(root, 4);
+        root.addView(label("Phone companion", 26, INK, Typeface.BOLD),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(root, 6);
+        root.addView(paragraph("Sets up your glasses so the R08 ring can open the Hi Rokid AI "
+                        + "assistant. You only need this app for the first setup, or if the shortcut "
+                        + "stops working."),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
-        addGap(root, 16);
+        addGap(root, 20);
 
-        // ── Primary hero panel ────────────────────────────────────────────────
-        LinearLayout hero = panel(PANEL_STRONG, dp(18));
+        // ── Main action ──────────────────────────────────────────────────────
+        LinearLayout hero = panel(PANEL_STRONG, dp(20));
         root.addView(hero, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         summaryText = label(initialHeroTitle(), 20, INK, Typeface.BOLD);
-        summaryText.setShadowLayer(dp(4), 0, 0, Color.rgb(15, 116, 38));
         hero.addView(summaryText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-
-        summaryStatusText = label(initialHeroSubtitle(), 14, MUTED, Typeface.NORMAL);
-        summaryStatusText.setLineSpacing(dp(2), 1f);
+        addGap(hero, 6);
+        summaryStatusText = paragraph(initialHeroSubtitle());
         hero.addView(summaryStatusText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
-        addGap(hero, 14);
+        addGap(hero, 18);
         primaryButton = button(initialPrimaryButtonLabel(), true);
         primaryButton.setOnClickListener(v -> onPrimaryButtonClicked());
-        hero.addView(primaryButton, fullWidth(dp(54), 0));
+        hero.addView(primaryButton, fullWidth(dp(52), 0));
 
-        addGap(hero, 10);
+        addGap(hero, 14);
         wifiOffAfterArmCheck = new CheckBox(this);
-        wifiOffAfterArmCheck.setText("Wi-Fi off after arm");
+        wifiOffAfterArmCheck.setText("Turn glasses Wi-Fi off afterwards");
         wifiOffAfterArmCheck.setTextSize(14);
-        wifiOffAfterArmCheck.setTextColor(MUTED);
+        wifiOffAfterArmCheck.setTextColor(INK);
         wifiOffAfterArmCheck.setButtonTintList(new ColorStateList(
                 new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
                 new int[]{ACCENT, MUTED}));
@@ -175,116 +179,122 @@ public final class PhoneCompanionActivity extends Activity {
         wifiOffAfterArmCheck.setOnCheckedChangeListener((buttonView, isChecked) ->
                 prefs().edit().putBoolean(PREF_WIFI_OFF_AFTER_ARM, isChecked).apply());
         hero.addView(wifiOffAfterArmCheck, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        TextView wifiHint = label("Saves glasses battery. The shortcut keeps working with Wi-Fi off.",
+                12, MUTED, Typeface.NORMAL);
+        wifiHint.setPadding(dp(32), 0, 0, 0);
+        hero.addView(wifiHint, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         addGap(root, 14);
 
-        // ── Status panel ─────────────────────────────────────────────────────
-        LinearLayout statusPanel = panel(PANEL_RAISED, dp(16));
+        // ── Status ───────────────────────────────────────────────────────────
+        LinearLayout statusPanel = panel(PANEL, dp(20));
         root.addView(statusPanel, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         statusPanel.addView(sectionTitle("Status"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        bridgeStatusText = prominentStatusRow(statusPanel, "Bridge", "Not armed");
-        bridgeStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
-        watchdogStatusText = prominentStatusRow(statusPanel, "Watchdog", "Unknown");
-        watchdogStatusText.setShadowLayer(dp(5), 0, 0, Color.rgb(15, 116, 38));
+        bridgeStatusText = statusRow(statusPanel, "AI shortcut bridge",
+                isArmedBefore() ? "Armed (last check)" : "Not set up");
+        if (isArmedBefore()) {
+            bridgeStatusText.setTextColor(ACCENT);
+        }
+        watchdogStatusText = statusRow(statusPanel, "Accessibility watchdog", "Unknown");
         renderStoredWatchdogStatus();
 
-        addGap(root, 10);
-        detailText = label("No operation running.", 13, MUTED, Typeface.NORMAL);
-        detailText.setLineSpacing(dp(2), 1f);
-        root.addView(detailText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(statusPanel, 12);
+        statusPanel.addView(divider(), fullWidth(dp(1), 0));
+        addGap(statusPanel, 12);
+        statusPanel.addView(label("Last activity", 12, MUTED, Typeface.BOLD),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(statusPanel, 4);
+        detailText = paragraph("Nothing running.");
+        detailText.setTextColor(INK);
+        detailText.setTextIsSelectable(true);
+        statusPanel.addView(detailText, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         addGap(root, 14);
-
-        // ── "How this works" collapsible ─────────────────────────────────────
+        root.addView(buildRequirementsSection(), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(root, 14);
         root.addView(buildHowItWorksSection(), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-
         addGap(root, 14);
-
-        // ── Advanced collapsible section ──────────────────────────────────────
         root.addView(buildAdvancedSection(prefs), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
 
         return scroll;
     }
 
+    private LinearLayout buildRequirementsSection() {
+        LinearLayout outer = panel(PANEL, dp(20));
+        LinearLayout body = collapsible(outer, "What you need",
+                "Check these if setup fails.", !isArmedBefore());
+
+        step(body, "1", "Hi Rokid on this phone",
+                "The glasses must be paired and connected in the Hi Rokid app; this app talks to "
+                        + "the glasses through it. The first time, Hi Rokid asks you to authorize "
+                        + "this app: accept it.");
+        step(body, "2", "R08 Access Bridge on the glasses",
+                "Install the app on the glasses and turn on its Accessibility service "
+                        + "(glasses Settings → Accessibility → R08 Access Bridge).");
+        step(body, "3", "Same Wi-Fi for the first setup",
+                "Phone and glasses must be on the same Wi-Fi network while pairing. After that, "
+                        + "glasses Wi-Fi can stay off.");
+        step(body, "4", "USB debugging on the glasses",
+                "No cable needed. This app turns it on for you during setup. If the result says "
+                        + "\"USB debugging is OFF\", open Hi Rokid → your glasses → Settings → "
+                        + "Developer options, enable USB debugging, then tap Re-arm once. Without it "
+                        + "the glasses cannot re-arm themselves after a reboot.");
+        step(body, "5", "Rokid Nexus users",
+                "Update Nexus too. Its watchdog restarts the bridge after a reboot, so both apps "
+                        + "work together.");
+        return outer;
+    }
+
     private LinearLayout buildHowItWorksSection() {
-        LinearLayout outer = panel(PANEL, dp(16));
+        LinearLayout outer = panel(PANEL, dp(20));
+        LinearLayout body = collapsible(outer, "How this works",
+                "What happens on the glasses, step by step.", false);
 
-        Button toggle = button("How this works", false);
-        outer.addView(toggle, fullWidth(dp(44), 0));
-        addGap(outer, 8);
-
-        TextView body = label(
-                "When Bridge says Armed, the shortcut is ready. The Watchdog auto-repairs R08 "
-                + "Accessibility after the firmware force-stops it. Running this companion once enables "
-                + "both.\n\n"
-                + "The Hi Rokid two-finger shortcut is triggered by a raw input event that a normal "
-                + "Android app cannot send — it requires the ADB shell user.\n\n"
-                + "First-time setup (one-time): tap \"Set up bridge\". The companion sends the glasses app "
-                + "a command through Hi Rokid/CXR-L, the Accessibility Service opens Wireless Debugging, "
-                + "and this phone pairs automatically from the code displayed on the glasses.\n\n"
-                + "After any glasses reboot: open this app and tap \"Re-arm bridge\". The command goes "
-                + "over Hi Rokid/Bluetooth (works with Wi-Fi off). The glasses Accessibility Service "
-                + "opens Wi-Fi Settings, taps the toggle ON, enables Wireless Debugging, then reports "
-                + "the live IP+port back over Bluetooth. This phone connects with its saved key "
-                + "(no re-pairing), restarts the bridge script, then turns glasses Wi-Fi and "
-                + "always-on scanning back off.\n\n"
-                + "Glasses Wi-Fi is off when idle to protect battery. The Bluetooth Hi Rokid channel "
-                + "is always available to trigger the re-arm flow.\n\n"
-                + "No phone? You can also arm entirely on the glasses: open the R08 app and tap "
-                + "\"Self-arm (no phone)\". It drives the glasses' own Wireless Debugging and skips this "
-                + "companion and the Hi Rokid authorization altogether.",
-                13, MUTED, Typeface.NORMAL);
-        body.setLineSpacing(dp(2), 1f);
-        body.setVisibility(View.GONE);
-        outer.addView(body, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-
-        toggle.setOnClickListener(v -> {
-            if (body.getVisibility() == View.GONE) {
-                body.setVisibility(View.VISIBLE);
-                toggle.setText("How this works ▲");
-            } else {
-                body.setVisibility(View.GONE);
-                toggle.setText("How this works");
-            }
-        });
-
+        explainer(body, "Why a bridge is needed",
+                "The Hi Rokid AI shortcut is a raw touch gesture. A normal Android app is not "
+                        + "allowed to send it; only the ADB shell user can. The bridge is a small "
+                        + "script that runs as that user on the glasses and fires the shortcut "
+                        + "when you use the ring.");
+        explainer(body, "First setup (once)",
+                "Tap \"Set up bridge\". The command reaches the glasses over Hi Rokid "
+                        + "(Bluetooth). The glasses open Wireless Debugging on their own, and this "
+                        + "phone pairs with the code they show. Then the bridge and its watchdog "
+                        + "are installed and started.");
+        explainer(body, "After a glasses reboot",
+                "Nothing to do. The glasses re-arm the bridge by themselves shortly after "
+                        + "startup (with Rokid Nexus installed, its watchdog does it). Use \"Re-arm "
+                        + "bridge\" only if the shortcut stops working: it reconnects with the saved "
+                        + "key, no new pairing.");
+        explainer(body, "The watchdog",
+                "Some Rokid firmware force-stops third-party apps, which turns R08 Accessibility "
+                        + "off. The watchdog notices and turns it back on.");
+        explainer(body, "Battery",
+                "Glasses Wi-Fi is only needed while arming. With \"Turn glasses Wi-Fi off "
+                        + "afterwards\" checked, it goes back off once arming is done.");
+        explainer(body, "No phone?",
+                "You can arm on the glasses alone: open R08 Access Bridge on the glasses and tap "
+                        + "\"Self-arm (no phone)\".");
         return outer;
     }
 
     private LinearLayout buildAdvancedSection(SharedPreferences prefs) {
-        LinearLayout outer = panel(PANEL, dp(16));
-
-        Button toggle = button("Advanced", false);
-        outer.addView(toggle, fullWidth(dp(44), 0));
-
-        LinearLayout inner = new LinearLayout(this);
-        inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setVisibility(View.GONE);
-        outer.addView(inner, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-
-        toggle.setOnClickListener(v -> {
-            if (inner.getVisibility() == View.GONE) {
-                inner.setVisibility(View.VISIBLE);
-                toggle.setText("Advanced ▲");
-            } else {
-                inner.setVisibility(View.GONE);
-                toggle.setText("Advanced");
-            }
-        });
+        LinearLayout outer = panel(PANEL, dp(20));
+        LinearLayout inner = collapsible(outer, "Advanced",
+                "Diagnostics and manual tools. Not needed in normal use.", false);
 
         // Link diagnostics — the arming pipeline, shown here instead of on the main screen.
-        addGap(inner, 14);
-        inner.addView(sectionTitle("Link status"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(sectionTitle("Connection details"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         cxrStatusText = statusRow(inner, "Hi Rokid", cxrClient.hasAuthToken() ? "Authorized" : "Needs authorization");
         ipStatusText = statusRow(inner, "Glasses IP", endpointLabel(prefs.getString(PREF_HOST, DEFAULT_HOST)));
         adbStatusText = statusRow(inner, "ADB", "Not armed yet");
 
         // Recovery / first-run path
-        addGap(inner, 14);
-        inner.addView(sectionTitle("Recovery path"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        TextView recoveryCopy = label("Full reboot state: CXR-L wakes the glasses app, opens Wireless Debugging through Accessibility when pairing is missing, reads the dynamic port, then arms over the same Wi-Fi.", 14, MUTED, Typeface.NORMAL);
-        recoveryCopy.setLineSpacing(dp(2), 1f);
-        inner.addView(recoveryCopy, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(inner, 20);
+        inner.addView(sectionTitle("Full setup, step by step"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(paragraph("Use these if the main button gets stuck. Authorize grants this app "
+                        + "access to Hi Rokid. Wireless setup makes the glasses open Wireless "
+                        + "Debugging and show a pairing code."),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         addGap(inner, 12);
 
         LinearLayout recoveryActions = horizontal();
@@ -297,61 +307,66 @@ public final class PhoneCompanionActivity extends Activity {
         cxrWifi.setOnClickListener(v -> runWirelessDebuggingSetupTask());
         recoveryActions.addView(cxrWifi, weightButton());
 
-        addGap(inner, 14);
-
         // ADB endpoint fields
-        inner.addView(sectionTitle("ADB endpoint"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(inner, 20);
+        inner.addView(sectionTitle("Manual ADB address"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(paragraph("The glasses IP and Wireless Debugging port, as shown in the "
+                        + "glasses Developer options. LAN scan searches your Wi-Fi for them."),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(inner, 12);
 
         LinearLayout fields = horizontal();
         inner.addView(fields, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         hostField = field("Glasses IP", getIntent().getStringExtra(EXTRA_HOST) != null
                 ? getIntent().getStringExtra(EXTRA_HOST)
                 : prefs.getString(PREF_HOST, DEFAULT_HOST), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        fields.addView(hostField, new LinearLayout.LayoutParams(0, dp(56), 1.9f));
+        fields.addView(hostField, new LinearLayout.LayoutParams(0, dp(52), 1.9f));
         addGapHorizontal(fields, 10);
         portField = field("Port", Integer.toString(getIntent().getIntExtra(EXTRA_PORT,
                 prefs.getInt(PREF_PORT, BridgeProtocol.DEFAULT_ADB_PORT))), InputType.TYPE_CLASS_NUMBER);
-        fields.addView(portField, new LinearLayout.LayoutParams(0, dp(56), 1f));
+        fields.addView(portField, new LinearLayout.LayoutParams(0, dp(52), 1f));
 
         addGap(inner, 12);
 
         LinearLayout adbActions = horizontal();
         inner.addView(adbActions, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        Button scan = button("LAN scan / arm", false);
+        Button scan = button("LAN scan + arm", false);
         scan.setOnClickListener(v -> runDiscoveryArmTask());
         adbActions.addView(scan, weightButton());
         addGapHorizontal(adbActions, 10);
-        Button arm = button("Arm known IP", false);
+        Button arm = button("Arm this address", false);
         arm.setOnClickListener(v -> runAdbTask("Arming known IP",
                 dadb -> adbBridgeClient.arm(dadb, wifiOffAfterArm(), this::updateEndpointFromWorker)));
         adbActions.addView(arm, weightButton());
 
-        addGap(inner, 14);
-
         // Tools
+        addGap(inner, 20);
         inner.addView(sectionTitle("Tools"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        inner.addView(paragraph("These use the ADB address above, so the glasses Wi-Fi must be on."),
+                fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        addGap(inner, 12);
 
         LinearLayout toolsRow = horizontal();
         inner.addView(toolsRow, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        Button wifi = button("ADB Wi-Fi panel", false);
-        wifi.setOnClickListener(v -> runAdbTask("Opening glasses Wi-Fi", adbBridgeClient::openWifiPanel));
-        toolsRow.addView(wifi, weightButton());
+        Button test = button("Test shortcut", false);
+        test.setOnClickListener(v -> runAdbTask("Testing shortcut", adbBridgeClient::triggerShortcut));
+        toolsRow.addView(test, weightButton());
         addGapHorizontal(toolsRow, 10);
-        Button refreshCxr = button("CXR refresh IP", false);
-        refreshCxr.setOnClickListener(v -> cxrClient.requestRefresh());
-        toolsRow.addView(refreshCxr, weightButton());
+        Button status = button("Read bridge", false);
+        status.setOnClickListener(v -> runAdbTask("Reading bridge", adbBridgeClient::readStatus));
+        toolsRow.addView(status, weightButton());
 
         addGap(inner, 10);
 
         LinearLayout toolsRow2 = horizontal();
         inner.addView(toolsRow2, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        Button test = button("Test shortcut", false);
-        test.setOnClickListener(v -> runAdbTask("Testing shortcut", adbBridgeClient::triggerShortcut));
-        toolsRow2.addView(test, weightButton());
+        Button wifi = button("Open Wi-Fi panel", false);
+        wifi.setOnClickListener(v -> runAdbTask("Opening glasses Wi-Fi", adbBridgeClient::openWifiPanel));
+        toolsRow2.addView(wifi, weightButton());
         addGapHorizontal(toolsRow2, 10);
-        Button status = button("Read bridge", false);
-        status.setOnClickListener(v -> runAdbTask("Reading bridge", adbBridgeClient::readStatus));
-        toolsRow2.addView(status, weightButton());
+        Button refreshCxr = button("Refresh IP", false);
+        refreshCxr.setOnClickListener(v -> cxrClient.requestRefresh());
+        toolsRow2.addView(refreshCxr, weightButton());
 
         addGap(inner, 10);
 
@@ -362,6 +377,7 @@ public final class PhoneCompanionActivity extends Activity {
         toolsRow3.addView(wifiOff, weightButton());
         addGapHorizontal(toolsRow3, 10);
         Button disable = button("Disable bridge", false);
+        disable.setTextColor(ERROR);
         disable.setOnClickListener(v -> runAdbTask("Disabling bridge", adbBridgeClient::disable));
         toolsRow3.addView(disable, weightButton());
 
@@ -377,19 +393,24 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private String initialHeroTitle() {
-        return isArmedBefore() ? "Re-arm bridge" : "Set up bridge";
+        return heroTitle(isArmedBefore());
     }
 
     private String initialHeroSubtitle() {
-        if (isArmedBefore()) {
-            String host = prefs().getString(BridgeProtocol.PREF_LAST_HOST, "");
-            return "Sends re-arm command over Hi Rokid/Bluetooth. The glasses enable Wi-Fi via "
-                    + "Accessibility Service, enable ADB, and report the live port. "
-                    + (host.isEmpty() ? "" : "Last endpoint: " + host + ":" + prefs().getInt(BridgeProtocol.PREF_LAST_PORT, BridgeProtocol.DEFAULT_ADB_PORT) + ".");
-        }
-        return "First-time setup: pairs this phone with the glasses over Wireless Debugging, "
-                + "installs the bridge script, and configures quadruple tap. "
-                + "Glasses Wi-Fi is turned off afterward if the battery option is enabled.";
+        return heroSubtitle(isArmedBefore());
+    }
+
+    private String heroTitle(boolean armed) {
+        return armed ? "Bridge is set up" : "Set up the AI shortcut";
+    }
+
+    private String heroSubtitle(boolean armed) {
+        return armed
+                ? "The glasses re-arm it on their own after a reboot. Tap Re-arm only if the "
+                        + "ring no longer opens the AI assistant."
+                : "One-time setup, about a minute. Keep the glasses on and connected to Hi Rokid. "
+                        + "They will open a few settings screens by themselves: don't touch them "
+                        + "until this screen says it's done.";
     }
 
     private String initialPrimaryButtonLabel() {
@@ -1029,10 +1050,9 @@ public final class PhoneCompanionActivity extends Activity {
     private void updatePrimaryButtonForState(boolean armed) {
         runOnUiThread(() -> {
             primaryButton.setText(armed ? "Re-arm bridge" : "Set up bridge");
-            summaryText.setText(armed ? "Re-arm bridge" : "Set up bridge");
-            summaryStatusText.setText(armed
-                    ? "Bridge is armed. Tap to re-arm after a glasses reboot."
-                    : "First-time setup needed. Tap to pair and arm.");
+            summaryText.setText(heroTitle(armed));
+            summaryText.setTextColor(INK);
+            summaryStatusText.setText(heroSubtitle(armed));
         });
     }
 
@@ -1332,30 +1352,106 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private TextView sectionTitle(String text) {
-        TextView title = label(text, 13, ACCENT, Typeface.BOLD);
+        TextView title = label(text, 12, ACCENT, Typeface.BOLD);
         title.setAllCaps(true);
-        title.setLetterSpacing(0f);
-        title.setPadding(0, 0, 0, dp(10));
+        title.setLetterSpacing(0.06f);
+        title.setPadding(0, 0, 0, dp(8));
         return title;
     }
 
-    private TextView statusRow(LinearLayout parent, String label, String value) {
-        TextView row = label(label + ": " + value, 14, MUTED, Typeface.NORMAL);
-        row.setPadding(0, dp(7), 0, dp(7));
-        parent.addView(row, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        return row;
+    private TextView paragraph(String text) {
+        TextView view = label(text, 14, MUTED, Typeface.NORMAL);
+        view.setLineSpacing(dp(3), 1f);
+        return view;
     }
 
-    private TextView prominentStatusRow(LinearLayout parent, String label, String value) {
-        TextView row = label(label + ": " + value, 22, INK, Typeface.BOLD);
-        row.setPadding(0, dp(4), 0, dp(4));
+    private View divider() {
+        View divider = new View(this);
+        divider.setBackgroundColor(STROKE);
+        return divider;
+    }
+
+    /** Label on the left, value on the right. Returns the value view, which setStatusLine updates. */
+    private TextView statusRow(LinearLayout parent, String label, String value) {
+        LinearLayout row = horizontal();
+        row.setPadding(0, dp(6), 0, dp(6));
+        TextView name = label(label, 14, MUTED, Typeface.NORMAL);
+        row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView valueView = label(value, 14, INK, Typeface.BOLD);
+        valueView.setGravity(Gravity.END);
+        row.addView(valueView, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.2f));
         parent.addView(row, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        return row;
+        return valueView;
     }
 
     private void setStatusLine(TextView view, String label, String value, int color) {
-        view.setText(label + ": " + value);
-        view.setTextColor(color);
+        view.setText(capitalize(value));
+        view.setTextColor(color == MUTED ? INK : color);
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        return value.substring(0, 1).toUpperCase(Locale.US) + value.substring(1);
+    }
+
+    /** Adds a tappable header to {@code outer} and returns the body it shows and hides. */
+    private LinearLayout collapsible(LinearLayout outer, String title, String subtitle, boolean expanded) {
+        LinearLayout header = horizontal();
+        header.setClickable(true);
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.addView(label(title, 16, INK, Typeface.BOLD), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        TextView sub = label(subtitle, 13, MUTED, Typeface.NORMAL);
+        sub.setPadding(0, dp(2), 0, 0);
+        titles.addView(sub, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        header.addView(titles, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        TextView chevron = label(expanded ? "▴" : "▾", 20, ACCENT, Typeface.BOLD);
+        header.addView(chevron, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        outer.addView(header, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(0, dp(16), 0, 0);
+        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        outer.addView(body, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+
+        header.setOnClickListener(v -> {
+            boolean show = body.getVisibility() == View.GONE;
+            body.setVisibility(show ? View.VISIBLE : View.GONE);
+            chevron.setText(show ? "▴" : "▾");
+        });
+        return body;
+    }
+
+    /** Numbered checklist item: badge, bold title, explanation. */
+    private void step(LinearLayout parent, String number, String title, String text) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView badge = label(number, 13, ACCENT_DARK, Typeface.BOLD);
+        badge.setGravity(Gravity.CENTER);
+        badge.setBackground(roundRect(ACCENT, dp(12), ACCENT, 0));
+        LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(dp(24), dp(24));
+        badgeParams.setMargins(0, dp(1), dp(12), 0);
+        row.addView(badge, badgeParams);
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.addView(label(title, 15, INK, Typeface.BOLD), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        TextView body = paragraph(text);
+        body.setPadding(0, dp(2), 0, 0);
+        texts.addView(body, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        parent.addView(row, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, dp(14)));
+    }
+
+    /** Short titled paragraph for the explanatory sections. */
+    private void explainer(LinearLayout parent, String title, String text) {
+        parent.addView(label(title, 15, INK, Typeface.BOLD), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
+        TextView body = paragraph(text);
+        body.setPadding(0, dp(2), 0, 0);
+        parent.addView(body, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, dp(14)));
     }
 
     private TextView label(String text, int sp, int color, int style) {
@@ -1392,9 +1488,9 @@ public final class PhoneCompanionActivity extends Activity {
         button.setMinimumHeight(0);
         button.setPadding(dp(12), 0, dp(12), 0);
         button.setTextColor(primary ? ACCENT_DARK : INK);
-        button.setBackground(roundRect(primary ? ACCENT : PANEL,
-                dp(14),
-                primary ? ACCENT : STROKE_ACTIVE,
+        button.setBackground(roundRect(primary ? ACCENT : PANEL_STRONG,
+                dp(12),
+                primary ? ACCENT : STROKE,
                 1));
         if (!primary) {
             button.setTextColor(new ColorStateList(
