@@ -20,7 +20,17 @@ log_msg() {
 
 is_alive() {
     pid="$1"
-    [ -n "$pid" ] && [ -d "/proc/$pid" ]
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ -d "/proc/$pid" ] || return 1
+    # PID files survive reboots and the old PID can belong to an unrelated process.
+    # Check the helper command before treating it as running (or sending it a signal).
+    cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    case "$cmdline" in
+        *"sh $0 run "*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 read_pid() {

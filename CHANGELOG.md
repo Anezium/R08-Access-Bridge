@@ -10,6 +10,8 @@
 - Wireless-Debugging-paired ADB keys no longer expire after 7 days without a connection (`adb_allowed_connection_time` is set to 0), so the loopback re-arm keeps authenticating after long idle periods.
 - An ADB key provisioned by the phone companion into external storage was written as the shell user with mode 600 and threw `AccessDeniedException` on every boot, before the app-private key was even considered. The app now falls back to its own key, and the companion (0.2.9) hands the key over through the command activity instead of a file.
 - Boot re-arm outcomes are shown on the home status line (`Self-arm complete (auto re-arm)`, `Self-arm needed: ...`) so a failing boot re-arm is no longer silent.
+- Stage external ADB key imports before replacing the private key: Android can otherwise delete the fallback key before discovering that the shell-owned source is unreadable.
+- Verify the shortcut helper's command before trusting a saved PID, so a PID reused after reboot cannot falsely report that the shortcut is already running.
 
 ## v2.0.1 - 2026-08-11
 

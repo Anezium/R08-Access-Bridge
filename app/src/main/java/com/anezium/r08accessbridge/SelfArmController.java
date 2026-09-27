@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -423,7 +424,16 @@ final class SelfArmController {
                 if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
                     throw new IOException("cannot create self-arm key dir");
                 }
-                Files.copy(provisioned.toPath(), internal.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                // Android can remove the destination before opening the source when copying
+                // with REPLACE_EXISTING. Stage the import so an unreadable shell-owned key
+                // cannot delete the app-private key we need for the fallback.
+                Path staged = Files.createTempFile(dir.toPath(), "adbkey-import-", ".pem");
+                try {
+                    Files.copy(provisioned.toPath(), staged, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(staged, internal.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                } finally {
+                    Files.deleteIfExists(staged);
+                }
                 Log.i(TAG, "imported provisioned adb key from external storage");
             } catch (IOException | SecurityException exception) {
                 if (!internal.isFile()) {

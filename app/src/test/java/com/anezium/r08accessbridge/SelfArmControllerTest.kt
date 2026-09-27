@@ -10,6 +10,8 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.nio.file.AccessDeniedException
+import java.nio.file.Path
 
 @RunWith(RobolectricTestRunner::class)
 class SelfArmControllerTest {
@@ -36,6 +38,19 @@ class SelfArmControllerTest {
 
         assertEquals(internal, key)
         assertEquals("phone", key.readText())
+    }
+
+    @Test
+    fun unreadableProvisionedKeyPreservesPrivateKey() {
+        val internal = File(temp.newFolder("kadb"), "adbkey.pem").apply { writeText("paired-private-key") }
+        val provisioned = object : File(temp.root, "shell-owned-key.pem") {
+            override fun isFile() = true
+            override fun toPath(): Path = throw AccessDeniedException(path)
+        }
+
+        assertEquals(internal, SelfArmController.resolveSelfArmKey(internal, provisioned))
+        assertEquals("paired-private-key", internal.readText())
+        assertEquals(listOf("adbkey.pem"), internal.parentFile.list()!!.toList())
     }
 
     @Test
