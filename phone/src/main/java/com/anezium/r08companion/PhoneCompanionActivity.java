@@ -342,7 +342,8 @@ public final class PhoneCompanionActivity extends Activity {
         // Tools
         addGap(inner, 20);
         inner.addView(sectionTitle("Tools"), fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
-        inner.addView(paragraph("These use the ADB address above, so the glasses Wi-Fi must be on."),
+        inner.addView(paragraph("Except Refresh IP (which asks through Hi Rokid), these use the ADB "
+                        + "address above, so the glasses Wi-Fi must be on."),
                 fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT, 0));
         addGap(inner, 12);
 
@@ -467,7 +468,7 @@ public final class PhoneCompanionActivity extends Activity {
         }
         autoReArmAttempted = true;
         primaryButton.postDelayed(() -> {
-            summary("Auto re-arm", MUTED);
+            summary("Checking the bridge", MUTED);
             setDetail("Checking the saved bridge and accessibility watchdog on the glasses.");
             runReArmTask();
         }, 350L);
@@ -491,7 +492,7 @@ public final class PhoneCompanionActivity extends Activity {
     /** Re-arm via CXR/Bluetooth: glasses enable Wi-Fi via accessibility, report live port, phone connects. */
     private void runCxrReArmTask() {
         setupCoordinator.startReArm(parsePort());
-        summary("Re-arming via Hi Rokid", MUTED);
+        summary("Re-arming", MUTED);
         setStatusLine(cxrStatusText, "Hi Rokid", "Sending re-arm command", MUTED);
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for glasses Wi-Fi", MUTED);
         setStatusLine(adbStatusText, "ADB", "Waiting for live port", MUTED);
@@ -521,7 +522,7 @@ public final class PhoneCompanionActivity extends Activity {
             runCxrBootstrapTask();
             return;
         }
-        summary("Re-arming bridge", MUTED);
+        summary("Re-arming", MUTED);
         setStatusLine(adbStatusText, "ADB", "Connecting to " + host + ":" + port, MUTED);
         setStatusLine(watchdogStatusText, "Watchdog", "Checking during re-arm", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Re-arming…", MUTED);
@@ -539,7 +540,7 @@ public final class PhoneCompanionActivity extends Activity {
                     renderWatchdogUnknown();
                     setDetail("Could not reconnect to " + host + ":" + port + " — "
                             + shortMessage(throwable) + "\n\nFalling back to full bridge setup via Hi Rokid.");
-                    summary("Full setup fallback", WARN);
+                    summary("Re-arm failed, trying full setup", WARN);
                     runCxrBootstrapTask();
                 });
             }
@@ -577,7 +578,7 @@ public final class PhoneCompanionActivity extends Activity {
 
     private void runCxrBootstrapTask() {
         setupCoordinator.startBridge(parsePort());
-        summary("Starting bridge", MUTED);
+        summary("Setting up", MUTED);
         setStatusLine(cxrStatusText, "Hi Rokid", cxrClient.hasAuthToken() ? "Connecting" : "Needs authorization", cxrClient.hasAuthToken() ? MUTED : WARN);
         setStatusLine(ipStatusText, "Glasses IP", "Waiting for helper", MUTED);
         setStatusLine(adbStatusText, "ADB", "Checking pairing", MUTED);
@@ -595,7 +596,7 @@ public final class PhoneCompanionActivity extends Activity {
 
     private void runWirelessDebuggingSetupTask() {
         setupCoordinator.startWirelessSetup();
-        summary("Wireless setup", MUTED);
+        summary("Opening Wireless Debugging", MUTED);
         setStatusLine(cxrStatusText, "Hi Rokid", cxrClient.hasAuthToken() ? "Opening setup" : "Needs authorization", cxrClient.hasAuthToken() ? MUTED : WARN);
         setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
@@ -701,7 +702,7 @@ public final class PhoneCompanionActivity extends Activity {
             setStatusLine(adbStatusText, "ADB", adbStateLabel(state), adbStateColor(state));
         }
         if (!setupCoordinator.isBridgeArmed() && state.wifiPanelOpened && !state.wifiConnected) {
-            summary("Wi-Fi panel opened", WARN);
+            summary("Waiting for glasses Wi-Fi", WARN);
         }
         if (!setupCoordinator.isBridgeArmed() && !state.setupState.isEmpty()) {
             setDetail(wirelessSetupLabel(state.setupState));
@@ -710,7 +711,7 @@ public final class PhoneCompanionActivity extends Activity {
                     summary("Retrying setup", MUTED);
                     setDetail("R08 Accessibility is enabled. Retrying Wireless Debugging setup.");
                 } else {
-                    summary("Enable Accessibility", WARN);
+                    summary("Turn on R08 Accessibility on the glasses", WARN);
                 }
                 setStatusLine(bridgeStatusText, "Bridge", "Not armed", WARN);
             }
@@ -734,7 +735,7 @@ public final class PhoneCompanionActivity extends Activity {
         setStatusLine(adbStatusText, "ADB",
                 state.wifiConnected ? "Bridge already armed" : "Armed, glasses Wi-Fi off", ACCENT);
         renderStoredWatchdogStatus();
-        summary("Setup complete", ACCENT);
+        summary("All set", ACCENT);
         setDetail(state.wifiConnected
                 ? "You can close this app."
                 : "Wi-Fi is off after arm to save battery. You can close this app.");
@@ -743,7 +744,7 @@ public final class PhoneCompanionActivity extends Activity {
     private void executeSetupDecision(BridgeSetupCoordinator.Decision decision) {
         switch (decision.action) {
             case REQUEST_WIRELESS_SETUP:
-                summary("Wireless setup", MUTED);
+                summary("Opening Wireless Debugging", MUTED);
                 runOnUiThread(() -> {
                     setStatusLine(adbStatusText, "ADB", "Opening Wireless Debugging", MUTED);
                     setDetail("Glasses Wi-Fi is up. Opening Wireless Debugging so the phone can pair and arm.");
@@ -767,7 +768,7 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private void pairAndArm(BridgeSetupCoordinator.Decision decision) {
-        summary("Pairing ADB", MUTED);
+        summary("Pairing with the glasses", MUTED);
         setStatusLine(adbStatusText, "ADB", "Pairing phone", MUTED);
         setStatusLine(watchdogStatusText, "Watchdog", "Provisioning during arm", MUTED);
         setDetail("Pairing this phone with the glasses over Wireless Debugging, then arming the bridge.");
@@ -852,7 +853,7 @@ public final class PhoneCompanionActivity extends Activity {
                         setStatusLine(adbStatusText, "ADB", "Paired, waiting for port", WARN);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
                         renderWatchdogUnknown();
-                        summary("Wireless setup", MUTED);
+                        summary("Opening Wireless Debugging", MUTED);
                         setDetail("Pairing was accepted, but port " + decision.connectPort
                                 + " did not accept the key yet. Refreshing the Wireless Debugging port. "
                                 + shortMessage(connectThrowable));
@@ -945,13 +946,13 @@ public final class PhoneCompanionActivity extends Activity {
                         setStatusLine(adbStatusText, "ADB", "Waiting for pairing code", MUTED);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", MUTED);
                         renderWatchdogUnknown();
-                        summary("Wireless setup", MUTED);
+                        summary("Opening Wireless Debugging", MUTED);
                         setDetail("Wireless Debugging port " + port + " is visible, but this phone is not paired yet. Waiting for the pairing code on the glasses.");
                     } else {
                         setStatusLine(adbStatusText, "ADB", "Recovery needed", ERROR);
                         setStatusLine(bridgeStatusText, "Bridge", "Not armed", ERROR);
                         renderWatchdogUnknown();
-                        summary("Wi-Fi is up, ADB is not", ERROR);
+                        summary("Glasses found, but ADB refused", ERROR);
                         setDetail(errorMessage(throwable));
                     }
                 });
@@ -985,7 +986,7 @@ public final class PhoneCompanionActivity extends Activity {
     }
 
     private void runDiscoveryArmTask() {
-        summary("Scanning local Wi-Fi", MUTED);
+        summary("Searching your Wi-Fi", MUTED);
         int port = parsePort();
         setStatusLine(adbStatusText, "ADB", "Scanning port " + port, MUTED);
         setDetail("Looking for Rokid glasses on the phone's current Wi-Fi subnet.");
@@ -1029,7 +1030,7 @@ public final class PhoneCompanionActivity extends Activity {
                 setStatusLine(adbStatusText, "ADB",
                         result.wifiOffAfterArm() ? "Armed, Wi-Fi off scheduled" : "Connected to " + host, ACCENT);
                 setStatusLine(bridgeStatusText, "Bridge", "Armed", ACCENT);
-                summary("Setup complete", ACCENT);
+                summary("All set", ACCENT);
                 setDetail(armedDetail(result.output()));
                 break;
             case DISABLED:
@@ -1037,7 +1038,6 @@ public final class PhoneCompanionActivity extends Activity {
                 clearArmedEndpoint();
                 updatePrimaryButtonForState(false);
                 setStatusLine(bridgeStatusText, "Bridge", "Disabled", MUTED);
-                summary("Bridge disabled", MUTED);
                 setDetail(result.output().isEmpty() ? "Bridge disabled." : result.output());
                 break;
             case OUTPUT:
@@ -1137,9 +1137,11 @@ public final class PhoneCompanionActivity extends Activity {
             message = throwable.getClass().getSimpleName();
         }
         return "Failed: " + message
-                + "\n\nIf the glasses rebooted, just tap Re-arm bridge — the phone will reconnect "
-                + "to the saved endpoint without re-pairing. If that also fails, tap Set up bridge "
-                + "for the full CXR/Wireless Debugging flow.";
+                + "\n\nWhat to try:"
+                + "\n1. Make sure the glasses are on and connected in Hi Rokid, then tap the main "
+                + "button again. Re-arm reuses the saved pairing, no new code needed."
+                + "\n2. Still failing? Open \"What you need\" below and check each item."
+                + "\n3. Then use Advanced → Wireless setup to redo the pairing from scratch.";
     }
 
     private String adbStateLabel(CxrBootstrapClient.BootstrapState state) {
@@ -1218,12 +1220,12 @@ public final class PhoneCompanionActivity extends Activity {
     private String armedDetail(String output) {
         String watchdogStatus = extractWatchdogStatus(output);
         String watchdogCopy = "running".equals(watchdogStateLabel(watchdogStatus))
-                ? "The accessibility watchdog is installed and running on the glasses."
-                : "Check Watchdog above; it was not confirmed running.";
-        String base = "Done. You can close this app now; the shortcut bridge is armed. "
-                + watchdogCopy + "\n\n"
-                + "The watchdog auto-repairs R08 Accessibility after firmware force-stops. Running this companion once is required to enable it.";
-        return output == null || output.trim().isEmpty() ? base : base + "\n\n" + output.trim();
+                ? "The accessibility watchdog is running too."
+                : "The accessibility watchdog was not confirmed running; tap Re-arm once more.";
+        String base = "Bridge armed. " + watchdogCopy;
+        return output == null || output.trim().isEmpty()
+                ? base
+                : base + "\n\nTechnical details:\n" + output.trim();
     }
 
     private void updateWatchdogStatusFromOutput(String output) {
@@ -1265,7 +1267,7 @@ public final class PhoneCompanionActivity extends Activity {
             return;
         }
         setStatusLine(watchdogStatusText, "Watchdog",
-                "unknown (last " + watchdogStateLabel(status) + " " + formatTimestamp(checkedAt) + ")",
+                "Unknown · last " + watchdogStateLabel(status) + " " + formatTimestamp(checkedAt),
                 WARN);
     }
 
@@ -1546,6 +1548,17 @@ public final class PhoneCompanionActivity extends Activity {
         runOnUiThread(() -> {
             summaryText.setText(text);
             summaryText.setTextColor(color == MUTED ? INK : color);
+            // Keep the subtitle in step with the title so the card never contradicts itself.
+            if (color == ACCENT) {
+                summaryStatusText.setText("Done. You can close this app: the ring now opens the "
+                        + "AI assistant, and the glasses re-arm it on their own after a reboot.");
+            } else if (color == WARN || color == ERROR) {
+                summaryStatusText.setText("Needs your attention. What happened and what to try "
+                        + "is under Last activity below.");
+            } else {
+                summaryStatusText.setText("Working on it. Keep the glasses on and connected to "
+                        + "Hi Rokid, and don't touch them until this finishes.");
+            }
         });
     }
 
