@@ -268,3 +268,9 @@ R08 Access Bridge requests:
 - The app lets the ring's touch sleep timer work instead of sending an infinite wake command, which keeps idle ring power use lower.
 - Native DPAD output was not observed in the tested `appType 0..7` range, so the app bridges media/touch outputs into navigation behavior.
 - The app is designed for the Rokid glasses HUD, not a phone-first UI.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
+Contributions are accepted under the same license (Apache-2.0, section 5) — no CLA required.
