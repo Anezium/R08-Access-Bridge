@@ -95,6 +95,10 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     private Runnable pendingSelect;
     private int selectedActionIndex;
     private boolean localSelfArmStatusReceiverRegistered;
+    private AppUpdateController updates;
+    private AppUpdateController.Phase lastUpdatePhase;
+    private TextView updateSummary;
+    private final AppUpdateController.Listener updateListener = this::onUpdateChanged;
 
     private final BroadcastReceiver localSelfArmStatusReceiver = new BroadcastReceiver() {
         @Override
@@ -112,7 +116,9 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         SelfArmController.armOnLaunch(this);
         requestRuntimePermissions();
         setContentView(buildView());
+        updates = AppUpdateController.get(this);
         showHome();
+        updates.check(false);
         if (fastDefaultApplied && isAccessibilityEnabled()) {
             sendServiceCommand(RingControlAccessibilityService.COMMAND_CONFIGURE_GESTURE);
         }
@@ -123,6 +129,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     protected void onStart() {
         super.onStart();
         registerLocalSelfArmStatusReceiver();
+        updates.addListener(updateListener);
         if (!healthListenerRegistered) {
             activityBleController = AccessBridgeHealthRuntime.repository(this);
             activityBleController.addListener(this);
@@ -141,6 +148,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
 
     @Override
     protected void onStop() {
+        updates.removeListener(updateListener);
         applyMeasurementScreenAwake(this, false);
         unregisterLocalSelfArmStatusReceiver();
         if (activityBleController != null && healthListenerRegistered) {
@@ -374,6 +382,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
             return;
         }
         content.removeAllViews();
+        updateSummary = null;
         actionViews.clear();
         passiveFocusViews.clear();
         addHeader();
@@ -389,6 +398,11 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                 action(R.string.action_system, R.string.detail_system, v -> showSystem());
                 action("Health", "Measurements, sleep, history, auto measurement, and HUD",
                         v -> showHealth());
+                action("Updates", updates.release() == null ? "Check for a new version" : "Version " + updates.release().version + " available",
+                        v -> navigateTo(Screen.UPDATES));
+                break;
+            case UPDATES:
+                renderUpdates();
                 break;
             case MODES:
                 action(getString(R.string.action_stable_mode), modeDetail(
@@ -555,6 +569,8 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
                 return getString(R.string.title_launch_app_picker);
             case SYSTEM:
                 return getString(R.string.title_system);
+            case UPDATES:
+                return "Updates";
             case FORGET_CONFIRM:
                 return getString(R.string.title_forget_confirm);
             case PROBE:
@@ -582,6 +598,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
     }
 
     private String statusForScreen() {
+        if (screen == Screen.UPDATES) return "R08 Access Bridge " + updates.installedVersion();
         if (screen == Screen.FORGET_CONFIRM) {
             return getString(R.string.status_forget_confirm);
         }
@@ -627,6 +644,68 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
             case HOME:
             default:
                 return getString(R.string.status_home, service);
+        }
+    }
+
+    private void renderUpdates() {
+        updateSummary = new TextView(this);
+        updateSummary.setText(updates.summary());
+        updateSummary.setTextSize(17);
+        updateSummary.setTextColor(Color.WHITE);
+        updateSummary.setPadding(0, dp(10), 0, dp(12));
+        content.addView(updateSummary, fullWidth(LinearLayout.LayoutParams.WRAP_CONTENT));
+        if (updates.phase() == AppUpdateController.Phase.READY) {
+            updateAction("install", "Install update", "Confirm installation on the glasses", v -> installAppUpdate());
+        } else if (!updates.busy() && updates.release() != null) {
+            updateAction("download", "Download update", "Version " + updates.release().version,
+                    v -> updates.download());
+        }
+        if (!updates.busy()) {
+            updateAction("check", "Check for updates", "Checks the latest GitHub release", v -> updates.check(true));
+        } else if (updates.phase() == AppUpdateController.Phase.INSTALLING) {
+            updateAction("cancel", "Cancel installation", "Return to the update screen", v -> updates.cancelInstall());
+        }
+        updateAction("wifi", "Wi-Fi settings", "Connect to download updates", v -> GlassesWifiSettings.enableThenOpen(this));
+        updateAction("back", "Back", "Return to R08 Access Bridge", v -> navigateBack());
+    }
+
+    private void updateAction(String id, String title, String detail, View.OnClickListener listener) {
+        action(title, detail, listener);
+        actionViews.get(actionViews.size() - 1).setTag("update:" + id);
+    }
+
+    private void installAppUpdate() {
+        if (updates.canInstall()) {
+            updates.install();
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())));
+            Toast.makeText(this, "Allow updates from R08, then select Install update", Toast.LENGTH_LONG).show();
+        } catch (RuntimeException ignored) {
+            Toast.makeText(this, "Open app settings to allow installing updates", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void onUpdateChanged() {
+        AppUpdateController.Phase phase = updates.phase();
+        if (phase == lastUpdatePhase) {
+            if (screen == Screen.UPDATES && updateSummary != null) updateSummary.setText(updates.summary());
+            return;
+        }
+        boolean focusInstall = phase == AppUpdateController.Phase.READY
+                && lastUpdatePhase == AppUpdateController.Phase.DOWNLOADING;
+        lastUpdatePhase = phase;
+        if (screen != Screen.UPDATES && screen != Screen.HOME) return;
+        Object selected = selectedActionIndex < actionViews.size()
+                ? actionViews.get(selectedActionIndex).getTag() : null;
+        if (focusInstall) selectedActionIndex = 0;
+        render();
+        if (!focusInstall && selected != null) {
+            for (int i = 0; i < actionViews.size(); i++) {
+                if (selected.equals(actionViews.get(i).getTag())) { selectedActionIndex = i; break; }
+            }
         }
     }
 
@@ -2115,6 +2194,7 @@ public final class MainActivity extends Activity implements RingHealthBackend.Li
         TWO_TAP_SWIPE_DOWN_MAPPING,
         LAUNCH_APP_PICKER,
         SYSTEM,
+        UPDATES,
         FORGET_CONFIRM,
         PROBE,
         HEALTH,

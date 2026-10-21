@@ -201,7 +201,7 @@ If the ring then connects and shows its battery on the glasses but no gesture ev
 ### Set up on the glasses
 
 ```powershell
-adb install -r R08-Access-Bridge-v2.0.3.apk
+adb install -r R08-Access-Bridge-v2.0.4.apk
 ```
 
 1. Open `R08 Access Bridge` and grant Bluetooth permissions if Android asks.
@@ -211,6 +211,14 @@ adb install -r R08-Access-Bridge-v2.0.3.apk
 5. Tap **`Self-arm (no phone)`** and wait for `Self-arm complete`. This one step arms the Hi Rokid shortcut and installs the accessibility watchdog, so ring control survives the firmware force-stops. Do it once — it persists across reboots.
 
 Stay in `Stable mode` for the safest launcher behavior, or switch to `Fast mode` from `Ring modes` if you want launcher acceleration.
+
+### Update from the glasses
+
+From v2.0.4, open **Updates** in R08 Access Bridge. The app checks the latest stable GitHub release automatically at launch, at most once per day. **Check for updates** refreshes it immediately.
+
+When an update is available, select **Download update**, then **Install update**. Android may ask you to allow installations from R08 once; return to the app and select Install again. Confirm the system installation prompt on the glasses. A Wi-Fi settings shortcut is available on the same screen.
+
+The app verifies the APK's download digest, package name, increasing version code and signing certificate before installation. Updating from the app does not require the phone companion. You can also keep using another APK installer, including RokidBrew when the version is listed there.
 
 ## Troubleshooting
 

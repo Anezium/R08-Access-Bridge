@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v2.0.4 - 2026-10-21
+
+- Add an Updates screen directly in the glasses app. Check GitHub's latest stable release automatically when opening the app, at most once per day, or check manually at any time.
+- Download and install new glasses APKs from the app with system confirmation. Verify the release digest, package, newer version code and existing signing certificate before installation. Preserve update availability across app restarts and allow retry after cancelling installation.
+
 ## v2.0.3 - 2026-10-21
 
 - Restore ring volume control on the Compose settings page used by firmware `1.26.011`, while keeping support for the older volume screen. Recognize the page using its visible title and instructions from the installed launcher's localized resources, before launcher navigation consumes the swipe.
