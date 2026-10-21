@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+## v2.0.3 - 2026-10-21
+
+- Restore ring volume control on the Compose settings page used by firmware `1.26.011`, while keeping support for the older volume screen. Recognize the page using its visible title and instructions from the installed launcher's localized resources, before launcher navigation consumes the swipe.
+- Add brightness adjustment on the matching Compose settings page, using the firmware's 15 brightness steps and the settings permission already granted by self-arm. Both page labels must be visible, so returning to the launcher does not keep changing a setting.
+- Enter launcher pages through native controls so the application name follows the centered icon, including recovery of an already desynchronized Applications page.
+- With the updated shell helper armed, move Applications through native input focus instead of injected drags. Serialize each step until its icon is centered, retain bounded pending input, and prepare focus again after touch input without resetting the selected app. The shell entry request uses its own expiring, acknowledged mailbox; older/unarmed helpers retain the previous swipe route.
+- Include Companion v0.2.10 with the updated shell helper for setup/re-arm. Stable remains one app per swipe; Fast mode still requests two steps after three same-direction swipes within 900 ms of each other.
+
 ## v2.0.2 - 2026-09-27
 
 ### The Hi Rokid shortcut now survives reboots

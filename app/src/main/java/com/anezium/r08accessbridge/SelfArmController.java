@@ -99,8 +99,7 @@ final class SelfArmController {
 
     /**
      * The accessibility service (re)connected, providing another boot trigger when the
-     * firmware permits the binding. Only acts when the helpers look dead: a fresh heartbeat means the shell
-     * watchdog is still alive and nothing needs restarting.
+     * firmware permits the binding. Also upgrades a live helper lacking native page-entry support.
      */
     static void armOnServiceConnected(Context context) {
         armAsync(context, "service_connected", SERVICE_CONNECTED_RETRY_DELAYS_MS, true);
@@ -161,7 +160,7 @@ final class SelfArmController {
             Thread.currentThread().interrupt();
             return "usb debugging enabled";
         }
-        if (PrivilegedShortcutBridge.isArmed(appContext)) {
+        if (PrivilegedShortcutBridge.supportsNativeEntry(appContext)) {
             return "usb debugging enabled; helpers alive";
         }
         Log.i(TAG, "helpers died after enabling usb debugging; re-arming over loopback");
@@ -183,7 +182,7 @@ final class SelfArmController {
             return;
         }
         NexusCoexistence.setArmed(appContext, true);
-        if (onlyWhenHelpersDown && PrivilegedShortcutBridge.isArmed(appContext)) {
+        if (onlyWhenHelpersDown && PrivilegedShortcutBridge.supportsNativeEntry(appContext)) {
             Log.d(TAG, "skip self-arm reason=" + reason + " helpers alive");
             return;
         }
@@ -231,13 +230,14 @@ final class SelfArmController {
 
     static Outcome armOnce(Context context) throws InterruptedException {
         String secureStatus = repairAccessibilityFromApp(context);
-        if (PrivilegedShortcutBridge.isArmed(context)) {
+        if (PrivilegedShortcutBridge.supportsNativeEntry(context)) {
             return Outcome.success(secureStatus + "helpers alive");
         }
         if (NexusCoexistence.isAvailable(context) || NexusCoexistence.isConfigured(context)) {
             // Nexus may still be bootstrapping. Enabling USB here can restart its adbd
             // session and kill its newly started helpers, so leave its transport alone.
-            return Outcome.retry("nexus_rearm_pending", "waiting for Nexus watchdog; update/self-arm Nexus if needed");
+            return Outcome.retry("nexus_rearm_pending",
+                    "waiting for Nexus watchdog; updated R08 phone setup can install the entry helper");
         }
         UsbDebugging usb = ensureUsbDebuggingEnabled(context);
         if (usb == UsbDebugging.OFF_NO_PERMISSION) {
@@ -263,7 +263,7 @@ final class SelfArmController {
 
     /**
      * Pushes both helper scripts over 127.0.0.1:5555 and starts them. Both "start" verbs are
-     * idempotent ("already running pid=..."), so this is safe while an old instance is alive.
+     * idempotent for current helpers; the shortcut helper replaces a verified older protocol instance.
      */
     private static String armOverLoopback(Context context) throws Exception {
         String bridgeScript = Base64.encodeToString(readRawResource(context, R.raw.r08_shortcut_bridge), Base64.NO_WRAP);

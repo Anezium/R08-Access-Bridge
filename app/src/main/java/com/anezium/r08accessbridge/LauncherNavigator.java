@@ -3,12 +3,14 @@ package com.anezium.r08accessbridge;
 import android.accessibilityservice.AccessibilityService.GestureResultCallback;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.View;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayList;
@@ -19,7 +21,6 @@ final class LauncherNavigator {
     private static final String TAG = "R08LauncherNav";
     private static final String ROKID_LAUNCHER_PACKAGE = "com.rokid.os.sprite.launcher";
     private static final String LAUNCHER_APP_RECYCLER_ID = "com.rokid.os.sprite.launcher:id/app_recycler";
-    private static final String LAUNCHER_VIEWPAGER_ID = "com.rokid.os.sprite.launcher:id/viewpager";
     private static final int MAX_TRAVERSED_NODES = 90;
     private static final long TREE_BUDGET_MS = 55L;
     private static final float LAUNCHER_APP_STEP_FRACTION = 0.27f;
@@ -37,6 +38,11 @@ final class LauncherNavigator {
     private final GestureDispatcher gestures;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable pendingCenterActionRunnable;
+    private final LauncherPageNavigation pageNavigation;
+    private final LauncherCarouselFocus carouselFocus;
+    private final LauncherNativeEntry nativeEntry;
+    private boolean nativeAppsEntry;
+    private int nativeFocusSeedColumn = -1;
     private int queuedLauncherSteps;
     private boolean queuedLauncherForward;
     private boolean launcherStepInFlight;
@@ -47,23 +53,75 @@ final class LauncherNavigator {
         this.service = service;
         this.gestures = gestures;
         pendingCenterActionRunnable = this::runPendingCenterAction;
+        nativeEntry = new LauncherNativeEntry(service, mainHandler);
+        carouselFocus = new LauncherCarouselFocus(mainHandler, new LauncherCarouselFocus.Host() {
+            @Override public LauncherCarouselFocus.Snapshot read() { return readCarouselFocus(); }
+            @Override public boolean focus(int column) { return focusCarouselColumn(column); }
+            @Override public void failed() { cancelPendingCenterAction(); }
+        });
+        pageNavigation = new LauncherPageNavigation(mainHandler, new LauncherPageNavigation.Host() {
+            @Override public boolean isActive() {
+                return LauncherNavigator.this.isActive();
+            }
+
+            @Override public LauncherPageTabs.Snapshot readPage() {
+                AccessibilityNodeInfo root = launcherRoot();
+                try {
+                    return LauncherPageTabs.read(root, screenBounds(),
+                            service.getResources().getConfiguration().getLayoutDirection()
+                                    == View.LAYOUT_DIRECTION_RTL);
+                } finally {
+                    if (root != null) root.recycle();
+                }
+            }
+
+            @Override public boolean tap(PointF point, Runnable completed, Runnable cancelled) {
+                return dispatchNativeTab(point, completed, cancelled);
+            }
+
+            @Override public boolean supportsNativeAppsEntry() { return nativeEntry.isAvailable(); }
+
+            @Override public boolean enterAppsWithoutTouch(Runnable completed, Runnable cancelled) {
+                boolean rtl = service.getResources().getConfiguration().getLayoutDirection()
+                        == View.LAYOUT_DIRECTION_RTL;
+                return nativeEntry.submit(rtl, completed, cancelled);
+            }
+
+            @Override public void nativeAppsEntryCompleted() {
+                nativeAppsEntry = true;
+                nativeFocusSeedColumn = -1;
+            }
+
+            @Override public boolean prepareApps() { return prepareNativeCarouselFocus(); }
+
+            @Override public void swipe(boolean forward, int steps) {
+                moveCarousel(forward, steps);
+            }
+
+            @Override public void moveOtherPage(boolean forward) {
+                scrollOtherLauncherPage(forward);
+            }
+
+            @Override public void transitionFailed() {
+                nativeEntry.cancel();
+                carouselFocus.reset();
+                cancelPendingCenterAction();
+            }
+        });
     }
 
     boolean isActive() {
-        return AccessibilityWindowRoots.isPackageActive(service, ROKID_LAUNCHER_PACKAGE);
+        boolean active = AccessibilityWindowRoots.isPackageActive(service, ROKID_LAUNCHER_PACKAGE);
+        if (!active) {
+            pageNavigation.reset();
+            carouselFocus.reset();
+        }
+        return active;
     }
 
     void move(boolean forward, int steps) {
         cancelPendingCenterAction();
-        AccessibilityNodeInfo root = launcherRoot();
-        AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
-            enqueueLauncherAppSwipes(forward, steps);
-        } else if (root == null && isActive()) {
-            enqueueLauncherAppSwipes(forward, steps);
-        } else if (!performLauncherPageScroll(forward)) {
-            Log.d(TAG, "Launcher pager did not accept accessibility scroll forward=" + forward);
-        }
+        pageNavigation.move(forward, steps);
     }
 
     boolean activateCenter() {
@@ -86,7 +144,7 @@ final class LauncherNavigator {
         }
         AccessibilityNodeInfo root = launcherRoot();
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
-        if (appRecycler != null && appRecycler.isVisibleToUser()) {
+        if (LauncherPageTabs.isVisibleCarousel(appRecycler, screenBounds())) {
             if (clickOrTapCenterNode(appRecycler, longPress)) {
                 return true;
             }
@@ -167,14 +225,18 @@ final class LauncherNavigator {
     }
 
     private AccessibilityNodeInfo findLauncherAppCarousel(AccessibilityNodeInfo root) {
-        return findNodeByViewId(
-                root,
-                LAUNCHER_APP_RECYCLER_ID,
-                new TraversalBudget());
+        if (root == null) return null;
+        List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByViewId(LAUNCHER_APP_RECYCLER_ID);
+        return matches.isEmpty() ? null : matches.get(0);
     }
 
     private AccessibilityNodeInfo launcherRoot() {
         return AccessibilityWindowRoots.getPackageRoot(service, ROKID_LAUNCHER_PACKAGE);
+    }
+
+    private Rect screenBounds() {
+        DisplayMetrics metrics = service.getResources().getDisplayMetrics();
+        return new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
     }
 
     private AccessibilityNodeInfo findNodeByViewId(AccessibilityNodeInfo node, String viewId, TraversalBudget budget) {
@@ -277,55 +339,66 @@ final class LauncherNavigator {
         }
     }
 
-    private boolean performLauncherPageScroll(boolean forward) {
-        AccessibilityNodeInfo root = launcherRoot();
-        AccessibilityNodeInfo viewPager = findNodeByViewId(root, LAUNCHER_VIEWPAGER_ID, new TraversalBudget());
-        if (performScroll(viewPager, forward)) {
-            Log.d(TAG, "Performed launcher pager scroll forward=" + forward);
-            return true;
-        }
-        return tryScrollTree(root, forward, new TraversalBudget());
+    private boolean dispatchNativeTab(PointF point, Runnable completed, Runnable cancelled) {
+        // A native tab tap must not cancel an app swipe already dispatched by the carousel queue.
+        if (launcherStepInFlight || queuedLauncherSteps > 0 || carouselFocus.isBusy()) return false;
+        nativeAppsEntry = false;
+        nativeFocusSeedColumn = -1;
+        Path path = new Path();
+        path.moveTo(point.x, point.y);
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 70L))
+                .build();
+        service.suppressInjectedGestures(180L);
+        return service.dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription description) {
+                completed.run();
+            }
+
+            @Override public void onCancelled(GestureDescription description) {
+                cancelled.run();
+            }
+        }, mainHandler);
     }
 
-    private boolean tryScrollTree(AccessibilityNodeInfo node, boolean forward, TraversalBudget budget) {
-        if (node == null || budget.exhausted()) {
-            return false;
+    private void scrollOtherLauncherPage(boolean forward) {
+        AccessibilityNodeInfo root = launcherRoot();
+        try {
+            // Settings activities share the launcher package. Preserve their old scrolling,
+            // but recheck the current tree so a page change cannot expose the main pager here.
+            LauncherPageTabs.Snapshot page = LauncherPageTabs.read(root, screenBounds(), false);
+            if (page.complete && !page.mainLauncher) {
+                tryScrollOtherPage(root, forward, new TraversalBudget());
+            }
+        } finally {
+            if (root != null) root.recycle();
         }
+    }
+
+    private boolean tryScrollOtherPage(AccessibilityNodeInfo node, boolean forward,
+            TraversalBudget budget) {
+        if (node == null || budget.exhausted()) return false;
         budget.visit();
-        if (performScroll(node, forward)) {
+        int action = forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
+        boolean supported = node.isScrollable();
+        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
+        if (actions != null) {
+            for (AccessibilityNodeInfo.AccessibilityAction candidate : actions) {
+                if (candidate.getId() == action) supported = true;
+            }
+        }
+        if (supported && node.performAction(action)) {
+            Log.d(TAG, "Performed launcher subpage accessibility scroll forward=" + forward);
             return true;
         }
         for (int i = 0; i < node.getChildCount(); i++) {
-            if (tryScrollTree(node.getChild(i), forward, budget)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean performScroll(AccessibilityNodeInfo node, boolean forward) {
-        if (node == null) {
-            return false;
-        }
-        int action = forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
-        if ((node.isScrollable() || supports(node, action)) && node.performAction(action)) {
-            Log.d(TAG, "Performed accessibility scroll forward=" + forward);
-            return true;
-        }
-        return false;
-    }
-
-    private boolean supports(AccessibilityNodeInfo node, int actionId) {
-        if (node == null) {
-            return false;
-        }
-        List<AccessibilityNodeInfo.AccessibilityAction> actions = node.getActionList();
-        if (actions == null) {
-            return false;
-        }
-        for (AccessibilityNodeInfo.AccessibilityAction action : actions) {
-            if (action.getId() == actionId) {
-                return true;
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child == null) continue;
+            try {
+                if (tryScrollOtherPage(child, forward, budget)) return true;
+            } finally {
+                child.recycle();
             }
         }
         return false;
@@ -341,14 +414,99 @@ final class LauncherNavigator {
         drainLauncherQueue();
     }
 
+    private void moveCarousel(boolean forward, int steps) {
+        if (carouselFocus.enqueue(forward, steps)) return;
+        if (nativeEntry.isAvailable()) {
+            // A physical touch may clear input focus. Leave touch mode while Home is logical,
+            // then enter Apps with a native key; focusing directly on Apps would reset index 2.
+            pageNavigation.reset();
+            pageNavigation.move(forward, steps);
+            return;
+        }
+        // Older/unarmed helpers retain their existing navigation until native entry is available.
+        enqueueLauncherAppSwipes(forward, steps);
+    }
+
+    private boolean prepareNativeCarouselFocus() {
+        if (!nativeAppsEntry) return true;
+        LauncherCarouselFocus.Snapshot state = readCarouselFocus();
+        Log.d(TAG, "Preparing native focus seed=" + nativeFocusSeedColumn
+                + " complete=" + state.complete + " focused=" + state.focusedColumn()
+                + " center=" + state.centerColumn() + " count=" + state.count);
+        if (nativeFocusSeedColumn < 0) {
+            if (!state.complete || state.centerColumn() < 0) return false;
+            int column = state.centerColumn();
+            if (state.aligned(column)) {
+                nativeAppsEntry = false;
+                return true;
+            }
+            if (!focusCarouselColumn(column)) return false;
+            nativeFocusSeedColumn = column;
+            return false; // Read a fresh tree after the launcher's focus/layout callbacks.
+        }
+        if (!state.aligned(nativeFocusSeedColumn)) return false;
+        nativeAppsEntry = false;
+        return true;
+    }
+
+    private LauncherCarouselFocus.Snapshot readCarouselFocus() {
+        AccessibilityNodeInfo root = launcherRoot();
+        List<LauncherCarouselFocus.Item> items = new ArrayList<>();
+        int centerX = screenBounds().centerX();
+        int count = -1;
+        boolean complete = false;
+        try {
+            AccessibilityNodeInfo recycler = findLauncherAppCarousel(root);
+            if (!LauncherPageTabs.isVisibleCarousel(recycler, screenBounds())) {
+                return new LauncherCarouselFocus.Snapshot(items, centerX, count, false);
+            }
+            Rect bounds = new Rect();
+            recycler.getBoundsInScreen(bounds);
+            centerX = bounds.centerX();
+            if (recycler.getCollectionInfo() != null) count = recycler.getCollectionInfo().getColumnCount();
+            complete = true;
+            for (int i = 0; i < recycler.getChildCount(); i++) {
+                AccessibilityNodeInfo child = recycler.getChild(i);
+                if (child == null) { complete = false; continue; }
+                try {
+                    AccessibilityNodeInfo.CollectionItemInfo info = child.getCollectionItemInfo();
+                    Rect rect = new Rect();
+                    child.getBoundsInScreen(rect);
+                    if (info == null || rect.isEmpty()) { complete = false; continue; }
+                    items.add(new LauncherCarouselFocus.Item(info.getColumnIndex(), rect, child.isFocused()));
+                } finally { child.recycle(); }
+            }
+        } finally { if (root != null) root.recycle(); }
+        return new LauncherCarouselFocus.Snapshot(items, centerX, count, complete && !items.isEmpty());
+    }
+
+    private boolean focusCarouselColumn(int column) {
+        AccessibilityNodeInfo root = launcherRoot();
+        try {
+            AccessibilityNodeInfo recycler = findLauncherAppCarousel(root);
+            if (!LauncherPageTabs.isVisibleCarousel(recycler, screenBounds())) return false;
+            for (int i = 0; i < recycler.getChildCount(); i++) {
+                AccessibilityNodeInfo child = recycler.getChild(i);
+                if (child == null) continue;
+                try {
+                    AccessibilityNodeInfo.CollectionItemInfo info = child.getCollectionItemInfo();
+                    if (info != null && info.getColumnIndex() == column && child.isEnabled()
+                            && child.isFocusable() && child.isVisibleToUser()) {
+                        return child.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                    }
+                } finally { child.recycle(); }
+            }
+            return false;
+        } finally { if (root != null) root.recycle(); }
+    }
+
     private void drainLauncherQueue() {
         if (launcherStepInFlight || queuedLauncherSteps <= 0) {
             return;
         }
         AccessibilityNodeInfo root = launcherRoot();
         AccessibilityNodeInfo appRecycler = findLauncherAppCarousel(root);
-        boolean coordinateFallback = root == null && isActive();
-        if ((appRecycler == null || !appRecycler.isVisibleToUser()) && !coordinateFallback) {
+        if (!LauncherPageTabs.isVisibleCarousel(appRecycler, screenBounds())) {
             queuedLauncherSteps = 0;
             return;
         }
@@ -512,11 +670,11 @@ final class LauncherNavigator {
         }
         pendingCenterAction = PENDING_CENTER_ACTION_NONE;
         mainHandler.removeCallbacks(pendingCenterActionRunnable);
-        Log.d(TAG, "Cancelled pending launcher center action because launcher moved again");
+        Log.d(TAG, "Cancelled pending launcher center action after movement or page-transition failure");
     }
 
     private long launcherCenterActionDelayMs() {
-        long delayMs = 0L;
+        long delayMs = pageNavigation.remainingDelayMs() + carouselFocus.remainingDelayMs();
         if (launcherStepInFlight) {
             delayMs += Math.max(0L, launcherStepReleaseAt - SystemClock.uptimeMillis());
         }

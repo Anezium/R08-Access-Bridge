@@ -6,6 +6,10 @@ REQUEST="$BASE/request"
 RESPONSE="$BASE/response"
 HEARTBEAT="$BASE/heartbeat"
 DOORBELL="$BASE/doorbell"
+ENTRY_CAPABILITY="$BASE/entry_capability"
+ENTRY_REQUEST="$BASE/entry_request"
+ENTRY_RESPONSE="$BASE/entry_response"
+ENTRY_VERSION=1
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
@@ -16,6 +20,53 @@ WIFI_DISABLE_DELAY_SECONDS="${R08_WIFI_DISABLE_DELAY_SECONDS:-12}"
 
 log_msg() {
     echo "$(date +%s) $*" >> "$LOGFILE"
+}
+
+uptime_ms() {
+    read -r uptime_value uptime_idle < /proc/uptime
+    uptime_fraction="${uptime_value#*.}000"
+    uptime_fraction="${uptime_fraction%${uptime_fraction#???}}"
+    echo "$(( ${uptime_value%%.*} * 1000 + 1$uptime_fraction - 1000 ))"
+}
+
+publish_entry_capability() {
+    echo "$ENTRY_VERSION $entry_session $(uptime_ms)" > "$ENTRY_CAPABILITY.tmp"
+    mv -f "$ENTRY_CAPABILITY.tmp" "$ENTRY_CAPABILITY"
+}
+
+entry_reply() {
+    echo "$entry_session $entry_token $1" > "$ENTRY_RESPONSE.tmp"
+    mv -f "$ENTRY_RESPONSE.tmp" "$ENTRY_RESPONSE"
+}
+
+check_entry_request() {
+    entry_current="$(cat "$ENTRY_REQUEST" 2>/dev/null)"
+    [ -n "$entry_current" ] && [ "$entry_current" != "$entry_last" ] || return
+    # Consume before injecting. A lost response must never replay a key.
+    entry_last="$entry_current"
+    read -r entry_requested_session entry_token entry_expiry entry_key entry_extra <<EOF
+$entry_current
+EOF
+    [ "$entry_requested_session" = "$entry_session" ] || return
+    case "$entry_token" in ''|*[!a-zA-Z0-9-]*) return ;; esac
+    case "$entry_expiry" in ''|*[!0-9]*) entry_reply invalid; return ;; esac
+    case "$entry_key" in 19|20) ;; *) entry_reply invalid; return ;; esac
+    [ -z "$entry_extra" ] || { entry_reply invalid; return; }
+    [ "$(uptime_ms)" -lt "$entry_expiry" ] || { entry_reply expired; return; }
+    # This is a global input injection: never deliver to an app opened while waiting.
+    if ! dumpsys activity activities | grep -E 'mResumedActivity:|topResumedActivity=' \
+            | grep -q 'com.rokid.os.sprite.launcher/.*SpriteMainActivity'; then
+        entry_reply foreground
+        return
+    fi
+    [ "$(uptime_ms)" -lt "$entry_expiry" ] || { entry_reply expired; return; }
+    [ "$(cat "$ENTRY_REQUEST" 2>/dev/null)" = "$entry_current" ] || return
+    if input keyevent "$entry_key"; then
+        entry_reply ok
+        log_msg "native entry injected key=$entry_key"
+    else
+        entry_reply failed
+    fi
 }
 
 is_alive() {
@@ -136,6 +187,8 @@ handle_request() {
 check_and_dispatch() {
     now="$(date +%s)"
     echo "$now" > "$HEARTBEAT"
+    publish_entry_capability
+    check_entry_request
     current="$(cat "$REQUEST" 2>/dev/null)"
     if [ -n "$current" ] && [ "$current" != "$last" ]; then
         last="$current"
@@ -184,7 +237,8 @@ run_poll_loop() {
 }
 
 run_event_loop() {
-    last=""
+    # Existing requests belong to the previous helper session, just as in poll mode.
+    last="$(cat "$REQUEST" 2>/dev/null)"
     log_msg "doorbell loop path=$DOORBELL idle_recheck=${IDLE_RECHECK_SECONDS}s"
     check_and_dispatch
     while true; do
@@ -207,6 +261,9 @@ run_event_loop() {
 run_loop() {
     mkdir -p "$BASE"
     echo "$$" > "$PIDFILE"
+    entry_session="$$-$(uptime_ms)"
+    entry_last=""
+    publish_entry_capability
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"
     if prepare_doorbell; then
         run_event_loop
@@ -218,9 +275,24 @@ start_bridge() {
     mkdir -p "$BASE"
     pid="$(read_pid)"
     if is_alive "$pid"; then
-        echo "already running pid=$pid"
-        exit 0
+        read -r running_version running_session running_time < "$ENTRY_CAPABILITY" 2>/dev/null
+        if [ "$running_version" = "$ENTRY_VERSION" ]; then
+            case "$running_session" in
+                "$pid"-*) echo "already running pid=$pid"; exit 0 ;;
+            esac
+        fi
+        # Upgrade only the verified helper, preserving the existing ADB transport.
+        kill "$pid" || exit 1
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            is_alive "$pid" || break
+            sleep 0.1
+        done
+        if is_alive "$pid"; then
+            echo "old bridge did not stop"
+            exit 1
+        fi
     fi
+    rm -f "$ENTRY_CAPABILITY"
     rm -f "$PIDFILE"
     nohup sh "$0" run >/dev/null 2>&1 &
     sleep 0.3
@@ -237,6 +309,7 @@ stop_bridge() {
     pid="$(read_pid)"
     if is_alive "$pid"; then
         kill "$pid"
+        rm -f "$ENTRY_CAPABILITY"
         rm -f "$PIDFILE"
         echo "stopped pid=$pid"
     else

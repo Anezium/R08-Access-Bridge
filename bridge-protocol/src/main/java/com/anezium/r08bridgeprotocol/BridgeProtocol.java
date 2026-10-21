@@ -90,6 +90,10 @@ public final class BridgeProtocol {
     public static final String RESPONSE_FILE = "response";
     public static final String HEARTBEAT_FILE = "heartbeat";
     public static final String DOORBELL_FILE = "doorbell";
+    public static final String ENTRY_CAPABILITY_FILE = "entry_capability";
+    public static final String ENTRY_REQUEST_FILE = "entry_request";
+    public static final String ENTRY_RESPONSE_FILE = "entry_response";
+    public static final String ENTRY_PROTOCOL_VERSION = "1";
 
     public static final String COMMAND_SHORTCUT = "shortcut";
     public static final String COMMAND_WIFI_ENABLE = "wifi_enable";

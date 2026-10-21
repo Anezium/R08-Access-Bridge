@@ -61,7 +61,7 @@ final class PrivilegedShortcutBridge {
         }
     }
 
-    private static void ringDoorbell(Context context) {
+    static void ringDoorbell(Context context) {
         File dir = bridgeDir(context);
         if (dir == null) {
             return;
@@ -97,6 +97,11 @@ final class PrivilegedShortcutBridge {
         File heartbeat = new File(dir, BridgeProtocol.HEARTBEAT_FILE);
         long ageMs = System.currentTimeMillis() - heartbeat.lastModified();
         return heartbeat.isFile() && ageMs >= 0L && ageMs <= ARMED_HEARTBEAT_TTL_MS;
+    }
+
+    static boolean supportsNativeEntry(Context context) {
+        return isArmed(context) && LauncherNativeEntry.availableSession(
+                new File(bridgeDirPath(context)), android.os.SystemClock.elapsedRealtime()) != null;
     }
 
     static String statusLabel(Context context) {

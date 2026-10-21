@@ -36,6 +36,7 @@ final class AccessibilityNavigator {
     private final ReaderaCompatibility readeraCompatibility;
     private final ArbookCompatibility arbookCompatibility;
     private final NewPipeCompatibility newPipeCompatibility;
+    private final RokidSettingsControls rokidSettingsControls;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
@@ -44,6 +45,7 @@ final class AccessibilityNavigator {
         readeraCompatibility = new ReaderaCompatibility(service, gestures);
         arbookCompatibility = new ArbookCompatibility(service, gestures);
         newPipeCompatibility = new NewPipeCompatibility(service);
+        rokidSettingsControls = new RokidSettingsControls(service);
     }
 
     void moveForward() {
@@ -204,7 +206,8 @@ final class AccessibilityNavigator {
     private boolean adjustRokidVolume(boolean forward) {
         AccessibilityNodeInfo root = AccessibilityWindowRoots.getPackageRoot(service, ROKID_LAUNCHER_PACKAGE);
         if (!hasNodeWithViewId(root, ROKID_VOLUME_LAYOUT_ID)) {
-            return false;
+            return !hasNodeWithViewId(root, ROKID_LAUNCHER_PACKAGE + ":id/main_focus_audio_layout")
+                    && rokidSettingsControls.adjust(root, forward);
         }
         AudioManager audioManager = (AudioManager) service.getSystemService(Context.AUDIO_SERVICE);
         if (audioManager == null) {
