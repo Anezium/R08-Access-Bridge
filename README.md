@@ -46,7 +46,7 @@ Everything now runs on the glasses. A one-time `Self-arm (no phone)` sets up the
 - Enables Stable mode by default using R08 `appType 1`, which emits media key events, and lets you switch between Stable, Fast, and Touch fallback behavior from one APK.
 - Lets you remap triple tap, quadruple tap, and four tap+swipe combo gestures directly from the glasses UI, including launching any installed app.
 - Shows the latest R08 ring battery reading next to the glasses battery on the Rokid launcher.
-- Lets ring swipes adjust the Rokid volume screen, and a single ring tap trigger a photo from the active camera page, without the privileged bridge.
+- Lets ring swipes adjust the Rokid volume screen, including the newer Compose settings page. Brightness swipes on the newer settings page use the settings access granted by self-arm. A single ring tap can also trigger a photo from the active camera page, without the privileged shortcut bridge.
 - Wakes the glasses display on ring input and ignores the waking gesture, so ring actions never run blindly on a sleeping screen.
 - Offers a three-state `Ring media key guard`: `Off` preserves normal media control, `Screen-off only` keeps dark-screen taps on the glasses, and `Always` prevents ring input from controlling media even during playback.
 - Reads the ring's health sensors from the glasses: on-demand heart rate, SpO₂, body temperature, HRV, and stress measurements with 12-hour charts, plus daily steps, sleep sessions, history sync, and backup.
@@ -143,14 +143,14 @@ The release APK contains both launcher behaviors — there is no separate fast A
 | Mode | Behavior | Use when |
 | --- | --- | --- |
 | Stable | One launcher step per slide. This is the default. | Most users, especially when launcher focus can drift. |
-| Fast | Uses boosted launcher swipes after repeated slides. | Your glasses keep visual focus and launched app aligned, and you want faster launcher movement. |
+| Fast | Requests two launcher steps per slide after three same-direction slides, each within 900 ms of the previous one. Native focus steps wait for centering. | Faster movement through Applications. |
 | Touch | Configures the R08 touch fallback profile. | Debug only, when key input is not usable. |
 
 The current mode is shown in the top bar of the app so the active behavior is visible at a glance.
 
 ## Launcher Behavior
 
-The Rokid launcher does not reliably respond to normal Accessibility scroll calls, so R08 Access Bridge injects small horizontal launcher swipes instead. Each ring swipe moves one normal launcher step; Fast mode accelerates repeated slides with boosted swipes; activation taps the visible center app in the carousel. This avoids relying on stale launcher accessibility focus.
+R08 enters launcher pages through their native controls so the application name follows the centered icon. With the updated shell bridge armed, Applications navigation moves the launcher's native input focus one app at a time and waits for that icon to center before the next movement or activation. The shell is used only to prepare entry into Applications; individual carousel steps use Accessibility focus actions. Returning from a touch gesture prepares native focus again while preserving the selected application. Older or unarmed helpers retain the previous injected swipe behavior until the helper is updated through setup/re-arm.
 
 Launcher swiping also no longer depends on the display staying awake. The Rokid firmware parks focus on an invisible 1x1 system window around screen off, which used to freeze launcher navigation and the selected-app label for users with short screen timeouts. The app now detects that state, resolves the real launcher window, wakes the display on ring input, and swallows the gesture that caused the wake so nothing runs blindly on a dark screen.
 
@@ -201,7 +201,7 @@ If the ring then connects and shows its battery on the glasses but no gesture ev
 ### Set up on the glasses
 
 ```powershell
-adb install -r R08-Access-Bridge-v2.0.2.apk
+adb install -r R08-Access-Bridge-v2.0.3.apk
 ```
 
 1. Open `R08 Access Bridge` and grant Bluetooth permissions if Android asks.
