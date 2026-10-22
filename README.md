@@ -124,7 +124,7 @@ That loopback only exists if adbd runs at boot, which Android does only when **U
 2. Back in the app, tap **`Self-arm (no phone)`**.
 3. The Accessibility service opens the glasses' own Wireless Debugging, reads the pairing code, pairs over ADB loopback, installs the bridge and watchdog, grants `WRITE_SECURE_SETTINGS`, and turns Wi-Fi back off. When the app shows **`Self-arm complete`**, you are done.
 
-The Settings navigation is locale-independent and works in any glasses language (English, French, Spanish, Portuguese, German, Italian, Russian, and Korean). Wireless Debugging requires Android 11+, which the R08 satisfies.
+The Settings navigation recognizes English, French, Spanish, Portuguese, German, Italian, Russian, Korean, and Simplified Chinese labels. Wireless Debugging requires Android 11+, which the R08 satisfies.
 
 **Battery note:** Wi-Fi is only enabled for the duration of the self-arm, then turned off along with always-on scanning, keeping the glasses in low-power operation. The shortcut bridge waits on an event-driven FIFO rather than polling, so it costs almost no CPU while idle.
 
@@ -267,6 +267,7 @@ R08 Access Bridge requests:
 
 ## Credits
 
+- [MoeclubM](https://github.com/MoeclubM) contributed Simplified Chinese support for the on-glasses self-arm setup ([PR #7](https://github.com/Anezium/R08-Access-Bridge/pull/7)).
 - [hacha](https://x.com/hacha) shared the [`rokid-r08-wake`](https://github.com/hacha/rokid-r08-wake) loopback self-arm technique that the accessibility watchdog recovery path is built on. Ring control surviving the Rokid firmware force-stops exists because of his work. He also diagnosed the screen-off media-key leak to paired phones and contributed the media button session guard ([PR #1](https://github.com/hacha/R08-Access-Bridge/pull/1) on his fork) that `Ring media key guard` is built on.
 - Reddit user `u/Rare_Wheel1907` found and confirmed the "update the ring firmware, then disconnect it from the official app before pairing" fix.
 
