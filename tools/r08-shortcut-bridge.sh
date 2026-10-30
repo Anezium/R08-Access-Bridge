@@ -10,10 +10,22 @@ ENTRY_CAPABILITY="$BASE/entry_capability"
 ENTRY_REQUEST="$BASE/entry_request"
 ENTRY_RESPONSE="$BASE/entry_response"
 ENTRY_VERSION=1
+FEATURES="$BASE/features"
+# Space-separated capabilities the app checks before routing a request to this helper.
+FEATURE_LIST="function_key"
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
+FUNCTION_INPUT_NAME="${R08_FUNCTION_INPUT_NAME:-qpnp_pon}"
+FUNCTION_SCAN_CODE="${R08_FUNCTION_SCAN_CODE:-139}"
+# The framework long-press threshold for the camera button is 400 ms; very long press
+# (3 s) is reserved for power and reset gestures, so stay well clear of it.
+FUNCTION_SHORT_HOLD_SECONDS="${R08_FUNCTION_SHORT_HOLD_SECONDS:-0.08}"
+FUNCTION_LONG_HOLD_SECONDS="${R08_FUNCTION_LONG_HOLD_SECONDS:-0.8}"
+# Presses closer than the multi-press window add up (3 = pairing, 6 = factory reset
+# countdown when the temples are folded), so injected presses are always spaced out.
+FUNCTION_MIN_GAP_MS="${R08_FUNCTION_MIN_GAP_MS:-1000}"
 POLL_SECONDS="${R08_POLL_SECONDS:-0.2}"
 IDLE_RECHECK_SECONDS="${R08_IDLE_RECHECK_SECONDS:-5}"
 WIFI_DISABLE_DELAY_SECONDS="${R08_WIFI_DISABLE_DELAY_SECONDS:-12}"
@@ -93,6 +105,35 @@ trigger_shortcut() {
     sendevent "$INPUT_DEVICE" 0 0 0
     sendevent "$INPUT_DEVICE" 1 "$SETTINGS_SCAN_CODE" 0
     sendevent "$INPUT_DEVICE" 0 0 0
+}
+
+function_input_device() {
+    for name_file in /sys/class/input/event*/device/name; do
+        [ "$(cat "$name_file" 2>/dev/null)" = "$FUNCTION_INPUT_NAME" ] || continue
+        event_dir="${name_file%/device/name}"
+        echo "/dev/input/${event_dir##*/}"
+        return 0
+    done
+    return 1
+}
+
+# Firmware 1.28 stopped accepting the assistserver scene broadcast from user builds, and the
+# button broadcasts are protected. A real key press on the camera button still reaches it.
+press_function_key() {
+    hold="$1"
+    device="$(function_input_device)" || return 1
+    if [ -n "$function_last_ms" ]; then
+        wait_ms=$(( function_last_ms + FUNCTION_MIN_GAP_MS - $(uptime_ms) ))
+        if [ "$wait_ms" -gt 0 ]; then
+            sleep "$(( wait_ms / 1000 )).$(printf '%03d' $(( wait_ms % 1000 )))"
+        fi
+    fi
+    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 1 || return 1
+    sendevent "$device" 0 0 0
+    sleep "$hold"
+    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 0
+    sendevent "$device" 0 0 0
+    function_last_ms="$(uptime_ms)"
 }
 
 set_wifi_enabled() {
@@ -176,6 +217,20 @@ handle_request() {
             ;;
         wifi_disable)
             schedule_wifi_disable "$request" "$now"
+            ;;
+        function_key_short|function_key_long)
+            if [ "$command" = "function_key_long" ]; then
+                hold="$FUNCTION_LONG_HOLD_SECONDS"
+            else
+                hold="$FUNCTION_SHORT_HOLD_SECONDS"
+            fi
+            if press_function_key "$hold"; then
+                echo "ok $command $request $now" > "$RESPONSE"
+                log_msg "$command ok request=$request"
+            else
+                echo "failed $command $request $now" > "$RESPONSE"
+                log_msg "$command failed request=$request"
+            fi
             ;;
         *)
             echo "ignored $request $now" > "$RESPONSE"
@@ -263,6 +318,8 @@ run_loop() {
     echo "$$" > "$PIDFILE"
     entry_session="$$-$(uptime_ms)"
     entry_last=""
+    function_last_ms=""
+    echo "$FEATURE_LIST" > "$FEATURES"
     publish_entry_capability
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"
     if prepare_doorbell; then
@@ -292,7 +349,7 @@ start_bridge() {
             exit 1
         fi
     fi
-    rm -f "$ENTRY_CAPABILITY"
+    rm -f "$ENTRY_CAPABILITY" "$FEATURES"
     rm -f "$PIDFILE"
     nohup sh "$0" run >/dev/null 2>&1 &
     sleep 0.3
@@ -309,7 +366,7 @@ stop_bridge() {
     pid="$(read_pid)"
     if is_alive "$pid"; then
         kill "$pid"
-        rm -f "$ENTRY_CAPABILITY"
+        rm -f "$ENTRY_CAPABILITY" "$FEATURES"
         rm -f "$PIDFILE"
         echo "stopped pid=$pid"
     else
