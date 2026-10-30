@@ -102,6 +102,8 @@ Each mappable gesture can be set in the app to:
 - AR video toggle
 - Launch app (opens a picker listing the apps installed on the glasses)
 
+On glasses firmware `1.28` and newer, Rokid AI, Take photo and Video toggle need the armed shell helper: the firmware no longer accepts the assistant's scene command from apps, so the helper presses the glasses' own camera button (short press = photo, long press = video, following the button settings in the Hi Rokid app) or the two-finger AI shortcut key. AR screenshot and AR video toggle have no reachable trigger on that firmware.
+
 ## Self-arm: the Hi Rokid shortcut and surviving force-stops
 
 Two things on the glasses need more than a normal APK can do by itself:

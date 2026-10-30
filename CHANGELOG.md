@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v2.0.5 - 2026-10-30
+
+### Photo, video and Rokid AI work again on firmware 1.28
+
+- Rokid firmware `1.28.016` only accepts the assistant's scene command on development builds, so the Take photo, Video toggle and Rokid AI ring actions silently did nothing (#16). On firmware 1.28 and newer they now go through the shell helper, which presses the glasses' own camera button: a short press takes a photo (or stops a running recording), a long press starts or stops a video. Rokid AI uses the two-finger shortcut key, so it needs the phone connected and the shortcut enabled in the Hi Rokid app, like the Hi Rokid Shortcut action. Older firmware keeps the previous route.
+- The camera button follows the glasses' own button settings in the Hi Rokid app: if the short or long press is set to something other than photo or video, the ring triggers that instead.
+- AR screenshot and AR video have no reachable trigger on firmware 1.28; these actions now say `AR capture blocked by firmware` instead of pretending to work.
+- The helper advertises the new capability, and the app replaces an older helper still running after the update. When Nexus restores the helpers (port 5555 closed), run the phone setup once with Companion v0.2.11 to install the new helper.
+- Include Companion v0.2.11 with the updated shell helper.
+
 ## v2.0.4 - 2026-10-21
 
 - Add an Updates screen directly in the glasses app. Check GitHub's latest stable release automatically when opening the app, at most once per day, or check manually at any time.

@@ -13,6 +13,7 @@ import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 final class PrivilegedShortcutBridge {
     private static final String TAG = "R08PrivBridge";
@@ -29,6 +30,20 @@ final class PrivilegedShortcutBridge {
 
     static boolean requestHiRokidShortcut(Context context) {
         if (!writeRequest(context, BridgeProtocol.COMMAND_SHORTCUT)) {
+            return false;
+        }
+        ringDoorbell(context);
+        return true;
+    }
+
+    /** Presses the glasses' camera button: short = photo or stop recording, long = video. */
+    static boolean requestFunctionKey(Context context, boolean longPress) {
+        if (!supportsFunctionKeys(context)) {
+            return false;
+        }
+        if (!writeRequest(context, longPress
+                ? BridgeProtocol.COMMAND_FUNCTION_KEY_LONG
+                : BridgeProtocol.COMMAND_FUNCTION_KEY_SHORT)) {
             return false;
         }
         ringDoorbell(context);
@@ -102,6 +117,33 @@ final class PrivilegedShortcutBridge {
     static boolean supportsNativeEntry(Context context) {
         return isArmed(context) && LauncherNativeEntry.availableSession(
                 new File(bridgeDirPath(context)), android.os.SystemClock.elapsedRealtime()) != null;
+    }
+
+    static boolean supportsFunctionKeys(Context context) {
+        if (!isArmed(context)) {
+            return false;
+        }
+        File features = new File(bridgeDirPath(context), BridgeProtocol.FEATURES_FILE);
+        try {
+            String list = new String(Files.readAllBytes(features.toPath()), StandardCharsets.UTF_8);
+            return hasFeature(list, BridgeProtocol.FEATURE_FUNCTION_KEY);
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
+    }
+
+    static boolean hasFeature(String list, String feature) {
+        for (String token : list.trim().split("\\s+")) {
+            if (token.equals(feature)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True when the live helper is the one this app version ships. */
+    static boolean isCurrent(Context context) {
+        return supportsNativeEntry(context) && supportsFunctionKeys(context);
     }
 
     static String statusLabel(Context context) {

@@ -94,10 +94,14 @@ public final class BridgeProtocol {
     public static final String ENTRY_REQUEST_FILE = "entry_request";
     public static final String ENTRY_RESPONSE_FILE = "entry_response";
     public static final String ENTRY_PROTOCOL_VERSION = "1";
+    public static final String FEATURES_FILE = "features";
+    public static final String FEATURE_FUNCTION_KEY = "function_key";
 
     public static final String COMMAND_SHORTCUT = "shortcut";
     public static final String COMMAND_WIFI_ENABLE = "wifi_enable";
     public static final String COMMAND_WIFI_DISABLE = "wifi_disable";
+    public static final String COMMAND_FUNCTION_KEY_SHORT = "function_key_short";
+    public static final String COMMAND_FUNCTION_KEY_LONG = "function_key_long";
 
     public static final String REMOTE_SCRIPT = "/data/local/tmp/r08-shortcut-bridge.sh";
     public static final String REMOTE_WATCHDOG_SCRIPT = "/data/local/tmp/r08-a11y-watchdog.sh";

@@ -99,7 +99,8 @@ final class SelfArmController {
 
     /**
      * The accessibility service (re)connected, providing another boot trigger when the
-     * firmware permits the binding. Also upgrades a live helper lacking native page-entry support.
+     * firmware permits the binding. Also upgrades a live helper lacking native page-entry or
+     * camera-button support.
      */
     static void armOnServiceConnected(Context context) {
         armAsync(context, "service_connected", SERVICE_CONNECTED_RETRY_DELAYS_MS, true);
@@ -160,7 +161,7 @@ final class SelfArmController {
             Thread.currentThread().interrupt();
             return "usb debugging enabled";
         }
-        if (PrivilegedShortcutBridge.supportsNativeEntry(appContext)) {
+        if (PrivilegedShortcutBridge.isCurrent(appContext)) {
             return "usb debugging enabled; helpers alive";
         }
         Log.i(TAG, "helpers died after enabling usb debugging; re-arming over loopback");
@@ -182,7 +183,7 @@ final class SelfArmController {
             return;
         }
         NexusCoexistence.setArmed(appContext, true);
-        if (onlyWhenHelpersDown && PrivilegedShortcutBridge.supportsNativeEntry(appContext)) {
+        if (onlyWhenHelpersDown && PrivilegedShortcutBridge.isCurrent(appContext)) {
             Log.d(TAG, "skip self-arm reason=" + reason + " helpers alive");
             return;
         }
@@ -230,7 +231,7 @@ final class SelfArmController {
 
     static Outcome armOnce(Context context) throws InterruptedException {
         String secureStatus = repairAccessibilityFromApp(context);
-        if (PrivilegedShortcutBridge.supportsNativeEntry(context)) {
+        if (PrivilegedShortcutBridge.isCurrent(context)) {
             return Outcome.success(secureStatus + "helpers alive");
         }
         if (NexusCoexistence.isAvailable(context) || NexusCoexistence.isConfigured(context)) {
