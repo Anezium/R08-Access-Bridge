@@ -333,7 +333,8 @@ start_bridge() {
     pid="$(read_pid)"
     if is_alive "$pid"; then
         read -r running_version running_session running_time < "$ENTRY_CAPABILITY" 2>/dev/null
-        if [ "$running_version" = "$ENTRY_VERSION" ]; then
+        if [ "$running_version" = "$ENTRY_VERSION" ] \
+                && [ "$(cat "$FEATURES" 2>/dev/null)" = "$FEATURE_LIST" ]; then
             case "$running_session" in
                 "$pid"-*) echo "already running pid=$pid"; exit 0 ;;
             esac
