@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Rokid AI on firmware 1.28 opens the real assistant again instead of acting like the Hi Rokid Shortcut (#18). The helper now holds the touchpad AI key, which opens Rokid AI in the assistant mode chosen in the Hi Rokid app, without the phone or the shortcut toggle. Until the helper from 2.0.5 is replaced, Rokid AI shows `Re-arm phone bridge` instead of acting as the shortcut.
+- Replacing a running helper could leave its `start` command spinning a CPU core forever (toybox `tr` loops when the old helper exits during the check). Both helpers now read the process command line through `cat`.
+- A second helper loop started by a concurrent starter now exits before handling requests, so a ring action can never be injected twice.
 - Include Companion v0.2.12 with the updated shell helper. With Nexus, run the phone setup once more to install it.
 
 ## v2.0.5 - 2026-10-30

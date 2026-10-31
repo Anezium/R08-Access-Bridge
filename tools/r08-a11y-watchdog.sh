@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-VERSION="1"
+VERSION="2"
 PKG="${R08_PACKAGE:-com.anezium.r08accessbridge}"
 SVC="${R08_A11Y_SERVICE:-com.anezium.r08accessbridge/com.anezium.r08accessbridge.RingControlAccessibilityService}"
 SCRIPT_NAME="r08-a11y-watchdog.sh"
@@ -37,7 +37,8 @@ is_alive() {
     pid="$1"
     [ -n "$pid" ] || return 1
     [ -d "/proc/$pid" ] || return 1
-    cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    # Read through cat: toybox tr spins forever on the read error of a process exiting meanwhile.
+    cmdline="$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\000' ' ')"
     case "$cmdline" in
         *"$SCRIPT_NAME"*) return 0 ;;
         *) return 1 ;;

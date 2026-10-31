@@ -95,7 +95,8 @@ is_alive() {
     [ -d "/proc/$pid" ] || return 1
     # PID files survive reboots and the old PID can belong to an unrelated process.
     # Check the helper command before treating it as running (or sending it a signal).
-    cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    # Read through cat: toybox tr spins forever on the read error of a process exiting meanwhile.
+    cmdline="$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\000' ' ')"
     case "$cmdline" in
         *"sh $0 run "*) return 0 ;;
         *) return 1 ;;
