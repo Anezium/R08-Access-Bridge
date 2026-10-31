@@ -93,6 +93,11 @@ final class LauncherPageTabs {
             if (marker != UNKNOWN) {
                 inspection.pages |= 1 << marker;
                 if (pageAligned) inspection.alignedPages |= 1 << marker;
+                // The container identifies its page. Its app rows / widget contents
+                // cannot identify another ViewPager page, and fetching them can exhaust
+                // the tree budget while media widgets are updating. Still inspect the
+                // container's siblings so conflicting pages and the tabs are checked.
+                return;
             }
         }
         for (int i = 0; i < node.getChildCount() && inspection.complete; i++) {
