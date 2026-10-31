@@ -4,10 +4,12 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.wifi.WifiManager;
+import android.net.NetworkRequest;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Wireless Debugging as an ADB transport for the maintenance self-arm. Nexus keeps port 5555
@@ -19,17 +21,10 @@ final class WirelessDebugging {
     private static final String SETTING_ADB_WIFI_ENABLED = "adb_wifi_enabled";
     private static final String PROPERTY_TLS_PORT = "service.adb.tls.port";
     private static final long POLL_MS = 500L;
+    private static final AtomicReference<ConnectivityManager.NetworkCallback> PENDING =
+            new AtomicReference<>();
 
     private WirelessDebugging() {
-    }
-
-    static boolean isWifiRadioOn(Context context) {
-        try {
-            WifiManager wifi = context.getSystemService(WifiManager.class);
-            return wifi != null && wifi.isWifiEnabled();
-        } catch (RuntimeException exception) {
-            return false;
-        }
     }
 
     static boolean isWifiNetworkReady(Context context) {
@@ -43,15 +38,37 @@ final class WirelessDebugging {
         }
     }
 
-    static boolean waitForWifiNetwork(Context context, long timeoutMs) throws InterruptedException {
-        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
-        while (!isWifiNetworkReady(context)) {
-            if (SystemClock.elapsedRealtime() >= deadline) {
-                return false;
-            }
-            Thread.sleep(POLL_MS);
+    /** Runs {@code action} once, the next time the glasses join a Wi-Fi network. */
+    static void onNextWifiNetwork(Context context, Runnable action) {
+        ConnectivityManager connectivity = context.getSystemService(ConnectivityManager.class);
+        if (connectivity == null) {
+            return;
         }
-        return true;
+        ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                if (!PENDING.compareAndSet(this, null)) {
+                    return;
+                }
+                try {
+                    connectivity.unregisterNetworkCallback(this);
+                } catch (RuntimeException ignored) {
+                    // Already unregistered.
+                }
+                action.run();
+            }
+        };
+        if (!PENDING.compareAndSet(null, callback)) {
+            return;
+        }
+        try {
+            connectivity.registerNetworkCallback(new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .build(), callback);
+        } catch (RuntimeException exception) {
+            PENDING.compareAndSet(callback, null);
+            Log.w(TAG, "cannot watch for Wi-Fi", exception);
+        }
     }
 
     /**

@@ -48,8 +48,8 @@ final class SelfArmController {
     private static final long ADBD_START_GRACE_MS = 4_000L;
     /** Heartbeat TTL plus margin: after that, a stale heartbeat no longer reads as "armed". */
     private static final long HELPER_LIVENESS_SETTLE_MS = 16_000L;
-    /** Wi-Fi switched on by the helper needs a few seconds to join a known network. */
-    private static final long WIFI_NETWORK_TIMEOUT_MS = 30_000L;
+    /** adbd needs a moment after the glasses join Wi-Fi before Wireless Debugging listens. */
+    private static final long[] WIFI_AVAILABLE_DELAYS_MS = {3_000L, 20_000L};
     private static final long WIRELESS_PORT_TIMEOUT_MS = 10_000L;
 
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
@@ -272,8 +272,9 @@ final class SelfArmController {
 
     /**
      * Replaces the helpers over Wireless Debugging with the key the phone companion paired, so
-     * an update reaches them while Nexus keeps 5555 closed. Wi-Fi switched on through the old
-     * helper goes back off afterwards. Null when this transport is unavailable.
+     * an update reaches them while Nexus keeps 5555 closed. Wi-Fi is left to the user and Nexus:
+     * without a network, the attempt waits for the glasses to join one. Null when this
+     * transport is unavailable.
      */
     private static String armOverWirelessDebugging(Context context) throws InterruptedException {
         try {
@@ -282,20 +283,14 @@ final class SelfArmController {
             Log.i(TAG, "wireless debugging re-arm skipped: " + exception.getMessage());
             return null;
         }
-        boolean wifiRequested = false;
+        if (!WirelessDebugging.isWifiNetworkReady(context)) {
+            Log.i(TAG, "wireless debugging re-arm waits for a Wi-Fi network");
+            Context appContext = context.getApplicationContext();
+            WirelessDebugging.onNextWifiNetwork(appContext,
+                    () -> armAsync(appContext, "wifi_available", WIFI_AVAILABLE_DELAYS_MS, true));
+            return null;
+        }
         try {
-            if (!WirelessDebugging.isWifiNetworkReady(context)) {
-                if (WirelessDebugging.isWifiRadioOn(context) || !PrivilegedShortcutBridge.isArmed(context)) {
-                    Log.i(TAG, "wireless debugging re-arm skipped: no Wi-Fi network");
-                    return null;
-                }
-                wifiRequested = PrivilegedShortcutBridge.requestWifiEnabled(context, true);
-                PrivilegedShortcutBridge.ringDoorbell(context);
-                if (!WirelessDebugging.waitForWifiNetwork(context, WIFI_NETWORK_TIMEOUT_MS)) {
-                    Log.i(TAG, "wireless debugging re-arm skipped: Wi-Fi joined no network");
-                    return null;
-                }
-            }
             int port = WirelessDebugging.ensureEnabled(context, WIRELESS_PORT_TIMEOUT_MS);
             if (port <= 0) {
                 Log.i(TAG, "wireless debugging re-arm skipped: no TLS port");
@@ -307,11 +302,6 @@ final class SelfArmController {
         } catch (Exception exception) {
             Log.i(TAG, "wireless debugging re-arm failed: " + firstLine(shortMessage(exception)));
             return null;
-        } finally {
-            if (wifiRequested) {
-                PrivilegedShortcutBridge.requestWifiEnabled(context, false);
-                PrivilegedShortcutBridge.ringDoorbell(context);
-            }
         }
     }
 
