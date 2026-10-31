@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Rokid AI on firmware 1.28 opens the real assistant again instead of acting like the Hi Rokid Shortcut (#18). The helper now holds the touchpad AI key, which opens Rokid AI in the assistant mode chosen in the Hi Rokid app, without the phone or the shortcut toggle. A helper from 2.0.5 still falls back to the two-finger shortcut until it is replaced.
+- Include Companion v0.2.12 with the updated shell helper. With Nexus, run the phone setup once more to install it.
+
 ## v2.0.5 - 2026-10-30
 
 ### Photo, video and Rokid AI work again on firmware 1.28

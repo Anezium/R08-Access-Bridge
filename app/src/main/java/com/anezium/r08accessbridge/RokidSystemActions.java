@@ -53,7 +53,11 @@ final class RokidSystemActions {
 
     static boolean openAiAssist(Context context) {
         if (!sceneCommandsAvailable()) {
-            // The two-finger long-press key: needs the phone connected and the Hi Rokid shortcut on.
+            if (PrivilegedShortcutBridge.requestAiKey(context)) {
+                return true;
+            }
+            // Helpers from 2.0.5 lack the AI key. The two-finger shortcut opens a different AI
+            // mode and needs the phone connected, but beats doing nothing until they are replaced.
             return PrivilegedShortcutBridge.isArmed(context)
                     && PrivilegedShortcutBridge.requestHiRokidShortcut(context);
         }

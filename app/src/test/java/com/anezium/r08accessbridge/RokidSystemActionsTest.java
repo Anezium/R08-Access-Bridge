@@ -34,5 +34,7 @@ public class RokidSystemActionsTest {
         assertTrue(PrivilegedShortcutBridge.hasFeature("other function_key", BridgeProtocol.FEATURE_FUNCTION_KEY));
         assertFalse(PrivilegedShortcutBridge.hasFeature("function_key_v0", BridgeProtocol.FEATURE_FUNCTION_KEY));
         assertFalse(PrivilegedShortcutBridge.hasFeature("", BridgeProtocol.FEATURE_FUNCTION_KEY));
+        assertTrue(PrivilegedShortcutBridge.hasFeature("function_key ai_key\n", BridgeProtocol.FEATURE_AI_KEY));
+        assertFalse(PrivilegedShortcutBridge.hasFeature("function_key\n", BridgeProtocol.FEATURE_AI_KEY));
     }
 }

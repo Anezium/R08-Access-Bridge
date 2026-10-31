@@ -12,11 +12,15 @@ ENTRY_RESPONSE="$BASE/entry_response"
 ENTRY_VERSION=1
 FEATURES="$BASE/features"
 # Space-separated capabilities the app checks before routing a request to this helper.
-FEATURE_LIST="function_key"
+FEATURE_LIST="function_key ai_key"
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
+# KEY_PROG1 on the touchpad (PROG_BLUE). Held past 300 ms, the framework sends ACTION_AI_START,
+# which opens Rokid AI in the user's assistant mode without the phone.
+AI_SCAN_CODE="${R08_AI_SCAN_CODE:-148}"
+AI_HOLD_SECONDS="${R08_AI_HOLD_SECONDS:-0.6}"
 FUNCTION_INPUT_NAME="${R08_FUNCTION_INPUT_NAME:-qpnp_pon}"
 FUNCTION_SCAN_CODE="${R08_FUNCTION_SCAN_CODE:-139}"
 # The framework long-press threshold for the camera button is 400 ms; very long press
@@ -136,6 +140,14 @@ press_function_key() {
     function_last_ms="$(uptime_ms)"
 }
 
+press_ai_key() {
+    sendevent "$INPUT_DEVICE" 1 "$AI_SCAN_CODE" 1 || return 1
+    sendevent "$INPUT_DEVICE" 0 0 0
+    sleep "$AI_HOLD_SECONDS"
+    sendevent "$INPUT_DEVICE" 1 "$AI_SCAN_CODE" 0
+    sendevent "$INPUT_DEVICE" 0 0 0
+}
+
 set_wifi_enabled() {
     if [ "$1" = "1" ]; then
         for attempt in 1 2 3; do
@@ -230,6 +242,15 @@ handle_request() {
             else
                 echo "failed $command $request $now" > "$RESPONSE"
                 log_msg "$command failed request=$request"
+            fi
+            ;;
+        ai_key)
+            if press_ai_key; then
+                echo "ok ai_key $request $now" > "$RESPONSE"
+                log_msg "ai_key ok request=$request"
+            else
+                echo "failed ai_key $request $now" > "$RESPONSE"
+                log_msg "ai_key failed request=$request"
             fi
             ;;
         *)
