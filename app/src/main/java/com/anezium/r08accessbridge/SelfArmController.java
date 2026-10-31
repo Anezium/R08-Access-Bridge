@@ -241,12 +241,7 @@ final class SelfArmController {
             // Nexus keeps 5555 closed and may still be bootstrapping: enabling USB debugging
             // can restart adbd and kill its newly started helpers. Wireless Debugging, which
             // Nexus uses too, reaches adbd without either.
-            Outcome wireless = armOverWirelessDebugging(context, secureStatus);
-            if (wireless != null) {
-                return wireless;
-            }
-            return Outcome.retry("nexus_rearm_pending",
-                    "waiting for Nexus watchdog; updated R08 phone setup can install the entry helper");
+            return armOverWirelessDebugging(context, secureStatus);
         }
         UsbDebugging usb = ensureUsbDebuggingEnabled(context);
         if (usb == UsbDebugging.OFF_NO_PERMISSION) {
@@ -273,8 +268,8 @@ final class SelfArmController {
     /**
      * Replaces the helpers over Wireless Debugging with the key the phone companion paired, so
      * an update reaches them while Nexus keeps 5555 closed. Wi-Fi is left to the user and Nexus:
-     * without a network, the attempt waits for the glasses to join one. Null when this
-     * transport is unavailable.
+     * without a network, the attempt waits for the glasses to join one. Failures remain
+     * retryable so Nexus can recover the helpers independently on a later attempt.
      */
     private static Outcome armOverWirelessDebugging(Context context, String secureStatus)
             throws InterruptedException {
@@ -282,7 +277,10 @@ final class SelfArmController {
             configureCert(context);
         } catch (KeyMissingException exception) {
             Log.i(TAG, "wireless debugging re-arm skipped: " + exception.getMessage());
-            return null;
+            // A fresh Nexus watchdog can restore already-provisioned helpers without our key.
+            return Outcome.retry(NexusCoexistence.isAvailable(context)
+                            ? "nexus_rearm_pending" : "adb_key_missing",
+                    "Nexus recovery pending; " + exception.getMessage());
         }
         // Nothing else connects with this key under Nexus; unused paired keys expire after 7 days.
         keepAdbKeysForever(context);
@@ -297,14 +295,14 @@ final class SelfArmController {
             int port = WirelessDebugging.ensureEnabled(context, WIRELESS_PORT_TIMEOUT_MS);
             if (port <= 0) {
                 Log.i(TAG, "wireless debugging re-arm skipped: no TLS port");
-                return null;
+                return Outcome.retry("wireless_adb_unreachable", "Wireless Debugging has no listening TLS port");
             }
             return Outcome.success(secureStatus + "wireless debugging " + armOverAdb(context, port));
         } catch (InterruptedException exception) {
             throw exception;
         } catch (Exception exception) {
             Log.i(TAG, "wireless debugging re-arm failed: " + firstLine(shortMessage(exception)));
-            return null;
+            return Outcome.retry("wireless_adb_unreachable", "failed: " + firstLine(shortMessage(exception)));
         }
     }
 
@@ -472,11 +470,16 @@ final class SelfArmController {
     /**
      * Picks the private key the maintenance self-arm authenticates with.
      *
-     * A key provisioned into external storage is imported into app-private storage when it can
-     * be read. Older phone companions wrote it as the shell user with mode 600, which the app
-     * cannot read through FUSE; that copy must not block a key the app already holds.
+     * Prefer the app-private paired key. Import a legacy external key only if there is no
+     * private copy. Older phone companions wrote it as shell with mode 600, which the app
+     * cannot read through FUSE; a new pairing must not be replaced by that old copy.
      */
     static File resolveSelfArmKey(File internal, File provisioned) throws KeyMissingException {
+        // A successful pairing/import owns this copy. A leftover legacy file must not
+        // replace a newer paired key on the next launch or reboot.
+        if (internal.isFile()) {
+            return internal;
+        }
         if (provisioned.isFile()) {
             try {
                 File dir = internal.getParentFile();

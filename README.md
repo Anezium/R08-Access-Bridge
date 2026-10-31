@@ -98,11 +98,14 @@ Each mappable gesture can be set in the app to:
 - Hi Rokid Shortcut
 - Take photo
 - Video toggle
+- Audio toggle
 - AR screenshot
 - AR video toggle
 - Launch app (opens a picker listing the apps installed on the glasses)
 
-On glasses firmware `1.28` and newer, Rokid AI, Take photo and Video toggle need the armed shell helper: the firmware no longer accepts the assistant's scene command from apps, so the helper presses the glasses' own camera button (short press = photo, long press = video, following the button settings in the Hi Rokid app) or holds the touchpad AI key, which opens Rokid AI as a real long press does. AR screenshot and AR video toggle have no reachable trigger on that firmware.
+On glasses firmware `1.28` and newer, Rokid AI, Take photo, Video toggle and Audio toggle use the glasses' exported native assistant service. These actions reconnect when the R08 accessibility service starts after a reboot; they do not need the phone companion to re-arm a shell helper. Photo and AI retain the shell-button fallback if the native service is unavailable. Hi Rokid Shortcut still needs the armed shell helper. The native assistant's voice services may still require Hi Rokid on the phone, just as with the glasses' own controls.
+
+Video and audio recording show the firmware's recording indicator and timer. Double tap stops an active native video/audio recording; otherwise it remains normal Back. Toggle and Back use the firmware's reported recording state, including recordings started outside R08, rather than a saved assumption about the last gesture. AR screenshot and AR video toggle remain blocked on firmware `1.28`.
 
 ## Self-arm: the Hi Rokid shortcut and surviving force-stops
 

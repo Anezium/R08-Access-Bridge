@@ -157,6 +157,9 @@ final class AccessibilityNavigator {
     }
 
     void back() {
+        if (service.stopNativeRecording()) {
+            return;
+        }
         if (!service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) {
             gestures.horizontalSwipe(false);
         }

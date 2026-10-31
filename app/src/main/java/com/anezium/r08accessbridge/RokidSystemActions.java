@@ -53,6 +53,7 @@ final class RokidSystemActions {
 
     static boolean openAiAssist(Context context) {
         if (!sceneCommandsAvailable()) {
+            if (RingControlAccessibilityService.nativeAi()) return true;
             // The two-finger shortcut opens the phone shortcut mode instead, so a helper
             // without the AI key reports a re-arm rather than acting as Hi Rokid Shortcut.
             return PrivilegedShortcutBridge.requestAiKey(context);
@@ -62,6 +63,7 @@ final class RokidSystemActions {
 
     static boolean takePhoto(Context context) {
         if (!sceneCommandsAvailable()) {
+            if (RingControlAccessibilityService.nativePhoto()) return true;
             return PrivilegedShortcutBridge.requestFunctionKey(context, false);
         }
         return sendScene(context, SCENE_TAKE_PICTURE, true, "Rokid photo scene");

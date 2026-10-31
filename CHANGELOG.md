@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v2.0.7 - 2026-10-31
+
+### Native ring actions after reboot and recording controls
+
+- Fix #20: use the exported native assistant service on firmware 1.28 for photo, Rokid AI, video and audio, avoiding a phone re-arm when the shell helper cannot recover after boot. Keep the shell fallback for photo/AI and the existing Hi Rokid Shortcut behavior.
+- Start native video/audio with their recording indicator and timer. Add an Audio toggle mapping, and make double tap stop active native recordings using explicit stop commands and live firmware state, including recordings started elsewhere.
+- Preserve a newer app-private paired ADB key instead of overwriting it with a leftover legacy key. Report unavailable Wireless ADB or a missing key instead of masking every failure as waiting for Nexus.
+- Include the launcher navigation and recovery fixes from #21 / #15: media playback no longer causes navigation commands to be discarded, and accessibility recovery no longer dismisses the app just opened.
+- Include Companion v0.2.13 with accessibility watchdog v3.
+
 ## v2.0.6 - 2026-10-31
 
 ### Rokid AI opens the real assistant, and Nexus users keep their ring actions after a reboot
