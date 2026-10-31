@@ -5,8 +5,6 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
-import android.os.SystemClock;
-import android.provider.Settings;
 import android.util.Log;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,9 +16,6 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class WirelessDebugging {
     private static final String TAG = "R08SelfArm";
-    private static final String SETTING_ADB_WIFI_ENABLED = "adb_wifi_enabled";
-    private static final String PROPERTY_TLS_PORT = "service.adb.tls.port";
-    private static final long POLL_MS = 500L;
     private static final AtomicReference<ConnectivityManager.NetworkCallback> PENDING =
             new AtomicReference<>();
 
@@ -75,34 +70,13 @@ final class WirelessDebugging {
      * Switches Wireless Debugging on when needed and returns adbd's TLS port, or 0. Never
      * switches it off again: Nexus leaves it on and may hold a session on it.
      */
-    static int ensureEnabled(Context context, long timeoutMs) throws InterruptedException {
-        if (Settings.Global.getInt(context.getContentResolver(), SETTING_ADB_WIFI_ENABLED, 0) != 1) {
-            try {
-                if (!Settings.Global.putInt(context.getContentResolver(), SETTING_ADB_WIFI_ENABLED, 1)) {
-                    return 0;
-                }
-                Log.i(TAG, "wireless debugging enabled for maintenance");
-            } catch (SecurityException exception) {
-                Log.w(TAG, "wireless debugging off; WRITE_SECURE_SETTINGS not granted", exception);
+    static int ensureEnabled(Context context, long timeoutMs) {
+        if (!WirelessAdbController.isEnabled(context)) {
+            if (!WirelessAdbController.enableAdbWifi(context)) {
                 return 0;
             }
+            Log.i(TAG, "wireless debugging enabled for maintenance");
         }
-        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
-        int port;
-        while ((port = readTlsPort()) <= 0 && SystemClock.elapsedRealtime() < deadline) {
-            Thread.sleep(POLL_MS);
-        }
-        return port;
-    }
-
-    private static int readTlsPort() {
-        try {
-            Class<?> properties = Class.forName("android.os.SystemProperties");
-            String value = (String) properties.getMethod("get", String.class, String.class)
-                    .invoke(null, PROPERTY_TLS_PORT, "");
-            return value == null ? 0 : Math.max(0, Integer.parseInt(value.trim()));
-        } catch (ReflectiveOperationException | RuntimeException exception) {
-            return 0;
-        }
+        return WirelessAdbController.waitForWirelessPort(timeoutMs);
     }
 }

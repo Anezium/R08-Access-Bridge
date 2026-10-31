@@ -126,6 +126,24 @@ input_device_named() {
 
 # Firmware 1.28 stopped accepting the assistserver scene broadcast from user builds, and the
 # button broadcasts are protected. A real key press on the camera button still reaches it.
+# Remembers the key while it is down: a helper stopped mid-press must not leave it held, where
+# the camera button's 3 s press is reserved for power and reset gestures.
+hold_key() {
+    sendevent "$1" 1 "$2" 1 || return 1
+    held_device="$1"
+    held_code="$2"
+    sendevent "$1" 0 0 0
+    sleep "$3"
+    release_held_key
+}
+
+release_held_key() {
+    [ -n "$held_device" ] || return 0
+    sendevent "$held_device" 1 "$held_code" 0
+    sendevent "$held_device" 0 0 0
+    held_device=""
+}
+
 wait_function_gap() {
     if [ -n "$function_last_ms" ]; then
         wait_ms=$(( function_last_ms + FUNCTION_MIN_GAP_MS - $(uptime_ms) ))
@@ -139,22 +157,14 @@ press_function_key() {
     hold="$1"
     device="$(input_device_named "$FUNCTION_INPUT_NAME")" || return 1
     wait_function_gap
-    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 1 || return 1
-    sendevent "$device" 0 0 0
-    sleep "$hold"
-    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 0
-    sendevent "$device" 0 0 0
+    hold_key "$device" "$FUNCTION_SCAN_CODE" "$hold" || return 1
     function_last_ms="$(uptime_ms)"
 }
 
 press_ai_key() {
     device="$(input_device_named "$AI_INPUT_NAME")" || return 1
     wait_function_gap
-    sendevent "$device" 1 "$AI_SCAN_CODE" 1 || return 1
-    sendevent "$device" 0 0 0
-    sleep "$AI_HOLD_SECONDS"
-    sendevent "$device" 1 "$AI_SCAN_CODE" 0
-    sendevent "$device" 0 0 0
+    hold_key "$device" "$AI_SCAN_CODE" "$AI_HOLD_SECONDS" || return 1
     function_last_ms="$(uptime_ms)"
 }
 
@@ -363,6 +373,8 @@ run_loop() {
     entry_session="$$-$(uptime_ms)"
     entry_last=""
     function_last_ms=""
+    held_device=""
+    trap 'release_held_key; exit 0' TERM INT
     echo "$FEATURE_LIST" > "$FEATURES"
     publish_entry_capability
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"

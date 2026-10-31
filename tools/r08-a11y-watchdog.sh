@@ -97,6 +97,13 @@ run_loop() {
     log_msg "start pid=$$ version=$VERSION service=$SVC"
     tick=0
     while true; do
+        # Racing starters (R08 and the Nexus watchdog) can each spawn a loop; only the one named
+        # in the PID file stays.
+        owner="$(read_pid)"
+        if [ -n "$owner" ] && [ "$owner" != "$$" ] && is_alive "$owner"; then
+            log_msg "duplicate watchdog pid=$$ exits for pid=$owner"
+            exit 0
+        fi
         tick=$((tick + 1))
         now="$(date +%s)"
         echo "$now" > "$HEARTBEAT"

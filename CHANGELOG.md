@@ -7,6 +7,7 @@
 - A second helper loop started by a concurrent starter now exits before handling requests, so a ring action can never be injected twice.
 - With Nexus, R08 no longer needs the phone setup to replace or restart its helpers. Nexus keeps ADB port 5555 closed, so R08 now goes through Wireless Debugging instead, the way Nexus itself does, with the key the phone companion paired. It never switches Wi-Fi itself: without a Wi-Fi network it waits until the glasses join one. Like Nexus, it leaves Wireless Debugging on. This also brings the helpers back after a reboot with a Nexus that does not restart them yet, once the glasses are on Wi-Fi.
 - The helper no longer falls back to polling every 0.2 s after switching Wi-Fi off: the end of that background task interrupted its doorbell wait, which it took for a broken doorbell.
+- A helper stopped in the middle of a key press now releases the key first.
 - Include Companion v0.2.12 with the updated shell helper.
 
 ## v2.0.5 - 2026-10-30

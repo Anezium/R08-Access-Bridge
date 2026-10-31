@@ -241,9 +241,9 @@ final class SelfArmController {
             // Nexus keeps 5555 closed and may still be bootstrapping: enabling USB debugging
             // can restart adbd and kill its newly started helpers. Wireless Debugging, which
             // Nexus uses too, reaches adbd without either.
-            String wireless = armOverWirelessDebugging(context);
+            Outcome wireless = armOverWirelessDebugging(context, secureStatus);
             if (wireless != null) {
-                return Outcome.success(secureStatus + wireless);
+                return wireless;
             }
             return Outcome.retry("nexus_rearm_pending",
                     "waiting for Nexus watchdog; updated R08 phone setup can install the entry helper");
@@ -276,19 +276,22 @@ final class SelfArmController {
      * without a network, the attempt waits for the glasses to join one. Null when this
      * transport is unavailable.
      */
-    private static String armOverWirelessDebugging(Context context) throws InterruptedException {
+    private static Outcome armOverWirelessDebugging(Context context, String secureStatus)
+            throws InterruptedException {
         try {
             configureCert(context);
         } catch (KeyMissingException exception) {
             Log.i(TAG, "wireless debugging re-arm skipped: " + exception.getMessage());
             return null;
         }
+        // Nothing else connects with this key under Nexus; unused paired keys expire after 7 days.
+        keepAdbKeysForever(context);
         if (!WirelessDebugging.isWifiNetworkReady(context)) {
             Log.i(TAG, "wireless debugging re-arm waits for a Wi-Fi network");
             Context appContext = context.getApplicationContext();
             WirelessDebugging.onNextWifiNetwork(appContext,
                     () -> armAsync(appContext, "wifi_available", WIFI_AVAILABLE_DELAYS_MS, true));
-            return null;
+            return Outcome.retry("wifi_rearm_pending", "waiting for a Wi-Fi network to update the helpers");
         }
         try {
             int port = WirelessDebugging.ensureEnabled(context, WIRELESS_PORT_TIMEOUT_MS);
@@ -296,7 +299,7 @@ final class SelfArmController {
                 Log.i(TAG, "wireless debugging re-arm skipped: no TLS port");
                 return null;
             }
-            return "wireless debugging " + armOverAdb(context, port);
+            return Outcome.success(secureStatus + "wireless debugging " + armOverAdb(context, port));
         } catch (InterruptedException exception) {
             throw exception;
         } catch (Exception exception) {
