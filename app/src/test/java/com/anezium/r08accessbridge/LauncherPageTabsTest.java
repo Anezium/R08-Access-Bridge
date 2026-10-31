@@ -69,6 +69,33 @@ public final class LauncherPageTabsTest {
         assertNull(read(page("no_plan_tips", new Rect(196, 318, 220, 342))).tab(2));
     }
 
+    @Test public void pageContentsDoNotExhaustTheNavigationTreeBudget() {
+        for (String contentId : new String[] {"app_recycler", "permanentWidgetRv",
+                "overlayWidgetRv", "recycler_view"}) {
+            AccessibilityNodeInfo root = page(contentId, TABS);
+            AccessibilityNodeInfo content = root.getChild(0).getChild(0).getChild(0).getChild(0);
+            for (int i = 0; i < 120; i++) shadowOf(content).addChild(node("content_row"));
+            LauncherPageTabs.Snapshot snapshot = read(root);
+            int expected = contentId.equals("app_recycler") ? LauncherPageTabs.APPS
+                    : contentId.equals("recycler_view") ? LauncherPageTabs.MESSAGES
+                    : LauncherPageTabs.HOME;
+            assertEquals(contentId, expected, snapshot.page);
+            assertTrue(contentId, snapshot.complete);
+            assertTrue(contentId, snapshot.aligned);
+            assertNotNull(contentId, snapshot.tab(LauncherPageTabs.APPS));
+        }
+    }
+
+    @Test public void largePageContentsDoNotHideAConflictingSiblingPage() {
+        AccessibilityNodeInfo root = page("app_recycler", TABS);
+        AccessibilityNodeInfo carousel = root.getChild(0).getChild(0).getChild(0).getChild(0);
+        for (int i = 0; i < 120; i++) shadowOf(carousel).addChild(node("app_row"));
+        shadowOf(root).addChild(node("no_plan_tips"));
+        LauncherPageTabs.Snapshot snapshot = read(root);
+        assertTrue(snapshot.complete);
+        assertEquals(LauncherPageTabs.UNKNOWN, snapshot.page);
+    }
+
     @Test public void anIncompleteTreeDoesNotTrustAnEarlyPageMarker() {
         AccessibilityNodeInfo root = page("no_plan_tips", TABS);
         for (int i = 0; i < 100; i++) shadowOf(root).addChild(node("decoration"));

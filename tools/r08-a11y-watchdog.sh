@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-VERSION="2"
+VERSION="3"
 PKG="${R08_PACKAGE:-com.anezium.r08accessbridge}"
 SVC="${R08_A11Y_SERVICE:-com.anezium.r08accessbridge/com.anezium.r08accessbridge.RingControlAccessibilityService}"
 SCRIPT_NAME="r08-a11y-watchdog.sh"
@@ -72,10 +72,9 @@ repair_accessibility() {
     settings put secure enabled_accessibility_services "$new" >/dev/null 2>&1
     settings put secure accessibility_enabled 1 >/dev/null 2>&1
 
-    # Starting the activity clears Android's force-stopped flag; Home keeps the HUD unobtrusive.
-    am start -n "$PKG/.MainActivity" --activity-clear-top >/dev/null 2>&1 || true
-    sleep 1
-    input keyevent 3 >/dev/null 2>&1 || true
+    # Clear Android's force-stopped flag without stealing the screen from the app
+    # the user just opened. MainActivity + Home used to dismiss that app on FW 1.28.
+    am start -n "$PKG/.RecoveryActivity" >/dev/null 2>&1 || true
 
     log_msg "repaired cur='$cur' new='$new' pid=$(app_pid)"
 }
