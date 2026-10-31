@@ -53,13 +53,9 @@ final class RokidSystemActions {
 
     static boolean openAiAssist(Context context) {
         if (!sceneCommandsAvailable()) {
-            if (PrivilegedShortcutBridge.requestAiKey(context)) {
-                return true;
-            }
-            // Helpers from 2.0.5 lack the AI key. The two-finger shortcut opens a different AI
-            // mode and needs the phone connected, but beats doing nothing until they are replaced.
-            return PrivilegedShortcutBridge.isArmed(context)
-                    && PrivilegedShortcutBridge.requestHiRokidShortcut(context);
+            // The two-finger shortcut opens the phone shortcut mode instead, so a helper
+            // without the AI key reports a re-arm rather than acting as Hi Rokid Shortcut.
+            return PrivilegedShortcutBridge.requestAiKey(context);
         }
         return sendScene(context, SCENE_AI_ASSIST, true, "Rokid AI assist scene");
     }

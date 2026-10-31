@@ -19,6 +19,7 @@ INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
 # KEY_PROG1 on the touchpad (PROG_BLUE). Held past 300 ms, the framework sends ACTION_AI_START,
 # which opens Rokid AI in the user's assistant mode without the phone.
+AI_INPUT_NAME="${R08_AI_INPUT_NAME:-ROKID,PSOC-TP-R}"
 AI_SCAN_CODE="${R08_AI_SCAN_CODE:-148}"
 AI_HOLD_SECONDS="${R08_AI_HOLD_SECONDS:-0.6}"
 FUNCTION_INPUT_NAME="${R08_FUNCTION_INPUT_NAME:-qpnp_pon}"
@@ -29,6 +30,7 @@ FUNCTION_SHORT_HOLD_SECONDS="${R08_FUNCTION_SHORT_HOLD_SECONDS:-0.08}"
 FUNCTION_LONG_HOLD_SECONDS="${R08_FUNCTION_LONG_HOLD_SECONDS:-0.8}"
 # Presses closer than the multi-press window add up (3 = pairing, 6 = factory reset
 # countdown when the temples are folded), so injected presses are always spaced out.
+# The assistserver also drops camera and AI actions within 1 s of each other.
 FUNCTION_MIN_GAP_MS="${R08_FUNCTION_MIN_GAP_MS:-1000}"
 POLL_SECONDS="${R08_POLL_SECONDS:-0.2}"
 IDLE_RECHECK_SECONDS="${R08_IDLE_RECHECK_SECONDS:-5}"
@@ -111,9 +113,9 @@ trigger_shortcut() {
     sendevent "$INPUT_DEVICE" 0 0 0
 }
 
-function_input_device() {
+input_device_named() {
     for name_file in /sys/class/input/event*/device/name; do
-        [ "$(cat "$name_file" 2>/dev/null)" = "$FUNCTION_INPUT_NAME" ] || continue
+        [ "$(cat "$name_file" 2>/dev/null)" = "$1" ] || continue
         event_dir="${name_file%/device/name}"
         echo "/dev/input/${event_dir##*/}"
         return 0
@@ -123,15 +125,19 @@ function_input_device() {
 
 # Firmware 1.28 stopped accepting the assistserver scene broadcast from user builds, and the
 # button broadcasts are protected. A real key press on the camera button still reaches it.
-press_function_key() {
-    hold="$1"
-    device="$(function_input_device)" || return 1
+wait_function_gap() {
     if [ -n "$function_last_ms" ]; then
         wait_ms=$(( function_last_ms + FUNCTION_MIN_GAP_MS - $(uptime_ms) ))
         if [ "$wait_ms" -gt 0 ]; then
             sleep "$(( wait_ms / 1000 )).$(printf '%03d' $(( wait_ms % 1000 )))"
         fi
     fi
+}
+
+press_function_key() {
+    hold="$1"
+    device="$(input_device_named "$FUNCTION_INPUT_NAME")" || return 1
+    wait_function_gap
     sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 1 || return 1
     sendevent "$device" 0 0 0
     sleep "$hold"
@@ -141,11 +147,14 @@ press_function_key() {
 }
 
 press_ai_key() {
-    sendevent "$INPUT_DEVICE" 1 "$AI_SCAN_CODE" 1 || return 1
-    sendevent "$INPUT_DEVICE" 0 0 0
+    device="$(input_device_named "$AI_INPUT_NAME")" || return 1
+    wait_function_gap
+    sendevent "$device" 1 "$AI_SCAN_CODE" 1 || return 1
+    sendevent "$device" 0 0 0
     sleep "$AI_HOLD_SECONDS"
-    sendevent "$INPUT_DEVICE" 1 "$AI_SCAN_CODE" 0
-    sendevent "$INPUT_DEVICE" 0 0 0
+    sendevent "$device" 1 "$AI_SCAN_CODE" 0
+    sendevent "$device" 0 0 0
+    function_last_ms="$(uptime_ms)"
 }
 
 set_wifi_enabled() {
@@ -261,6 +270,13 @@ handle_request() {
 }
 
 check_and_dispatch() {
+    # Two starters racing (R08 and the Nexus watchdog) can each spawn a loop. The one not
+    # named in the PID file leaves before it can consume a request and inject it twice.
+    owner="$(read_pid)"
+    if [ -n "$owner" ] && [ "$owner" != "$$" ] && is_alive "$owner"; then
+        log_msg "duplicate helper pid=$$ exits for pid=$owner"
+        exit 0
+    fi
     now="$(date +%s)"
     echo "$now" > "$HEARTBEAT"
     publish_entry_capability
