@@ -334,14 +334,20 @@ run_event_loop() {
     last="$(cat "$REQUEST" 2>/dev/null)"
     log_msg "doorbell loop path=$DOORBELL idle_recheck=${IDLE_RECHECK_SECONDS}s"
     check_and_dispatch
+    read_errors=0
     while true; do
         read -t "$IDLE_RECHECK_SECONDS" _ <&3 >/dev/null 2>&1
         read_status="$?"
         # Android mksh reports read -t timeout as 142 (SIGALRM), not 1.
         case "$read_status" in
             0|1|142)
+                read_errors=0
                 ;;
             *)
+                # A background child exiting, such as the delayed Wi-Fi switch-off, interrupts
+                # read with status 2. Only repeated failures mean the doorbell is broken.
+                read_errors=$((read_errors + 1))
+                [ "$read_errors" -lt 5 ] && continue
                 log_msg "doorbell read failed status=$read_status; falling back to poll"
                 exec 3<&-
                 run_poll_loop
