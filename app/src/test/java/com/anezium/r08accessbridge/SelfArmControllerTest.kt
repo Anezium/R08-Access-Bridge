@@ -41,6 +41,15 @@ class SelfArmControllerTest {
     }
 
     @Test
+    fun legacyProvisionedKeyDoesNotReplaceANewerPairedPrivateKey() {
+        val internal = File(temp.newFolder("kadb"), "adbkey.pem").apply { writeText("new-paired-key") }
+        val provisioned = File(temp.newFolder("self_arm"), "adbkey.pem").apply { writeText("old-phone-key") }
+
+        assertEquals(internal, SelfArmController.resolveSelfArmKey(internal, provisioned))
+        assertEquals("new-paired-key", internal.readText())
+    }
+
+    @Test
     fun unreadableProvisionedKeyPreservesPrivateKey() {
         val internal = File(temp.newFolder("kadb"), "adbkey.pem").apply { writeText("paired-private-key") }
         val provisioned = object : File(temp.root, "shell-owned-key.pem") {

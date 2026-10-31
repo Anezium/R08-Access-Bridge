@@ -105,6 +105,7 @@ object LocalSelfArmStatus {
             "usb_debugging_off" -> "Enable USB debugging in Hi Rokid settings"
             "adb_key_missing" -> "Self-arm needed: tap Self-arm (no phone)"
             "adb_loopback_unreachable" -> "Self-arm needed: ADB loopback unreachable"
+            "wireless_adb_unreachable" -> "Self-arm needed: Wireless ADB failed; tap Self-arm (no phone)"
             "bootstrap_rearm_failed" -> "Self-arm needed: helpers stopped, tap Self-arm again"
             "pairing_code_expired" -> "Self-arm failed: pairing code expired"
             "wifi_enable_timeout" -> "Self-arm failed: Wi-Fi did not turn on"

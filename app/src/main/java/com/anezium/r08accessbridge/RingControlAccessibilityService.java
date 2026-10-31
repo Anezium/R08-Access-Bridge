@@ -87,6 +87,7 @@ public final class RingControlAccessibilityService extends AccessibilityService
     private static RingControlAccessibilityService activeService;
 
     private AccessibilityNavigator navigator;
+    private NativeRecordingBridge nativeRecording;
     private WirelessDebuggingSetupAutomator wirelessDebuggingSetupAutomator;
     private SelfArmWirelessDebuggingAutomator selfArmWirelessDebuggingAutomator;
     private WifiEnableAutomator wifiEnableAutomator;
@@ -316,6 +317,9 @@ public final class RingControlAccessibilityService extends AccessibilityService
         touchMode = RingModeSettings.isTouchMode(this);
         fastNavigationMode = RingModeSettings.isFastNavigationMode(this);
         navigator = new AccessibilityNavigator(this);
+        if (nativeRecording != null) nativeRecording.stop();
+        nativeRecording = new NativeRecordingBridge(this, mainHandler);
+        nativeRecording.start();
         wirelessDebuggingSetupAutomator = new WirelessDebuggingSetupAutomator(this, mainHandler);
         selfArmWirelessDebuggingAutomator = new SelfArmWirelessDebuggingAutomator(this, mainHandler);
         wifiEnableAutomator = new WifiEnableAutomator(this, mainHandler);
@@ -345,6 +349,10 @@ public final class RingControlAccessibilityService extends AccessibilityService
 
     @Override
     public void onDestroy() {
+        if (nativeRecording != null) {
+            nativeRecording.stop();
+            nativeRecording = null;
+        }
         if (activeService == this) {
             activeService = null;
         }
@@ -410,6 +418,45 @@ public final class RingControlAccessibilityService extends AccessibilityService
 
     static boolean isServiceActive() {
         return activeService != null;
+    }
+
+    static boolean toggleNativeRecording(boolean audio) {
+        RingControlAccessibilityService service = activeService;
+        return service != null && service.nativeRecording != null && service.nativeRecording.toggle(audio);
+    }
+
+    static boolean nativeRecordingReady() {
+        RingControlAccessibilityService service = activeService;
+        return service != null && service.nativeRecording != null && service.nativeRecording.isReady();
+    }
+
+    static boolean nativePhoto() {
+        RingControlAccessibilityService service = activeService;
+        return service != null && service.nativeRecording != null && service.nativeRecording.takePhoto();
+    }
+
+    static boolean nativeAi() {
+        RingControlAccessibilityService service = activeService;
+        return service != null && service.nativeRecording != null && service.nativeRecording.openAi();
+    }
+
+    boolean stopNativeRecording() {
+        return nativeRecording != null && nativeRecording.stopRecording();
+    }
+
+    static void debugRecordingCommand(String command) {
+        RingControlAccessibilityService service = activeService;
+        if (service == null || !service.isDebuggable()) return;
+        if ("video".equals(command)) toggleNativeRecording(false);
+        else if ("audio".equals(command)) toggleNativeRecording(true);
+        else if ("photo".equals(command)) nativePhoto();
+        else if ("ai".equals(command)) nativeAi();
+        else if ("double_tap".equals(command)) {
+            service.mainHandler.postDelayed(() -> service.handleDebugKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE), 100L);
+            service.mainHandler.postDelayed(() -> service.handleDebugKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE), 280L);
+        }
+        else if ("back".equals(command) && service.navigator != null) service.navigator.back();
+        else if ("stop".equals(command)) service.stopNativeRecording();
     }
 
     static boolean requestWirelessDebugSetup(Context context) {
@@ -1087,6 +1134,9 @@ public final class RingControlAccessibilityService extends AccessibilityService
         }
         showFeedback(feedback);
         if (!action.execute(this, navigator, launchPackage)) {
+            if (action == RingTapAction.VIDEO_RECORD_TOGGLE || action == RingTapAction.AUDIO_RECORD_TOGGLE) {
+                showFeedback("Native recording unavailable; wait for the service");
+            }
             Log.w(TAG, "Mapped action failed action=" + action.id() + " source=" + source);
         }
     }

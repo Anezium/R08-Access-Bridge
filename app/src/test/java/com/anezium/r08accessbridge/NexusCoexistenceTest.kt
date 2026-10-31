@@ -51,7 +51,9 @@ class NexusCoexistenceTest {
             "com.anezium.rokidbus.glasses/.RokidBusAccessibilityService")
 
         assertTrue(NexusCoexistence.isConfigured(context))
-        assertEquals("nexus_rearm_pending", SelfArmController.armOnce(context).state)
+        val result = SelfArmController.armOnce(context)
+        assertEquals("adb_key_missing", result.state)
+        assertFalse("Nexus may still recover without our key", result.terminal)
         assertEquals(0, Settings.Global.getInt(resolver, Settings.Global.ADB_ENABLED))
         assertTrue(Settings.Secure.getString(resolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
             .contains("com.anezium.rokidbus.glasses/.RokidBusAccessibilityService"))

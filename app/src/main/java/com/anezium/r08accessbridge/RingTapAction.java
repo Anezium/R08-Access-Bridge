@@ -14,6 +14,7 @@ enum RingTapAction {
     HI_ROKID_SHORTCUT(BridgeProtocol.ACTION_HI_ROKID_SHORTCUT, "Hi Rokid Shortcut", "Trigger the real two-finger AI shortcut via the phone bridge", "Hi shortcut"),
     TAKE_PHOTO("take_photo", "Take photo", "Capture a normal camera photo", "Take photo"),
     VIDEO_RECORD_TOGGLE("toggle_video", "Video toggle", "Start video, then stop on next trigger", "Video"),
+    AUDIO_RECORD_TOGGLE("toggle_audio", "Audio toggle", "Start audio recording, then stop on next trigger", "Audio"),
     AR_SCREENSHOT("ar_screenshot", "AR screenshot", "Capture the AR/HUD view", "AR screenshot"),
     AR_RECORD_TOGGLE("toggle_ar_record", "AR video toggle", "Start AR video, then stop on next trigger", "AR video");
 
@@ -53,16 +54,18 @@ enum RingTapAction {
             case HI_ROKID_SHORTCUT:
                 return PrivilegedShortcutBridge.isArmed(context) ? feedback : "Arm phone bridge";
             case AI_ASSIST:
-                if (RokidSystemActions.sceneCommandsAvailable() || PrivilegedShortcutBridge.supportsAiKey(context)) {
+                if (RokidSystemActions.sceneCommandsAvailable() || RingControlAccessibilityService.nativeRecordingReady()
+                        || PrivilegedShortcutBridge.supportsAiKey(context)) {
                     return feedback;
                 }
                 return PrivilegedShortcutBridge.isArmed(context) ? "Re-arm phone bridge" : "Arm phone bridge";
             case TAKE_PHOTO:
                 return RokidSystemActions.sceneCommandsAvailable()
+                        || RingControlAccessibilityService.nativeRecordingReady()
                         || PrivilegedShortcutBridge.supportsFunctionKeys(context) ? feedback : "Re-arm phone bridge";
             case VIDEO_RECORD_TOGGLE:
                 if (!RokidSystemActions.sceneCommandsAvailable()) {
-                    return PrivilegedShortcutBridge.supportsFunctionKeys(context) ? feedback : "Re-arm phone bridge";
+                    return feedback;
                 }
                 return RingActionMappings.isVideoRecordingRequested(context) ? "Stop video request" : "Start video request";
             case AR_SCREENSHOT:
@@ -107,6 +110,8 @@ enum RingTapAction {
                 return RokidSystemActions.takePhoto(context);
             case VIDEO_RECORD_TOGGLE:
                 return toggleVideoRecord(context);
+            case AUDIO_RECORD_TOGGLE:
+                return RingControlAccessibilityService.toggleNativeRecording(true);
             case AR_SCREENSHOT:
                 return RokidSystemActions.takeArScreenshot(context);
             case AR_RECORD_TOGGLE:
@@ -147,9 +152,8 @@ enum RingTapAction {
 
     private boolean toggleVideoRecord(Context context) {
         if (!RokidSystemActions.sceneCommandsAvailable()) {
-            // The button knows whether a recording is running; the remembered state does not.
             RingActionMappings.setVideoRecordingRequested(context, false);
-            return RokidSystemActions.toggleVideoRecordWithButton(context);
+            return RingControlAccessibilityService.toggleNativeRecording(false);
         }
         boolean start = !RingActionMappings.isVideoRecordingRequested(context);
         boolean sent = start
