@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## v2.0.6 - 2026-10-31
+
+### Rokid AI opens the real assistant, and Nexus users keep their ring actions after a reboot
+
+- Rokid AI on firmware 1.28 no longer acts like Hi Rokid Shortcut (#18). The helper now holds the touchpad AI key, which opens Rokid AI in the assistant mode set in the Hi Rokid app, without the phone or the shortcut toggle. While a helper from 2.0.5 is still running, Rokid AI shows `Re-arm phone bridge`.
+- With Nexus, R08 replaces and restarts its helpers by itself. Nexus keeps ADB port 5555 closed, so R08 now connects through Wireless Debugging, like Nexus does, with the key the phone companion paired. It needs the glasses on a Wi-Fi network and waits for one; it never switches Wi-Fi itself. Like Nexus, it leaves Wireless Debugging on and keeps the paired key from expiring after 7 days. No phone setup is needed after updating, as long as the phone setup was done once with Companion v0.2.10 or newer.
+- Fixed: replacing a running helper could leave a process spinning a CPU core forever (toybox `tr` loops when the process it reads exits during the read).
+- Fixed: after switching Wi-Fi off, the helper fell back to checking for requests every 0.2 s for good, which drains the battery.
+- Two helpers started at the same time no longer both stay running, so a ring action cannot be injected twice. A helper stopped in the middle of a key press releases the key first.
+- Include Companion v0.2.12 with the updated shell helper.
+
 ## v2.0.5 - 2026-10-30
 
 ### Photo, video and Rokid AI work again on firmware 1.28

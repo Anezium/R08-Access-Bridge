@@ -50,6 +50,18 @@ final class PrivilegedShortcutBridge {
         return true;
     }
 
+    /** Holds the touchpad AI key, which opens Rokid AI like a real long press. */
+    static boolean requestAiKey(Context context) {
+        if (!supportsAiKey(context)) {
+            return false;
+        }
+        if (!writeRequest(context, BridgeProtocol.COMMAND_AI_KEY)) {
+            return false;
+        }
+        ringDoorbell(context);
+        return true;
+    }
+
     static boolean requestWifiEnabled(Context context, boolean enabled) {
         return writeRequest(context, enabled
                 ? BridgeProtocol.COMMAND_WIFI_ENABLE
@@ -120,13 +132,21 @@ final class PrivilegedShortcutBridge {
     }
 
     static boolean supportsFunctionKeys(Context context) {
+        return supportsFeature(context, BridgeProtocol.FEATURE_FUNCTION_KEY);
+    }
+
+    static boolean supportsAiKey(Context context) {
+        return supportsFeature(context, BridgeProtocol.FEATURE_AI_KEY);
+    }
+
+    private static boolean supportsFeature(Context context, String feature) {
         if (!isArmed(context)) {
             return false;
         }
         File features = new File(bridgeDirPath(context), BridgeProtocol.FEATURES_FILE);
         try {
             String list = new String(Files.readAllBytes(features.toPath()), StandardCharsets.UTF_8);
-            return hasFeature(list, BridgeProtocol.FEATURE_FUNCTION_KEY);
+            return hasFeature(list, feature);
         } catch (IOException | RuntimeException exception) {
             return false;
         }
@@ -143,7 +163,7 @@ final class PrivilegedShortcutBridge {
 
     /** True when the live helper is the one this app version ships. */
     static boolean isCurrent(Context context) {
-        return supportsNativeEntry(context) && supportsFunctionKeys(context);
+        return supportsNativeEntry(context) && supportsFunctionKeys(context) && supportsAiKey(context);
     }
 
     static String statusLabel(Context context) {

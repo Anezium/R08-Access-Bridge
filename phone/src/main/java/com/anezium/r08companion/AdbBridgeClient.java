@@ -472,6 +472,9 @@ final class AdbBridgeClient {
     private String ensureLoopbackAdb(AdbSession adb) {
         try {
             runChecked(adb, "settings put global " + BridgeProtocol.NEXUS_ARMED_SETTING + " 1");
+            // Under Nexus too: the app re-arms over Wireless Debugging with the paired key, which
+            // Android would otherwise revoke after 7 days without a connection.
+            runChecked(adb, "settings put global adb_allowed_connection_time 0 >/dev/null 2>&1 || true");
             String nexus = runChecked(adb, "if " + BridgeProtocol.nexusWatchdogPresentCommand()
                     + "; then echo nexus; fi").trim();
             if ("nexus".equals(nexus)) {
@@ -482,7 +485,6 @@ final class AdbBridgeClient {
                     + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
             runChecked(adb, "setprop service.adb.tcp.port "
                     + BridgeProtocol.DEFAULT_ADB_PORT + " >/dev/null 2>&1 || true");
-            runChecked(adb, "settings put global adb_allowed_connection_time 0 >/dev/null 2>&1 || true");
             String usbStatus = "";
             if (!isUsbDebuggingEnabled(adb)) {
                 runChecked(adb, "settings put global adb_enabled 1 >/dev/null 2>&1 || true");

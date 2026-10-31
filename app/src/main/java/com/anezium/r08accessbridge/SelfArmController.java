@@ -48,6 +48,9 @@ final class SelfArmController {
     private static final long ADBD_START_GRACE_MS = 4_000L;
     /** Heartbeat TTL plus margin: after that, a stale heartbeat no longer reads as "armed". */
     private static final long HELPER_LIVENESS_SETTLE_MS = 16_000L;
+    /** adbd needs a moment after the glasses join Wi-Fi before Wireless Debugging listens. */
+    private static final long[] WIFI_AVAILABLE_DELAYS_MS = {3_000L, 20_000L};
+    private static final long WIRELESS_PORT_TIMEOUT_MS = 10_000L;
 
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
     private static volatile boolean certConfigured;
@@ -235,8 +238,13 @@ final class SelfArmController {
             return Outcome.success(secureStatus + "helpers alive");
         }
         if (NexusCoexistence.isAvailable(context) || NexusCoexistence.isConfigured(context)) {
-            // Nexus may still be bootstrapping. Enabling USB here can restart its adbd
-            // session and kill its newly started helpers, so leave its transport alone.
+            // Nexus keeps 5555 closed and may still be bootstrapping: enabling USB debugging
+            // can restart adbd and kill its newly started helpers. Wireless Debugging, which
+            // Nexus uses too, reaches adbd without either.
+            Outcome wireless = armOverWirelessDebugging(context, secureStatus);
+            if (wireless != null) {
+                return wireless;
+            }
             return Outcome.retry("nexus_rearm_pending",
                     "waiting for Nexus watchdog; updated R08 phone setup can install the entry helper");
         }
@@ -263,18 +271,59 @@ final class SelfArmController {
     }
 
     /**
-     * Pushes both helper scripts over 127.0.0.1:5555 and starts them. Both "start" verbs are
-     * idempotent for current helpers; the shortcut helper replaces a verified older protocol instance.
+     * Replaces the helpers over Wireless Debugging with the key the phone companion paired, so
+     * an update reaches them while Nexus keeps 5555 closed. Wi-Fi is left to the user and Nexus:
+     * without a network, the attempt waits for the glasses to join one. Null when this
+     * transport is unavailable.
      */
+    private static Outcome armOverWirelessDebugging(Context context, String secureStatus)
+            throws InterruptedException {
+        try {
+            configureCert(context);
+        } catch (KeyMissingException exception) {
+            Log.i(TAG, "wireless debugging re-arm skipped: " + exception.getMessage());
+            return null;
+        }
+        // Nothing else connects with this key under Nexus; unused paired keys expire after 7 days.
+        keepAdbKeysForever(context);
+        if (!WirelessDebugging.isWifiNetworkReady(context)) {
+            Log.i(TAG, "wireless debugging re-arm waits for a Wi-Fi network");
+            Context appContext = context.getApplicationContext();
+            WirelessDebugging.onNextWifiNetwork(appContext,
+                    () -> armAsync(appContext, "wifi_available", WIFI_AVAILABLE_DELAYS_MS, true));
+            return Outcome.retry("wifi_rearm_pending", "waiting for a Wi-Fi network to update the helpers");
+        }
+        try {
+            int port = WirelessDebugging.ensureEnabled(context, WIRELESS_PORT_TIMEOUT_MS);
+            if (port <= 0) {
+                Log.i(TAG, "wireless debugging re-arm skipped: no TLS port");
+                return null;
+            }
+            return Outcome.success(secureStatus + "wireless debugging " + armOverAdb(context, port));
+        } catch (InterruptedException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            Log.i(TAG, "wireless debugging re-arm failed: " + firstLine(shortMessage(exception)));
+            return null;
+        }
+    }
+
     private static String armOverLoopback(Context context) throws Exception {
+        return armOverAdb(context, BridgeProtocol.DEFAULT_ADB_PORT);
+    }
+
+    /**
+     * Pushes both helper scripts over 127.0.0.1:{@code port} and starts them. Both "start" verbs
+     * are idempotent for current helpers; the shortcut helper replaces a verified older protocol instance.
+     */
+    private static String armOverAdb(Context context, int port) throws Exception {
         String bridgeScript = Base64.encodeToString(readRawResource(context, R.raw.r08_shortcut_bridge), Base64.NO_WRAP);
         String watchdogScript = Base64.encodeToString(readRawResource(context, R.raw.r08_a11y_watchdog), Base64.NO_WRAP);
         // The bridge polls the request file from its first loop; create it before starting.
         PrivilegedShortcutBridge.ensureReady(context);
         Kadb kadb = null;
         try {
-            kadb = new Kadb(BridgeProtocol.ADB_LOOPBACK_HOST, BridgeProtocol.DEFAULT_ADB_PORT,
-                    CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS);
+            kadb = new Kadb(BridgeProtocol.ADB_LOOPBACK_HOST, port, CONNECT_TIMEOUT_MS, SHELL_TIMEOUT_MS);
             String probe = kadb.shell("echo r08-self-arm").getOutput().trim();
             if (!probe.endsWith("r08-self-arm")) {
                 throw new IOException("adb probe mismatch " + firstLine(probe));

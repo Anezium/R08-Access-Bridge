@@ -101,6 +101,7 @@ object LocalSelfArmStatus {
             // Maintenance self-arm (boot / app launch / accessibility reconnect) outcomes.
             "auto_rearm_complete" -> "Self-arm complete (auto re-arm)"
             "nexus_rearm_pending" -> "Waiting for Nexus: update / self-arm Nexus if needed"
+            "wifi_rearm_pending" -> "Waiting for Wi-Fi to restart the helpers"
             "usb_debugging_off" -> "Enable USB debugging in Hi Rokid settings"
             "adb_key_missing" -> "Self-arm needed: tap Self-arm (no phone)"
             "adb_loopback_unreachable" -> "Self-arm needed: ADB loopback unreachable"

@@ -53,8 +53,10 @@ enum RingTapAction {
             case HI_ROKID_SHORTCUT:
                 return PrivilegedShortcutBridge.isArmed(context) ? feedback : "Arm phone bridge";
             case AI_ASSIST:
-                return RokidSystemActions.sceneCommandsAvailable() || PrivilegedShortcutBridge.isArmed(context)
-                        ? feedback : "Arm phone bridge";
+                if (RokidSystemActions.sceneCommandsAvailable() || PrivilegedShortcutBridge.supportsAiKey(context)) {
+                    return feedback;
+                }
+                return PrivilegedShortcutBridge.isArmed(context) ? "Re-arm phone bridge" : "Arm phone bridge";
             case TAKE_PHOTO:
                 return RokidSystemActions.sceneCommandsAvailable()
                         || PrivilegedShortcutBridge.supportsFunctionKeys(context) ? feedback : "Re-arm phone bridge";
@@ -83,7 +85,7 @@ enum RingTapAction {
                 if (RokidSystemActions.openAiAssist(context)) {
                     return true;
                 }
-                if (navigator != null) {
+                if (navigator != null && RokidSystemActions.sceneCommandsAvailable()) {
                     navigator.longPress();
                     return true;
                 }

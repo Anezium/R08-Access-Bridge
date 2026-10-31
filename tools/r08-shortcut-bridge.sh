@@ -12,11 +12,16 @@ ENTRY_RESPONSE="$BASE/entry_response"
 ENTRY_VERSION=1
 FEATURES="$BASE/features"
 # Space-separated capabilities the app checks before routing a request to this helper.
-FEATURE_LIST="function_key"
+FEATURE_LIST="function_key ai_key"
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
 SETTINGS_SCAN_CODE="${R08_SETTINGS_SCAN_CODE:-149}"
+# KEY_PROG1 on the touchpad (PROG_BLUE). Held past 300 ms, the framework sends ACTION_AI_START,
+# which opens Rokid AI in the user's assistant mode without the phone.
+AI_INPUT_NAME="${R08_AI_INPUT_NAME:-ROKID,PSOC-TP-R}"
+AI_SCAN_CODE="${R08_AI_SCAN_CODE:-148}"
+AI_HOLD_SECONDS="${R08_AI_HOLD_SECONDS:-0.6}"
 FUNCTION_INPUT_NAME="${R08_FUNCTION_INPUT_NAME:-qpnp_pon}"
 FUNCTION_SCAN_CODE="${R08_FUNCTION_SCAN_CODE:-139}"
 # The framework long-press threshold for the camera button is 400 ms; very long press
@@ -25,6 +30,7 @@ FUNCTION_SHORT_HOLD_SECONDS="${R08_FUNCTION_SHORT_HOLD_SECONDS:-0.08}"
 FUNCTION_LONG_HOLD_SECONDS="${R08_FUNCTION_LONG_HOLD_SECONDS:-0.8}"
 # Presses closer than the multi-press window add up (3 = pairing, 6 = factory reset
 # countdown when the temples are folded), so injected presses are always spaced out.
+# The assistserver also drops camera and AI actions within 1 s of each other.
 FUNCTION_MIN_GAP_MS="${R08_FUNCTION_MIN_GAP_MS:-1000}"
 POLL_SECONDS="${R08_POLL_SECONDS:-0.2}"
 IDLE_RECHECK_SECONDS="${R08_IDLE_RECHECK_SECONDS:-5}"
@@ -89,7 +95,8 @@ is_alive() {
     [ -d "/proc/$pid" ] || return 1
     # PID files survive reboots and the old PID can belong to an unrelated process.
     # Check the helper command before treating it as running (or sending it a signal).
-    cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    # Read through cat: toybox tr spins forever on the read error of a process exiting meanwhile.
+    cmdline="$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\000' ' ')"
     case "$cmdline" in
         *"sh $0 run "*) return 0 ;;
         *) return 1 ;;
@@ -107,9 +114,9 @@ trigger_shortcut() {
     sendevent "$INPUT_DEVICE" 0 0 0
 }
 
-function_input_device() {
+input_device_named() {
     for name_file in /sys/class/input/event*/device/name; do
-        [ "$(cat "$name_file" 2>/dev/null)" = "$FUNCTION_INPUT_NAME" ] || continue
+        [ "$(cat "$name_file" 2>/dev/null)" = "$1" ] || continue
         event_dir="${name_file%/device/name}"
         echo "/dev/input/${event_dir##*/}"
         return 0
@@ -119,20 +126,45 @@ function_input_device() {
 
 # Firmware 1.28 stopped accepting the assistserver scene broadcast from user builds, and the
 # button broadcasts are protected. A real key press on the camera button still reaches it.
-press_function_key() {
-    hold="$1"
-    device="$(function_input_device)" || return 1
+# Remembers the key while it is down: a helper stopped mid-press must not leave it held, where
+# the camera button's 3 s press is reserved for power and reset gestures.
+hold_key() {
+    sendevent "$1" 1 "$2" 1 || return 1
+    held_device="$1"
+    held_code="$2"
+    sendevent "$1" 0 0 0
+    sleep "$3"
+    release_held_key
+}
+
+release_held_key() {
+    [ -n "$held_device" ] || return 0
+    sendevent "$held_device" 1 "$held_code" 0
+    sendevent "$held_device" 0 0 0
+    held_device=""
+}
+
+wait_function_gap() {
     if [ -n "$function_last_ms" ]; then
         wait_ms=$(( function_last_ms + FUNCTION_MIN_GAP_MS - $(uptime_ms) ))
         if [ "$wait_ms" -gt 0 ]; then
             sleep "$(( wait_ms / 1000 )).$(printf '%03d' $(( wait_ms % 1000 )))"
         fi
     fi
-    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 1 || return 1
-    sendevent "$device" 0 0 0
-    sleep "$hold"
-    sendevent "$device" 1 "$FUNCTION_SCAN_CODE" 0
-    sendevent "$device" 0 0 0
+}
+
+press_function_key() {
+    hold="$1"
+    device="$(input_device_named "$FUNCTION_INPUT_NAME")" || return 1
+    wait_function_gap
+    hold_key "$device" "$FUNCTION_SCAN_CODE" "$hold" || return 1
+    function_last_ms="$(uptime_ms)"
+}
+
+press_ai_key() {
+    device="$(input_device_named "$AI_INPUT_NAME")" || return 1
+    wait_function_gap
+    hold_key "$device" "$AI_SCAN_CODE" "$AI_HOLD_SECONDS" || return 1
     function_last_ms="$(uptime_ms)"
 }
 
@@ -232,6 +264,15 @@ handle_request() {
                 log_msg "$command failed request=$request"
             fi
             ;;
+        ai_key)
+            if press_ai_key; then
+                echo "ok ai_key $request $now" > "$RESPONSE"
+                log_msg "ai_key ok request=$request"
+            else
+                echo "failed ai_key $request $now" > "$RESPONSE"
+                log_msg "ai_key failed request=$request"
+            fi
+            ;;
         *)
             echo "ignored $request $now" > "$RESPONSE"
             log_msg "ignored request=$request"
@@ -240,6 +281,13 @@ handle_request() {
 }
 
 check_and_dispatch() {
+    # Two starters racing (R08 and the Nexus watchdog) can each spawn a loop. The one not
+    # named in the PID file leaves before it can consume a request and inject it twice.
+    owner="$(read_pid)"
+    if [ -n "$owner" ] && [ "$owner" != "$$" ] && is_alive "$owner"; then
+        log_msg "duplicate helper pid=$$ exits for pid=$owner"
+        exit 0
+    fi
     now="$(date +%s)"
     echo "$now" > "$HEARTBEAT"
     publish_entry_capability
@@ -296,14 +344,20 @@ run_event_loop() {
     last="$(cat "$REQUEST" 2>/dev/null)"
     log_msg "doorbell loop path=$DOORBELL idle_recheck=${IDLE_RECHECK_SECONDS}s"
     check_and_dispatch
+    read_errors=0
     while true; do
         read -t "$IDLE_RECHECK_SECONDS" _ <&3 >/dev/null 2>&1
         read_status="$?"
         # Android mksh reports read -t timeout as 142 (SIGALRM), not 1.
         case "$read_status" in
             0|1|142)
+                read_errors=0
                 ;;
             *)
+                # A background child exiting, such as the delayed Wi-Fi switch-off, interrupts
+                # read with status 2. Only repeated failures mean the doorbell is broken.
+                read_errors=$((read_errors + 1))
+                [ "$read_errors" -lt 5 ] && continue
                 log_msg "doorbell read failed status=$read_status; falling back to poll"
                 exec 3<&-
                 run_poll_loop
@@ -319,6 +373,8 @@ run_loop() {
     entry_session="$$-$(uptime_ms)"
     entry_last=""
     function_last_ms=""
+    held_device=""
+    trap 'release_held_key; exit 0' TERM INT
     echo "$FEATURE_LIST" > "$FEATURES"
     publish_entry_capability
     log_msg "run pid=$$ base=$BASE input=$INPUT_DEVICE code=$SETTINGS_SCAN_CODE"
