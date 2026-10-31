@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-- Rokid AI on firmware 1.28 opens the real assistant again instead of acting like the Hi Rokid Shortcut (#18). The helper now holds the touchpad AI key, which opens Rokid AI in the assistant mode chosen in the Hi Rokid app, without the phone or the shortcut toggle. Until the helper from 2.0.5 is replaced, Rokid AI shows `Re-arm phone bridge` instead of acting as the shortcut.
-- Replacing a running helper could leave its `start` command spinning a CPU core forever (toybox `tr` loops when the old helper exits during the check). Both helpers now read the process command line through `cat`.
-- A second helper loop started by a concurrent starter now exits before handling requests, so a ring action can never be injected twice.
-- With Nexus, R08 no longer needs the phone setup to replace or restart its helpers. Nexus keeps ADB port 5555 closed, so R08 now goes through Wireless Debugging instead, the way Nexus itself does, with the key the phone companion paired. It never switches Wi-Fi itself: without a Wi-Fi network it waits until the glasses join one. Like Nexus, it leaves Wireless Debugging on. This also brings the helpers back after a reboot with a Nexus that does not restart them yet, once the glasses are on Wi-Fi.
-- The helper no longer falls back to polling every 0.2 s after switching Wi-Fi off: the end of that background task interrupted its doorbell wait, which it took for a broken doorbell.
-- A helper stopped in the middle of a key press now releases the key first.
+## v2.0.6 - 2026-10-31
+
+### Rokid AI opens the real assistant, and Nexus users keep their ring actions after a reboot
+
+- Rokid AI on firmware 1.28 no longer acts like Hi Rokid Shortcut (#18). The helper now holds the touchpad AI key, which opens Rokid AI in the assistant mode set in the Hi Rokid app, without the phone or the shortcut toggle. While a helper from 2.0.5 is still running, Rokid AI shows `Re-arm phone bridge`.
+- With Nexus, R08 replaces and restarts its helpers by itself. Nexus keeps ADB port 5555 closed, so R08 now connects through Wireless Debugging, like Nexus does, with the key the phone companion paired. It needs the glasses on a Wi-Fi network and waits for one; it never switches Wi-Fi itself. Like Nexus, it leaves Wireless Debugging on and keeps the paired key from expiring after 7 days. No phone setup is needed after updating, as long as the phone setup was done once with Companion v0.2.10 or newer.
+- Fixed: replacing a running helper could leave a process spinning a CPU core forever (toybox `tr` loops when the process it reads exits during the read).
+- Fixed: after switching Wi-Fi off, the helper fell back to checking for requests every 0.2 s for good, which drains the battery.
+- Two helpers started at the same time no longer both stay running, so a ring action cannot be injected twice. A helper stopped in the middle of a key press releases the key first.
 - Include Companion v0.2.12 with the updated shell helper.
 
 ## v2.0.5 - 2026-10-30
