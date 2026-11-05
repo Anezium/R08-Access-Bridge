@@ -97,6 +97,8 @@ public final class BridgeProtocol {
     public static final String FEATURES_FILE = "features";
     public static final String FEATURE_FUNCTION_KEY = "function_key";
     public static final String FEATURE_AI_KEY = "ai_key";
+    public static final String FEATURE_ASSISTANT_PIN = "assistant_pin";
+    public static final String FEATURE_ASSISTANT_SCROLL = "assistant_scroll";
 
     public static final String COMMAND_SHORTCUT = "shortcut";
     public static final String COMMAND_WIFI_ENABLE = "wifi_enable";

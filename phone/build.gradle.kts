@@ -10,8 +10,8 @@ android {
         applicationId = "com.anezium.r08companion"
         minSdk = 31
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.2.13"
+        versionCode = 16
+        versionName = "0.2.14"
     }
 
     compileOptions {

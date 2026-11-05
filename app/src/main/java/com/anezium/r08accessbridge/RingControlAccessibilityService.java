@@ -451,6 +451,9 @@ public final class RingControlAccessibilityService extends AccessibilityService
         else if ("audio".equals(command)) toggleNativeRecording(true);
         else if ("photo".equals(command)) nativePhoto();
         else if ("ai".equals(command)) nativeAi();
+        else if ("single_tap".equals(command)) {
+            service.handleDebugKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE);
+        }
         else if ("double_tap".equals(command)) {
             service.mainHandler.postDelayed(() -> service.handleDebugKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE), 100L);
             service.mainHandler.postDelayed(() -> service.handleDebugKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE), 280L);

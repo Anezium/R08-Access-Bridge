@@ -27,16 +27,16 @@ import java.time.Duration;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 32)
 @LooperMode(LooperMode.Mode.PAUSED)
-public final class LauncherNativeEntryTest {
+public final class NativeUiKeyRequestTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
     private File directory;
-    private LauncherNativeEntry entry;
+    private NativeUiKeyRequest entry;
     private int completed;
     private int cancelled;
 
     @Before public void setUp() throws Exception {
         directory = temporary.newFolder();
-        entry = new LauncherNativeEntry(RuntimeEnvironment.getApplication(),
+        entry = new NativeUiKeyRequest(RuntimeEnvironment.getApplication(),
                 new Handler(Looper.getMainLooper()), directory);
         capability("123-100", SystemClock.elapsedRealtime());
     }
@@ -115,8 +115,60 @@ public final class LauncherNativeEntryTest {
         assertFalse(file(BridgeProtocol.ENTRY_REQUEST_FILE).exists());
     }
 
+    @Test public void assistantPinRequiresANewLiveHelperAndUsesEnter() throws Exception {
+        File bridgeDir = new File(PrivilegedShortcutBridge.bridgeDirPath(RuntimeEnvironment.getApplication()));
+        bridgeDir.mkdirs();
+        File heartbeat = new File(bridgeDir, BridgeProtocol.HEARTBEAT_FILE);
+        File features = new File(bridgeDir, BridgeProtocol.FEATURES_FILE);
+        try {
+            Files.write(heartbeat.toPath(), new byte[0]);
+            Files.write(features.toPath(), "function_key ai_key".getBytes(StandardCharsets.UTF_8));
+            assertFalse(entry.submitAssistantPin(() -> completed++, () -> cancelled++));
+            assertFalse(file(BridgeProtocol.ENTRY_REQUEST_FILE).exists());
+            Files.write(features.toPath(), "function_key ai_key assistant_pin".getBytes(StandardCharsets.UTF_8));
+            assertTrue(entry.submitAssistantPin(() -> completed++, () -> cancelled++));
+            assertEquals("66", request()[3]);
+            assertTrue(entry.isPending());
+            reply(request(), "ok");
+            idle(50);
+            assertFalse(entry.isPending());
+            assertEquals(1, completed);
+            heartbeat.setLastModified(System.currentTimeMillis() - 16000L);
+            assertFalse(entry.submitAssistantPin(() -> completed++, () -> cancelled++));
+        } finally {
+            heartbeat.delete();
+            features.delete();
+        }
+    }
+
     private boolean submit(boolean rtl) {
         return entry.submit(rtl, () -> completed++, () -> cancelled++);
+    }
+
+    @Test public void assistantScrollRequiresItsCapabilityAndExplicitlyTargetsTheAssistant() throws Exception {
+        File bridgeDir = new File(PrivilegedShortcutBridge.bridgeDirPath(RuntimeEnvironment.getApplication()));
+        bridgeDir.mkdirs();
+        File heartbeat = new File(bridgeDir, BridgeProtocol.HEARTBEAT_FILE);
+        File features = new File(bridgeDir, BridgeProtocol.FEATURES_FILE);
+        try {
+            Files.write(heartbeat.toPath(), new byte[0]);
+            Files.write(features.toPath(), "assistant_pin".getBytes(StandardCharsets.UTF_8));
+            assertFalse(entry.submitAssistantScroll(true, () -> completed++, () -> cancelled++));
+            Files.write(features.toPath(), "assistant_pin assistant_scroll".getBytes(StandardCharsets.UTF_8));
+            for (boolean forward : new boolean[] {true, false}) {
+                assertTrue(entry.submitAssistantScroll(forward, () -> completed++, () -> cancelled++));
+                String[] value = request();
+                assertEquals(forward ? "20" : "19", value[3]);
+                assertEquals("assistant", value[4]);
+                reply(value, "ok");
+                idle(50);
+            }
+            assertEquals(2, completed);
+            assertEquals(0, cancelled);
+        } finally {
+            heartbeat.delete();
+            features.delete();
+        }
     }
 
     private void capability(String session, long time) throws Exception {

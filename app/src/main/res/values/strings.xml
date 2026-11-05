@@ -91,6 +91,10 @@
     <string name="toast_forget_submitted">R08 forget requested</string>
     <string name="toast_no_bonded_r08">No bonded R08 found</string>
     <string name="toast_mapping_saved">Mapped to %1$s</string>
+    <string name="toast_assistant_pin_bridge_needed">Pin needs the updated bridge: run Self-arm or re-arm from the companion</string>
+    <string name="toast_assistant_pin_failed">Pin unavailable: keep Rokid AI open and tap again</string>
+    <string name="toast_assistant_scroll_bridge_needed">Scrolling needs the updated bridge: run Self-arm or re-arm from the companion</string>
+    <string name="toast_assistant_scroll_failed">Scroll unavailable: keep Rokid AI open and slide again</string>
     <string name="toast_stable_mode">Stable mode enabled</string>
     <string name="toast_fast_mode">Fast mode enabled</string>
     <string name="toast_touch_mode">Touch fallback enabled</string>

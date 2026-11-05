@@ -37,6 +37,7 @@ final class AccessibilityNavigator {
     private final ArbookCompatibility arbookCompatibility;
     private final NewPipeCompatibility newPipeCompatibility;
     private final RokidSettingsControls rokidSettingsControls;
+    private final NativeAssistantControls nativeAssistantControls;
 
     AccessibilityNavigator(RingControlAccessibilityService service) {
         this.service = service;
@@ -46,6 +47,7 @@ final class AccessibilityNavigator {
         arbookCompatibility = new ArbookCompatibility(service, gestures);
         newPipeCompatibility = new NewPipeCompatibility(service);
         rokidSettingsControls = new RokidSettingsControls(service);
+        nativeAssistantControls = new NativeAssistantControls(service);
     }
 
     void moveForward() {
@@ -53,6 +55,9 @@ final class AccessibilityNavigator {
     }
 
     void moveForward(int launcherSteps) {
+        if (nativeAssistantControls.tryScroll(true)) {
+            return;
+        }
         if (adjustRokidVolume(true)) {
             return;
         }
@@ -86,6 +91,9 @@ final class AccessibilityNavigator {
     }
 
     void moveBackward(int launcherSteps) {
+        if (nativeAssistantControls.tryScroll(false)) {
+            return;
+        }
         if (adjustRokidVolume(false)) {
             return;
         }
@@ -115,6 +123,9 @@ final class AccessibilityNavigator {
     }
 
     void activate() {
+        if (nativeAssistantControls.tryPin()) {
+            return;
+        }
         if (isRokidCameraPageActive() && RokidSystemActions.takePhoto(service)) {
             Log.d(TAG, "Requested Rokid camera capture from active camera page");
             return;
@@ -157,6 +168,7 @@ final class AccessibilityNavigator {
     }
 
     void back() {
+        nativeAssistantControls.cancel();
         if (service.stopNativeRecording()) {
             return;
         }

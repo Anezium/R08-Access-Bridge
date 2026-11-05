@@ -107,6 +107,8 @@ On glasses firmware `1.28` and newer, Rokid AI, Take photo, Video toggle and Aud
 
 Video and audio recording show the firmware's recording indicator and timer. Double tap stops an active native video/audio recording; otherwise it remains normal Back. Toggle and Back use the firmware's reported recording state, including recordings started outside R08, rather than a saved assumption about the last gesture. AR screenshot and AR video toggle remain blocked on firmware `1.28`.
 
+In the native Rokid assistant chat, single tap pins the window when the firmware shows its pin hint. Ring slides scroll a long response in either direction, before or after pinning. The native keys move approximately 85% of the chat viewport per slide and stop automatic text scrolling so you can read at your own pace. These controls need the updated armed helper (automatically refreshed after updating when recovery is available, or run `Self-arm (no phone)` / companion re-arm). R08 sends native Enter and directional keys, because the pin hint is not a clickable button and generic focus movement does not reliably scroll the response. Requests expire and are rejected if the native assistant loses focus. Disable the Nexus assistant takeover to use Rokid's native assistant; Hi Rokid on the phone must remain connected for its voice services.
+
 ## Self-arm: the Hi Rokid shortcut and surviving force-stops
 
 Two things on the glasses need more than a normal APK can do by itself:

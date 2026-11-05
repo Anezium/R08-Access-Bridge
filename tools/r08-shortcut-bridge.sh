@@ -12,7 +12,7 @@ ENTRY_RESPONSE="$BASE/entry_response"
 ENTRY_VERSION=1
 FEATURES="$BASE/features"
 # Space-separated capabilities the app checks before routing a request to this helper.
-FEATURE_LIST="function_key ai_key"
+FEATURE_LIST="function_key ai_key assistant_pin assistant_scroll"
 PIDFILE="${R08_PIDFILE:-/data/local/tmp/r08-shortcut-bridge.pid}"
 LOGFILE="${R08_LOGFILE:-/data/local/tmp/r08-shortcut-bridge.log}"
 INPUT_DEVICE="${R08_INPUT_DEVICE:-/dev/input/event1}"
@@ -62,20 +62,37 @@ check_entry_request() {
     [ -n "$entry_current" ] && [ "$entry_current" != "$entry_last" ] || return
     # Consume before injecting. A lost response must never replay a key.
     entry_last="$entry_current"
-    read -r entry_requested_session entry_token entry_expiry entry_key entry_extra <<EOF
+    read -r entry_requested_session entry_token entry_expiry entry_key entry_target entry_extra <<EOF
 $entry_current
 EOF
     [ "$entry_requested_session" = "$entry_session" ] || return
     case "$entry_token" in ''|*[!a-zA-Z0-9-]*) return ;; esac
     case "$entry_expiry" in ''|*[!0-9]*) entry_reply invalid; return ;; esac
-    case "$entry_key" in 19|20) ;; *) entry_reply invalid; return ;; esac
+    case "$entry_key" in 19|20|66) ;; *) entry_reply invalid; return ;; esac
+    if [ "$entry_key" = "66" ]; then
+        entry_target="${entry_target:-assistant}"
+        [ "$entry_target" = "assistant" ] || { entry_reply invalid; return; }
+    else
+        entry_target="${entry_target:-launcher}"
+    fi
+    case "$entry_target" in launcher|assistant) ;; *) entry_reply invalid; return ;; esac
     [ -z "$entry_extra" ] || { entry_reply invalid; return; }
     [ "$(uptime_ms)" -lt "$entry_expiry" ] || { entry_reply expired; return; }
     # This is a global input injection: never deliver to an app opened while waiting.
-    if ! dumpsys activity activities | grep -E 'mResumedActivity:|topResumedActivity=' \
-            | grep -q 'com.rokid.os.sprite.launcher/.*SpriteMainActivity'; then
-        entry_reply foreground
-        return
+    if [ "$entry_target" = "assistant" ]; then
+        # The AI dialog is a system window; the resumed activity underneath is still Home.
+        # Accessibility recognizes its chat before requesting pin or manual text scrolling.
+        if ! dumpsys window | grep 'mCurrentFocus=' \
+                | grep -q ' com.rokid.os.sprite.assistserver}'; then
+            entry_reply foreground
+            return
+        fi
+    else
+        if ! dumpsys activity activities | grep -E 'mResumedActivity:|topResumedActivity=' \
+                | grep -q 'com.rokid.os.sprite.launcher/.*SpriteMainActivity'; then
+            entry_reply foreground
+            return
+        fi
     fi
     [ "$(uptime_ms)" -lt "$entry_expiry" ] || { entry_reply expired; return; }
     [ "$(cat "$ENTRY_REQUEST" 2>/dev/null)" = "$entry_current" ] || return
