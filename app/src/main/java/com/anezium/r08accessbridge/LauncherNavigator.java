@@ -40,7 +40,7 @@ final class LauncherNavigator {
     private final Runnable pendingCenterActionRunnable;
     private final LauncherPageNavigation pageNavigation;
     private final LauncherCarouselFocus carouselFocus;
-    private final LauncherNativeEntry nativeEntry;
+    private final NativeUiKeyRequest nativeEntry;
     private boolean nativeAppsEntry;
     private int nativeFocusSeedColumn = -1;
     private int queuedLauncherSteps;
@@ -53,7 +53,7 @@ final class LauncherNavigator {
         this.service = service;
         this.gestures = gestures;
         pendingCenterActionRunnable = this::runPendingCenterAction;
-        nativeEntry = new LauncherNativeEntry(service, mainHandler);
+        nativeEntry = new NativeUiKeyRequest(service, mainHandler);
         carouselFocus = new LauncherCarouselFocus(mainHandler, new LauncherCarouselFocus.Host() {
             @Override public LauncherCarouselFocus.Snapshot read() { return readCarouselFocus(); }
             @Override public boolean focus(int column) { return focusCarouselColumn(column); }

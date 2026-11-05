@@ -13,8 +13,8 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
-/** One bounded shell request for entering Apps without re-entering touch mode. */
-final class LauncherNativeEntry {
+/** Bounded, acknowledged native UI keys; the helper also checks the foreground window. */
+final class NativeUiKeyRequest {
     // Leave room for the page gate's 350ms alignment barrier inside its 1500ms deadline.
     static final long REQUEST_TTL_MS = 900L;
     private static final long RESPONSE_TIMEOUT_MS = 1100L;
@@ -24,11 +24,11 @@ final class LauncherNativeEntry {
     private final File directory;
     private Request pending;
 
-    LauncherNativeEntry(Context context, Handler handler) {
+    NativeUiKeyRequest(Context context, Handler handler) {
         this(context, handler, new File(PrivilegedShortcutBridge.bridgeDirPath(context)));
     }
 
-    LauncherNativeEntry(Context context, Handler handler, File directory) {
+    NativeUiKeyRequest(Context context, Handler handler, File directory) {
         this.context = context;
         this.handler = handler;
         this.directory = directory;
@@ -39,7 +39,25 @@ final class LauncherNativeEntry {
         return availableSession(directory, SystemClock.elapsedRealtime()) != null;
     }
 
+    boolean isPending() {
+        return pending != null;
+    }
+
     boolean submit(boolean rtl, Runnable completed, Runnable cancelled) {
+        return submitKey(rtl ? 19 : 20, false, completed, cancelled);
+    }
+
+    boolean submitAssistantPin(Runnable completed, Runnable cancelled) {
+        if (!PrivilegedShortcutBridge.supportsAssistantPin(context)) return false;
+        return submitKey(66, false, completed, cancelled);
+    }
+
+    boolean submitAssistantScroll(boolean forward, Runnable completed, Runnable cancelled) {
+        if (!PrivilegedShortcutBridge.supportsAssistantScroll(context)) return false;
+        return submitKey(forward ? 20 : 19, true, completed, cancelled);
+    }
+
+    private boolean submitKey(int keyCode, boolean assistant, Runnable completed, Runnable cancelled) {
         if (pending != null) return false;
         long now = SystemClock.elapsedRealtime();
         String session = availableSession(directory, now);
@@ -47,7 +65,7 @@ final class LauncherNativeEntry {
         Request request = new Request(session, UUID.randomUUID().toString(),
                 now + RESPONSE_TIMEOUT_MS, completed, cancelled);
         String body = session + " " + request.token + " " + (now + REQUEST_TTL_MS)
-                + " " + (rtl ? 19 : 20) + "\n";
+                + " " + keyCode + (assistant ? " assistant" : "") + "\n";
         try {
             atomicWrite(new File(directory, BridgeProtocol.ENTRY_REQUEST_FILE), body);
         } catch (IOException exception) {

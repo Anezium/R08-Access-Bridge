@@ -127,7 +127,7 @@ final class PrivilegedShortcutBridge {
     }
 
     static boolean supportsNativeEntry(Context context) {
-        return isArmed(context) && LauncherNativeEntry.availableSession(
+        return isArmed(context) && NativeUiKeyRequest.availableSession(
                 new File(bridgeDirPath(context)), android.os.SystemClock.elapsedRealtime()) != null;
     }
 
@@ -137,6 +137,14 @@ final class PrivilegedShortcutBridge {
 
     static boolean supportsAiKey(Context context) {
         return supportsFeature(context, BridgeProtocol.FEATURE_AI_KEY);
+    }
+
+    static boolean supportsAssistantPin(Context context) {
+        return supportsFeature(context, BridgeProtocol.FEATURE_ASSISTANT_PIN);
+    }
+
+    static boolean supportsAssistantScroll(Context context) {
+        return supportsFeature(context, BridgeProtocol.FEATURE_ASSISTANT_SCROLL);
     }
 
     private static boolean supportsFeature(Context context, String feature) {
@@ -163,7 +171,8 @@ final class PrivilegedShortcutBridge {
 
     /** True when the live helper is the one this app version ships. */
     static boolean isCurrent(Context context) {
-        return supportsNativeEntry(context) && supportsFunctionKeys(context) && supportsAiKey(context);
+        return supportsNativeEntry(context) && supportsFunctionKeys(context) && supportsAiKey(context)
+                && supportsAssistantPin(context) && supportsAssistantScroll(context);
     }
 
     static String statusLabel(Context context) {

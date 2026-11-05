@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v2.0.8 - 2026-11-05
+
+### Native Rokid assistant ring controls
+
+- Single ring tap now pins the native Rokid assistant chat when its pin hint is visible. Use the updated armed helper; old helpers report that self-arm / companion re-arm is needed. Pin requests expire and require the native assistant window to have focus.
+- Ring slides now page native assistant responses in both directions through the firmware key handler, which also stops automatic text scrolling. Rapid slides retain up to three pending steps, and leaving the chat discards them.
+- Include Companion v0.2.14 with the updated helper. Disable Nexus assistant takeover to use Rokid's native assistant; Hi Rokid must remain connected for voice services. Existing gesture mappings are preserved.
+
 ## v2.0.7 - 2026-10-31
 
 ### Native ring actions after reboot and recording controls
